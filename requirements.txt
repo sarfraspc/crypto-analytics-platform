@@ -1,0 +1,43 @@
+# Web framework
+fastapi
+uvicorn[standard]
+
+# Data ingestion
+ccxt
+requests
+web3
+tweepy
+pydantic
+
+# Databases
+psycopg2-binary
+sqlalchemy
+timescale
+chromadb
+redis
+celery
+
+# ML / Analytics (Week 2+)
+tensorflow
+torch
+scikit-learn
+prophet
+shap
+lime
+sentence-transformers
+pytorch-forecasting
+
+# MLOps
+mlflow
+
+# MCP
+mcp
+mcp-server
+
+# Dev tools
+black
+isort
+flake8
+mypy
+pytest
+pytest-asyncio
