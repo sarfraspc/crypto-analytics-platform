@@ -12,7 +12,7 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ../.env.example
+      - ../.env
     depends_on:
       - timescaledb
       - postgres
@@ -22,10 +22,12 @@ services:
   timescaledb:
     image: timescale/timescaledb:latest-pg14
     container_name: timescaledb
+    env_file:
+      - ../.env
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: crypto_db
+      POSTGRES_USER: ${TIMESCALE_USER}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
+      POSTGRES_DB: ${TIMESCALE_DB}
     ports:
       - "5432:5432"
     volumes:
@@ -34,14 +36,17 @@ services:
   postgres:
     image: postgres:14
     container_name: metadata_db
+    env_file:
+      - ../.env 
     environment:
-      POSTGRES_USER: metadata_user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: metadata
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d 
 
   redis:
     image: redis:alpine
@@ -52,11 +57,15 @@ services:
       - redis_data:/data
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:latest
+    build:
+      context: ..
+      dockerfile: infrastructure/Dockerfile.mlflow
     container_name: mlflow
+    env_file:
+      - ../.env
     command: >
       mlflow server
-      --backend-store-uri postgresql://metadata_user:password@metadata_db:5432/metadata
+      --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
       --default-artifact-root /mlflow/artifacts
       --host 0.0.0.0
       --port 5000
