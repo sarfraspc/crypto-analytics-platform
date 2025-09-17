@@ -1,0 +1,35 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git
+.gitignore
+
+# Environment files
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+ENV/
+conda/
+
+# Data & logs (don’t copy into image)
+data/
+logs/
+mlruns/
+mlflow_data/
+
+# Not needed in container
+tests/
+docs/
+
+# System junk
+.DS_Store
+.vscode/
+.idea/
+
+# mine
+plan
