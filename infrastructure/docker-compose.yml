@@ -37,11 +37,11 @@ services:
     environment:
       POSTGRES_USER: metadata_user
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: metadata
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d 
 
   redis:
     image: redis:alpine
@@ -52,11 +52,13 @@ services:
       - redis_data:/data
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:latest
+    build:
+      context: ..
+      dockerfile: infrastructure/Dockerfile.mlflow
     container_name: mlflow
     command: >
       mlflow server
-      --backend-store-uri postgresql://metadata_user:password@metadata_db:5432/metadata
+      --backend-store-uri postgresql+psycopg2://metadata_user:password@postgres:5432/mlflow
       --default-artifact-root /mlflow/artifacts
       --host 0.0.0.0
       --port 5000
