@@ -8,6 +8,7 @@ requests
 web3
 tweepy
 pydantic
+pydantic-settings
 
 # Databases
 psycopg2-binary
