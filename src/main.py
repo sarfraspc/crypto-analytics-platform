@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from src.core.config import settings
-from src.core.logging_config import setup_logging
-from src.core.exceptions import APIError, DatabaseError, ModelError
+from core.config import settings
+from core.logging_config import setup_logging
+from core.exceptions import APIError, DatabaseError, ModelError
 import logging
 
 # Setup logging
