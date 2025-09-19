@@ -21,7 +21,6 @@ env/
 !.env.example
 
 # Data
-data/
 mlruns/
 logs/
 mlflow_data/
