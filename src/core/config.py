@@ -32,9 +32,10 @@ class Settings(BaseSettings):
     BINANCE_API_KEY: str | None = None
     BINANCE_API_SECRET: str | None = None
     ALCHEMY_API_KEY: str | None = None
-    INFURA_API_KEY: str | None = None
-    TWITTER_BEARER_TOKEN: str | None = None
     CRYPTOPANIC_API_KEY: str | None = None
+    REDDIT_CLIENT_ID: str | None = None
+    REDDIT_CLIENT_SECRET: str | None = None
+    REDDIT_USER_AGENT: str | None = None
 
     # App
     APP_ENV: str = "development"

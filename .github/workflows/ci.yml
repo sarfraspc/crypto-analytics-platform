@@ -34,7 +34,8 @@ jobs:
           pip install -e .
 
       - name: Set up environment for tests
-        run: cp .env.example .env
+        run: |
+          echo "${{ secrets.APP_ENV_FILE }}" > .env
 
       - name: Run tests
         run: pytest -v
