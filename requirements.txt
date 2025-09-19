@@ -6,9 +6,11 @@ uvicorn[standard]
 ccxt
 requests
 web3
-tweepy
 pydantic
 pydantic-settings
+pycoingecko
+ta-lib
+praw
 
 # Databases
 psycopg2-binary
@@ -17,6 +19,8 @@ timescale
 chromadb
 redis
 celery
+python-dotenv
+pyyaml
 
 # ML / Analytics (CPU-only)
 tensorflow-cpu==2.20.0
@@ -30,6 +34,8 @@ shap
 lime
 sentence-transformers
 pytorch-forecasting
+pandas
+numpy
 
 # MLOps
 mlflow
