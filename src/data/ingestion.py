@@ -1,4 +1,3 @@
-# src/data/ingestion.py
 import time
 import logging
 from datetime import datetime, timezone, timedelta
@@ -275,9 +274,7 @@ def ingest_reddit_pushshift(subreddit: str = "cryptocurrency", limit: int = 100,
             backoff *= 2
     logger.info("Reddit Pushshift ingestion finished (attempts exhausted or failed).")
 
-# -------------------------
 # Simple on-chain scanner (Ethereum) - Alchemy
-# -------------------------
 ALCHEMY_KEY = getattr(settings, 'ALCHEMY_API_KEY', None)
 W3 = None
 if ALCHEMY_KEY:
