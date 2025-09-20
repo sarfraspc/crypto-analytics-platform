@@ -2,7 +2,7 @@
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'crypto_user') THEN
-      CREATE ROLE crypto_user LOGIN PASSWORD '123';
+      CREATE ROLE crypto_user LOGIN PASSWORD ''; -- put orginal password only first time to create
    END IF;
 END
 $$;
