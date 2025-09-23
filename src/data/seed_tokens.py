@@ -12,7 +12,7 @@ def seed_top_n(n=200):
     coins = CG.get_coins_markets(vs_currency='usd', per_page=250, page=1)
     with ENG.begin() as conn:
         for c in coins[:n]:
-            symbol = c['symbol'].upper() + '/USDT'
+            symbol = c['symbol'].upper()
             conn.execute(text("""
                 INSERT INTO tokens (symbol, coingecko_id, name, decimals, metadata)
                 VALUES (:symbol, :cid, :name, :dec, :meta)
@@ -21,7 +21,7 @@ def seed_top_n(n=200):
                 'symbol': symbol,
                 'cid': c['id'],
                 'name': c['name'],
-                'dec': 18,
+                'dec': 'NULL',
                 'meta': c
             })
     logger.info("Seeded top %d tokens", n)
