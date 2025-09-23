@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.database import get_timescale_engine
 from core.config import settings
 from data.validation import OHLCV, Trade, NewsArticle, RedditPost, WhaleAlert
-from data.crud import (
+from data.storage.crud_timescale import (
     upsert_ohlcv,
     upsert_trades,
     upsert_news,
