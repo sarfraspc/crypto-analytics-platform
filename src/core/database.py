@@ -4,7 +4,6 @@ from core.config import settings
 import urllib.parse
 
 def _build_postgres_url(user, password, host, port, db):
-    # password may contain special chars
     pw = urllib.parse.quote_plus(password)
     return f"postgresql+psycopg2://{user}:{pw}@{host}:{port}/{db}"
 
@@ -22,7 +21,6 @@ def get_timescale_engine() -> Engine:
     )
 
 def get_metadata_engine() -> Engine:
-    # metadata db (if separate)
     return create_engine(
         _build_postgres_url(
             settings.POSTGRES_USER,
