@@ -36,6 +36,7 @@ sentence-transformers
 pytorch-forecasting
 pandas
 numpy
+vaderSentiment
 
 # MLOps
 mlflow
@@ -51,3 +52,4 @@ flake8
 mypy
 pytest
 pytest-asyncio
+
