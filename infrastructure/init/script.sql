@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS tokens (
     metadata JSONB
 );
 
+ALTER TABLE IF EXISTS tokens OWNER TO metadata_user;
+GRANT ALL PRIVILEGES ON TABLE tokens TO metadata_user;
 
 -- CRYPTO_DB (timeseries + onchain + ingestion)
 
@@ -87,6 +89,9 @@ CREATE TABLE IF NOT EXISTS ohlcv (
 );
 SELECT create_hypertable('ohlcv', 'time', if_not_exists => TRUE);
 
+ALTER TABLE IF EXISTS ohlcv OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE ohlcv TO crypto_user;
+
 -- Trades
 CREATE TABLE IF NOT EXISTS trades (
     time TIMESTAMPTZ NOT NULL,
@@ -100,6 +105,9 @@ CREATE TABLE IF NOT EXISTS trades (
     PRIMARY KEY (time, exchange, symbol, trade_id)
 );
 SELECT create_hypertable('trades', 'time', if_not_exists => TRUE);
+
+ALTER TABLE IF EXISTS trades OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE trades TO crypto_user;
 
 -- Whale alerts
 CREATE TABLE IF NOT EXISTS whale_alerts (
@@ -115,6 +123,9 @@ CREATE TABLE IF NOT EXISTS whale_alerts (
 );
 SELECT create_hypertable('whale_alerts', 'time', if_not_exists => TRUE);
 
+ALTER TABLE IF EXISTS whale_alerts OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE whale_alerts TO crypto_user;
+
 -- On-chain metrics (aggregated flows/stats)
 CREATE TABLE IF NOT EXISTS onchain_metrics (
     time TIMESTAMPTZ NOT NULL,
@@ -126,6 +137,9 @@ CREATE TABLE IF NOT EXISTS onchain_metrics (
 );
 SELECT create_hypertable('onchain_metrics', 'time', if_not_exists => TRUE);
 
+ALTER TABLE IF EXISTS onchain_metrics OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE onchain_metrics TO crypto_user;
+
 -- News articles
 CREATE TABLE IF NOT EXISTS news_articles (
     id TEXT PRIMARY KEY,
@@ -136,6 +150,9 @@ CREATE TABLE IF NOT EXISTS news_articles (
     text TEXT,
     raw JSONB
 );
+
+ALTER TABLE IF EXISTS news_articles OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE news_articles TO crypto_user;
 
 -- Reddit posts
 CREATE TABLE IF NOT EXISTS reddit_posts (
@@ -149,6 +166,9 @@ CREATE TABLE IF NOT EXISTS reddit_posts (
     raw JSONB
 );
 
+ALTER TABLE IF EXISTS reddit_posts OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE reddit_posts TO crypto_user;
+
 -- Ingestion jobs tracker
 CREATE TABLE IF NOT EXISTS ingestion_jobs (
   pipeline TEXT PRIMARY KEY,
@@ -157,9 +177,15 @@ CREATE TABLE IF NOT EXISTS ingestion_jobs (
   details JSONB
 );
 
+ALTER TABLE IF EXISTS ingestion_jobs OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE ingestion_jobs TO crypto_user;
+
 -- Chain state (last scanned block per chain)
 CREATE TABLE IF NOT EXISTS chain_state (
   chain TEXT PRIMARY KEY,
   last_block BIGINT,
   last_updated TIMESTAMPTZ DEFAULT now()
 );
+
+ALTER TABLE IF EXISTS chain_state OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE chain_state TO crypto_user;
