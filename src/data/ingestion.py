@@ -21,7 +21,6 @@ TS_ENG = get_timescale_engine()
 META_ENG = get_metadata_engine()
 
 def get_symbols_from_tokens(limit: int = 50) -> List[Dict]:
-    """Load symbols from tokens table (all ~190, capped)."""
     with META_ENG.connect() as conn:
         result = conn.execute(text("SELECT symbol, coingecko_id FROM tokens ORDER BY symbol LIMIT :limit"), {'limit': limit}).fetchall()
         symbols = [
@@ -37,7 +36,6 @@ def get_symbols_from_tokens(limit: int = 50) -> List[Dict]:
     return symbols
 
 def get_last_success(pipeline: str) -> datetime:
-    """Get last successful timestamp for deltas."""
     with TS_ENG.connect() as conn:
         last = conn.execute(
             text("SELECT last_success FROM ingestion_jobs WHERE pipeline = :pipeline ORDER BY last_success DESC LIMIT 1"),
@@ -46,7 +44,6 @@ def get_last_success(pipeline: str) -> datetime:
     return last or (datetime.now(timezone.utc) - timedelta(hours=1))
 
 async def run_backfill(symbols: List[Dict] = None):
-    """Full historical backfill (run once)."""
     symbols = symbols or get_symbols_from_tokens(limit=50)
     logger.info("Starting backfill for %d symbols", len(symbols))
     
@@ -57,7 +54,7 @@ async def run_backfill(symbols: List[Dict] = None):
             backfill_ohlcv_ccxt(s['exchange'], s['use_ccxt_symbol'], timeframe='1h')
         except Exception as e:
             logger.error(f"Backfill failed for {s['label']}: {e}")
-            continue  # Skip to next symbol
+            continue  
         time.sleep(1)
     
     try:
@@ -71,7 +68,6 @@ async def run_backfill(symbols: List[Dict] = None):
     logger.info("Backfill complete")
 
 async def run_ingestion_cycle(pipeline: str = 'full_cycle', symbols: List[Dict] = None):
-    """Delta cycle for real-time (run every 5min)."""
     start_time = datetime.now()
     symbols = symbols or get_symbols_from_tokens(limit=50)
     logger.info(f"Starting {pipeline} with %d symbols", len(symbols))
@@ -82,7 +78,7 @@ async def run_ingestion_cycle(pipeline: str = 'full_cycle', symbols: List[Dict] 
     tasks = []
     for s in symbols:
         task = loop.run_in_executor(
-            None,  # Use the default executor
+            None,  
             backfill_ohlcv_ccxt,
             s['exchange'],
             s['use_ccxt_symbol'],
@@ -102,7 +98,6 @@ async def run_ingestion_cycle(pipeline: str = 'full_cycle', symbols: List[Dict] 
         ingest_reddit_praw(limit=50)
         ingest_fng()
         
-        # MLflow trigger for sentiment/forecast
         mlflow.set_experiment("crypto_ingestion")
         with mlflow.start_run():
             mlflow.log_param("symbols_count", len(symbols))
@@ -118,7 +113,6 @@ async def run_ingestion_cycle(pipeline: str = 'full_cycle', symbols: List[Dict] 
         logger.error(f"{pipeline} failed: {e}")
 
 async def run_polling(symbols: List[str] = None):
-    """Real-time trades polling."""
     symbols = symbols or [s['use_ccxt_symbol'] for s in get_symbols_from_tokens(limit=10)]
     logger.info("Polling %d symbols", len(symbols))
     tasks = [asyncio.create_task(poll_trades_ccxt('binance', symbol, poll_interval=5.0)) for symbol in symbols]
