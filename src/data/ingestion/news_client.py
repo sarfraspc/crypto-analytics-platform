@@ -20,7 +20,6 @@ vader = SentimentIntensityAnalyzer()
 TS_ENG = get_timescale_engine()
 
 def ingest_cryptopanic(api_key: Optional[str] = None, limit: int = 50, max_retries: int = 3):
-    """Ingest recent news from CryptoPanic (free tier)."""
     key = api_key or settings.CRYPTOPANIC_API_KEY
     if not key:
         logger.warning("CryptoPanic API key not configured")
@@ -71,7 +70,6 @@ def ingest_cryptopanic(api_key: Optional[str] = None, limit: int = 50, max_retri
     logger.info("CryptoPanic ingestion finished.")
 
 def ingest_fng():
-    """Ingest Fear & Greed Index (free)."""
     try:
         resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
         resp.raise_for_status()
@@ -80,7 +78,6 @@ def ingest_fng():
         if not data:
             return None
         item = data[0]
-        # Cache in ingestion_jobs
         with TS_ENG.begin() as conn:
             conn.execute(text("""
                 INSERT INTO ingestion_jobs (pipeline, last_run, last_success, details)
@@ -94,7 +91,6 @@ def ingest_fng():
         return None
 
 def ingest_reddit_praw(subreddit: str = "cryptocurrency", limit: int = 100):
-    """Ingest via PRAW (free with app creds)."""
     cid = settings.REDDIT_CLIENT_ID
     secret = settings.REDDIT_CLIENT_SECRET
     ua = settings.REDDIT_USER_AGENT
@@ -129,7 +125,6 @@ def ingest_reddit_praw(subreddit: str = "cryptocurrency", limit: int = 100):
         logger.exception("PRAW ingestion failed: %s", e)
 
 def ingest_reddit_pushshift(subreddit: str = "cryptocurrency", limit: int = 100, max_retries: int = 3):
-    """Fallback Pushshift (no auth)."""
     url = f"https://api.pushshift.io/reddit/search/submission/?subreddit={subreddit}&size={limit}&sort=desc&sort_type=created_utc"
     backoff = 1
     for attempt in range(max_retries):

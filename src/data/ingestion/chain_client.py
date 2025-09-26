@@ -36,12 +36,11 @@ def set_last_chain_block(chain: str, blk: int):
         """), {'chain': chain, 'blk': int(blk)})
 
 def scan_eth_transfers(batch_blocks: int = 2000, threshold_wei: int = 10**18, max_blocks_per_call: int = 10, chain: str = 'ethereum'):
-    """Scan new blocks for transfers (deltas from last_block)."""
     if not W3:
         logger.warning("Alchemy key not configured; skipping on-chain scan")
         return
 
-    last = get_last_chain_block(chain)  # Use param
+    last = get_last_chain_block(chain) 
     head = W3.eth.block_number
     if last is None:
         last = max(head - 1000, 0)
