@@ -16,20 +16,12 @@ CG = CoinGeckoAPI()
 
 
 def get_valid_ccxt_pairs(exchange_id: str = 'binance') -> List[str]:
-    """Get supported USDT pairs for symbols from tokens."""
     exchange = ccxt.binance({'enableRateLimit': True})
     markets = exchange.load_markets()
     usdt_pairs = [s for s in markets if s.endswith('/USDT') and markets[s]['active']]
     return usdt_pairs
 
-
-def _to_utc(dt):
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
 def backfill_ohlcv_coingecko(symbol_coingecko_id: str, vs_currency: str = "usd", days: str = "max", interval: str = "daily", symbol_label: Optional[str] = None):
-    """Backfill historical OHLCV from CoinGecko (free, no limits)."""
     logger.info("Starting CoinGecko backfill: %s", symbol_coingecko_id)
     try:
         raw = CG.get_coin_ohlc_by_id(id=symbol_coingecko_id, vs_currency=vs_currency, days=days)
@@ -42,7 +34,7 @@ def backfill_ohlcv_coingecko(symbol_coingecko_id: str, vs_currency: str = "usd",
         ts = datetime.fromtimestamp(point[0] / 1000.0, tz=timezone.utc)
         o, h, l, c = point[1], point[2], point[3], point[4]
         symbol = symbol_label or symbol_coingecko_id.upper()
-        if not get_token(symbol):  # Validate
+        if not get_token(symbol): 
             logger.warning(f"Unknown symbol: {symbol}")
             continue
         rows.append(OHLCV(
@@ -58,8 +50,6 @@ def backfill_ohlcv_coingecko(symbol_coingecko_id: str, vs_currency: str = "usd",
         logger.info("CoinGecko backfill inserted %d rows for %s", len(rows), symbol_coingecko_id)
 
 def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', since_ts_ms: Optional[int] = None, limit: int = 1000):
-    """Backfill from CCXT; skips invalid symbols."""
-    # Filter valid pairs upfront
     valid_pairs = get_valid_ccxt_pairs(exchange_id)
     if symbol not in valid_pairs:
         logger.warning(f"{exchange_id} does not have market {symbol}; skipping")
@@ -106,7 +96,6 @@ def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', si
     return len(all_bars)
 
 def poll_trades_ccxt(exchange_id: str, symbol: str, poll_interval: float = 2.0):
-    """Poll recent trades (real-time, deduped by ID)."""
     ExchangeClass = getattr(ccxt, exchange_id)
     exchange = ExchangeClass({'enableRateLimit': True})
     last_seen = set()
