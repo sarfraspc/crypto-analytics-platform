@@ -37,6 +37,8 @@ pytorch-forecasting
 pandas
 numpy
 vaderSentiment
+seaborn 
+matplotlib
 
 # MLOps
 mlflow
