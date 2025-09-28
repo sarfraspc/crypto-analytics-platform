@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
-from modules.forecasting.data.preprocess_coin import CoinPreprocessor
+from modules.forecasting.data.preprocess_coin import CoinPreprocessor, normalize_time
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,25 @@ class PanelPreprocessor:
         self.scaler_dir = Path(scaler_dir)
         self.global_scaler_path = self.scaler_dir / global_scaler_name
         self.coin_pre = CoinPreprocessor(scaler_dir=self.scaler_dir)
+
+    def _meta_path(self):
+        return self.global_scaler_path.with_suffix('.json')
+
+    def save_scaler_with_meta(self, scaler: MinMaxScaler, cols_order: List[str]):
+        self.scaler_dir.mkdir(parents=True, exist_ok=True)
+        joblib.dump(scaler, self.global_scaler_path)
+        meta = {"cols_order": cols_order, "scaler_type": type(scaler).__name__, "saved_at": pd.Timestamp.utcnow().isoformat()}
+        self._meta_path().write_text(json.dumps(meta))
+        logger.info("Saved global panel scaler -> %s", self.global_scaler_path)
+
+    def load_scaler_with_meta(self):
+        p = self.global_scaler_path
+        meta_p = self._meta_path()
+        if not p.exists() or not meta_p.exists():
+            return None, None
+        scaler = joblib.load(p)
+        meta = json.loads(meta_p.read_text())
+        return scaler, meta.get('cols_order')
 
     def preprocess_panel(self, df_dict: Dict[str, pd.DataFrame], symbol_col: str = 'symbol', keep_cols: Optional[List[str]] = None, fit_global_scaler: bool = False, save_scaler: bool = True, global_cols: Optional[List[str]] = None):
         panels = []
@@ -29,9 +48,13 @@ class PanelPreprocessor:
             df2[symbol_col] = df2[symbol_col].astype(str)
             panels.append(df2)
         panel = pd.concat(panels, axis=0, ignore_index=True)
-        if 'time' not in panel.columns:
+        if 'time' not in panel.columns and 'index' in panel.columns:
             panel = panel.rename(columns={'index': 'time'})
-        panel['time'] = pd.to_datetime(panel['time']).dt.tz_convert('UTC')
+        panel['time'] = pd.to_datetime(panel['time'])
+        if panel['time'].dt.tz is None:
+            panel['time'] = panel['time'].dt.tz_localize('UTC')
+        else:
+            panel['time'] = panel['time'].dt.tz_convert('UTC')
 
         if keep_cols is not None:
             cols = ['time', symbol_col] + [c for c in keep_cols if c in panel.columns]
@@ -45,10 +68,12 @@ class PanelPreprocessor:
             scaler = MinMaxScaler()
             scaler.fit(panel[global_cols].fillna(0))
             if save_scaler:
-                self.scaler_dir.mkdir(parents=True, exist_ok=True)
-                joblib.dump(scaler, self.global_scaler_path)
-                logger.info('Saved global panel scaler -> %s', self.global_scaler_path)
+                self.save_scaler_with_meta(scaler, global_cols)
             panel[global_cols] = scaler.transform(panel[global_cols].fillna(0))
+        else:
+            scaler, global_cols = self.load_scaler_with_meta()
+            if scaler is not None and global_cols:
+                panel[global_cols] = scaler.transform(panel[global_cols].fillna(0))
 
         return panel, scaler
 
@@ -58,6 +83,21 @@ class PanelPreprocessor:
 
     def save_panel_to_timescaledb(self, panel: pd.DataFrame, table_name: str, engine):
         df_to_write = panel.copy()
-        if isinstance(df_to_write['time'].dtype, pd.DatetimeTZDtype) or df_to_write['time'].dt.tz is not None:
-            df_to_write['time'] = df_to_write['time'].dt.tz_convert('UTC').dt.tz_localize(None)
+        df_to_write = normalize_time(df_to_write)
         df_to_write.to_sql(table_name, con=engine, if_exists='append', index=False, method='multi', chunksize=5000)
+    
+    def update_panel(self, symbols: List[str], exchange: str = "binance", interval: str = "1h", target_freq: str = "D"):
+        df_dict = {}
+        for sym in symbols:
+            df_proc = self.coin_pre.update_features(sym, exchange, interval, target_freq)
+            if df_proc is not None:
+                df_dict[sym] = df_proc
+
+        if not df_dict:
+            logger.info("No updates for any symbols")
+            return pd.DataFrame(), {}
+
+        panel, _ = self.preprocess_panel(df_dict, keep_cols=None, fit_global_scaler=False)
+        self.save_panel_to_timescaledb(panel, "ohlcv_features_panel", self.coin_pre.engine)
+        logger.info("Inserted %d rows into ohlcv_features_panel", len(panel))
+        return panel, df_dict

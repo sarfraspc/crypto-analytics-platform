@@ -9,8 +9,16 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
 from core.database import get_timescale_engine
+from utils.cache import RedisCache
 
 logger = logging.getLogger(__name__)
+
+def normalize_time(df, col="time"):
+    df[col] = pd.to_datetime(df[col])
+    if df[col].dt.tz is None:
+        df[col] = df[col].dt.tz_localize("UTC")
+    df[col] = df[col].dt.tz_convert("UTC").dt.tz_localize(None)
+    return df
 
 _FREQ_MAP = {
     "1m": "T",
@@ -35,47 +43,70 @@ class CoinPreprocessor:
         scaler_dir: Union[str, Path] = "src/modules/forecasting/models/scalers",
         global_scaler_name: str = "scaler_global.pkl",
         default_target_freq: str = "D",
+        use_cache: bool = True,
+        cache_expire: int = 600
     ):
         self.table = table
         self.engine = engine or get_timescale_engine()
         self.scaler_dir = Path(scaler_dir)
         self.global_scaler_path = self.scaler_dir / global_scaler_name
         self.default_target_freq = default_target_freq
+        self.cache = RedisCache(expire_seconds=cache_expire) if use_cache else None
 
-    def load_data(self, symbol: str, exchange: str = "binance", interval: str = "1h", lookback_days: Optional[int] = None):
+    def load_data(
+        self,
+        symbol: str,
+        exchange: str = "binance",
+        interval: str = "1h",
+        lookback_days: Optional[int] = None,
+    ):
         base_symbol = symbol.split("/")[0].upper() if "/" in symbol else symbol.upper()
+
         if lookback_days is None:
             span_query = f"""
             SELECT (NOW()::date - MIN(time)::date) AS days_span
-            FROM ohlcv
+            FROM {self.table}
             WHERE symbol = '{base_symbol}' AND exchange = '{exchange}';
             """
             days_span_df = pd.read_sql(span_query, self.engine)
             lookback_days = int(days_span_df.iloc[0, 0]) + 1
             logger.info("Using lookback_days=%s for %s", lookback_days, base_symbol)
 
+        cache_key = f"ohlcv:{base_symbol}:{exchange}:{interval}:{lookback_days}"
+        if self.cache:
+            cached_df = self.cache.get_dataframe(cache_key)
+            if cached_df is not None:
+                logger.info("Loaded %s from Redis cache", cache_key)
+                return cached_df
+
         q = f"""
         SELECT time, open, high, low, close, volume, interval, symbol, exchange
         FROM {self.table}
-        WHERE symbol = '{base_symbol}' AND exchange = '{exchange}' AND time >= NOW() - INTERVAL '{lookback_days} days'
+        WHERE symbol = '{base_symbol}' 
+        AND exchange = '{exchange}' 
+        AND time >= NOW() - INTERVAL '{lookback_days} days'
         ORDER BY time ASC, interval;
         """
         df = pd.read_sql(q, self.engine, parse_dates=["time"]) if self.engine else pd.DataFrame()
         if df.empty:
             raise ValueError(f"No data found for {base_symbol}/{exchange}")
 
-        if df['time'].dt.tz is None:
-            df['time'] = df['time'].dt.tz_localize('UTC')
+        if df["time"].dt.tz is None:
+            df["time"] = df["time"].dt.tz_localize("UTC")
         else:
-            df['time'] = df['time'].dt.tz_convert('UTC')
+            df["time"] = df["time"].dt.tz_convert("UTC")
 
-        df = df.set_index(pd.DatetimeIndex(df['time']))
-        df.index.name = 'time'
-        df = df.drop(columns=['time'])
+        df = df.set_index(pd.DatetimeIndex(df["time"]))
+        df.index.name = "time"
+        df = df.drop(columns=["time"])
         df = df.sort_index()
 
         for c in ["open", "high", "low", "close", "volume"]:
-            df[c] = pd.to_numeric(df[c], errors='coerce')
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        if self.cache:
+            self.cache.set_dataframe(cache_key, df)
+
         return df
 
     def _scaler_path_for(self, symbol: Optional[str]):
@@ -152,10 +183,10 @@ class CoinPreprocessor:
         df: pd.DataFrame,
         symbol: Optional[str] = None,
         input_interval: str = "1h",
-        target_freq: Optional[str] = None,  # FIXED: Proper typing
+        target_freq: Optional[str] = None,  
         cols_to_scale: Optional[Sequence[str]] = None,
         fit_scaler: bool = False,
-        save_scaler: bool = True,  # NEW: Controls saving (False for EDA)
+        save_scaler: bool = True,
         scaler_scope: str = "per_symbol",
         volatility_window_days: Optional[int] = None,
         fill_method: str = "ffill",
@@ -166,7 +197,7 @@ class CoinPreprocessor:
             raise ValueError("Input DataFrame is empty")
 
         target_freq = target_freq or self.default_target_freq
-        freq_alias = self._freq_alias(input_interval)  # FIXED: Now uses method
+        freq_alias = self._freq_alias(input_interval) 
 
         if not isinstance(df.index, pd.DatetimeIndex):
             df = df.set_index(pd.to_datetime(df.index))
@@ -219,12 +250,12 @@ class CoinPreprocessor:
         elif scaler_scope == 'per_symbol' and symbol:
             scaler, meta_cols = self.load_scaler_with_meta(symbol)
 
-        if fit_scaler:  # FIXED: Simplified—only if explicitly True
+        if fit_scaler:  
             scaler = MinMaxScaler()
             scaler.fit(df[cols_to_scale])
             cols_order = cols_to_scale
             meta_cols = cols_order
-            if save_scaler:  # NEW: Conditional save
+            if save_scaler:  
                 self.save_scaler_with_meta(scaler, symbol if scaler_scope == 'per_symbol' else None, cols_order)
                 logger.info("Saved scaler+meta for %s (scope: %s)", symbol or "global", scaler_scope)
             else:
@@ -275,5 +306,36 @@ class CoinPreprocessor:
             df_to_write = df.copy()
             if 'time' not in df_to_write.columns:
                 raise ValueError("DataFrame must have a 'time' column or a DatetimeIndex")
-        df_to_write['time'] = pd.to_datetime(df_to_write['time']).dt.tz_convert('UTC').dt.tz_localize(None)
+        df_to_write = normalize_time(df_to_write)
         df_to_write.to_sql(table_name, con=self.engine, if_exists='append', index=False, method='multi', chunksize=5000)
+    
+    def update_features(self, symbol: str, exchange: str = "binance", interval: str = "1h", target_freq: str = "D") -> Optional[pd.DataFrame]:
+        q = f"""
+        SELECT MAX(time) FROM ohlcv_features
+        WHERE symbol = '{symbol.upper()}' AND exchange = '{exchange}' AND interval = '{interval}';
+        """
+        last_processed = pd.read_sql(q, self.engine).iloc[0, 0]
+
+        if last_processed is None:
+            logger.info("No existing features, running full preprocessing for %s", symbol)
+            df_raw = self.load_data(symbol, exchange, interval)
+        else:
+            logger.info("Incremental update from %s onwards for %s", last_processed, symbol)
+            q_new = f"""
+            SELECT time, open, high, low, close, volume, interval, symbol, exchange
+            FROM {self.table}
+            WHERE symbol = '{symbol.upper()}' AND exchange = '{exchange}'
+            AND time > '{last_processed}'
+            ORDER BY time ASC;
+            """
+            df_raw = pd.read_sql(q_new, self.engine, parse_dates=["time"])
+
+        if df_raw.empty:
+            logger.info("No new rows to process for %s", symbol)
+            return
+
+        df_proc, _ = self.preprocess(df_raw, symbol=symbol, input_interval=interval, target_freq=target_freq)
+
+        self.save_to_timescaledb(df_proc, "ohlcv_features")
+        logger.info("Inserted %d new rows into ohlcv_features for %s", len(df_proc), symbol)
+        return df_proc
