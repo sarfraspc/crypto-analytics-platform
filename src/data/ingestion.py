@@ -11,7 +11,7 @@ from core.database import get_timescale_engine, get_metadata_engine
 from core.config import settings
 from data.storage.crud import update_ingestion_job
 from data.validation import IngestionJob
-from data.ingestion.market_client import backfill_ohlcv_coingecko, backfill_ohlcv_ccxt, poll_trades_ccxt
+from data.ingestion.market_client import backfill_ohlcv_ccxt, poll_trades_ccxt
 from data.ingestion.chain_client import scan_eth_transfers
 from data.ingestion.news_client import ingest_cryptopanic, ingest_reddit_praw, ingest_fng
 
@@ -22,17 +22,26 @@ META_ENG = get_metadata_engine()
 
 def get_symbols_from_tokens(limit: int = 50) -> List[Dict]:
     with META_ENG.connect() as conn:
-        result = conn.execute(text("SELECT symbol, coingecko_id FROM tokens ORDER BY symbol LIMIT :limit"), {'limit': limit}).fetchall()
+        query = text("""
+            SELECT 
+                symbol,
+                coingecko_id,
+                (metadata::json ->> 'market_cap_rank')::int AS rank
+            FROM tokens
+            WHERE (metadata::json ->> 'market_cap_rank') IS NOT NULL
+            ORDER BY rank ASC
+            LIMIT :limit
+        """)
+        result = conn.execute(query, {'limit': limit}).fetchall()
         symbols = [
             {
-                'coingecko_id': row.coingecko_id,
                 'label': row.symbol,
                 'use_ccxt_symbol': f"{row.symbol}/USDT",  
                 'exchange': 'binance'
             }
-            for row in result if row.coingecko_id
+            for row in result
         ]
-    logger.info("Loaded %d symbols from tokens", len(symbols))
+    logger.info("Loaded %d top-ranked symbols from tokens", len(symbols))
     return symbols
 
 def get_last_success(pipeline: str) -> datetime:
@@ -47,15 +56,22 @@ async def run_backfill(symbols: List[Dict] = None):
     symbols = symbols or get_symbols_from_tokens(limit=50)
     logger.info("Starting backfill for %d symbols", len(symbols))
     
+    old_since_ms = 0
+    
     for i, s in enumerate(symbols):
         logger.info("Backfilling %s/%s: %s", i+1, len(symbols), s['label'])
         try:
-            backfill_ohlcv_coingecko(s['coingecko_id'], days='365', symbol_label=s.get('label'))
-            backfill_ohlcv_ccxt(s['exchange'], s['use_ccxt_symbol'], timeframe='1h')
+            # Daily candles (coarser, for SARIMAX/Prophet; ~2k+ bars for old coins)
+            bars_daily = backfill_ohlcv_ccxt(s['exchange'], s['use_ccxt_symbol'], timeframe='1d', since_ts_ms=old_since_ms)
+            logger.info("Fetched %d daily bars for %s (full history)", bars_daily, s['label'])
+            
+            # Hourly candles (finer, for CNN-LSTM/TFT; ~50k+ bars for old coins)
+            bars_hourly = backfill_ohlcv_ccxt(s['exchange'], s['use_ccxt_symbol'], timeframe='1h', since_ts_ms=old_since_ms)
+            logger.info("Fetched %d hourly bars for %s (full history)", bars_hourly, s['label'])
         except Exception as e:
             logger.error(f"Backfill failed for {s['label']}: {e}")
             continue  
-        time.sleep(1)
+        time.sleep(2) 
     
     try:
         scan_eth_transfers(batch_blocks=500)
