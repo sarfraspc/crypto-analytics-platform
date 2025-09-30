@@ -64,6 +64,19 @@ class CoinPreprocessor:
         self.default_target_freq = default_target_freq
         self.cache = RedisCache(expire_seconds=cache_expire) if use_cache else None
 
+    def get_coin_start(self, symbol: str, exchange: str = "binance", interval: str = "1h") -> pd.Timestamp:
+        q = f"""
+            SELECT MIN(time) AS start_time
+            FROM {self.table}
+            WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s;
+        """
+        df_start = pd.read_sql(q, self.engine, params={"symbol": symbol.upper(), "exchange": exchange, "interval": interval})
+        start_time = df_start.iloc[0, 0]
+        if pd.isna(start_time):
+            raise ValueError(f"No OHLCV data found for {symbol}")
+        start_time = pd.Timestamp(start_time).tz_localize('UTC') if pd.Timestamp(start_time).tz is None else pd.Timestamp(start_time).tz_convert('UTC')
+        return start_time
+
     def load_data(
         self,
         symbol: str,
@@ -139,6 +152,10 @@ class CoinPreprocessor:
             .drop(columns=["time"])
             .sort_index()
         )
+
+        coin_start = self.get_coin_start(base_symbol, exchange, interval)
+        df = df[df.index >= coin_start]
+
         for c in ["open", "high", "low", "close", "volume"]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
@@ -405,7 +422,6 @@ class CoinPreprocessor:
         fit_scaler = False
         if last_processed is None:
             logger.info("No existing features, running full preprocessing for %s", symbol)
-            # Check if any features exist to avoid re-full
             q_check = """
                 SELECT COUNT(*) FROM ohlcv_features 
                 WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s;

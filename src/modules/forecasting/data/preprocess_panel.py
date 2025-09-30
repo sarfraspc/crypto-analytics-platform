@@ -35,6 +35,14 @@ class PanelPreprocessor:
         save_scaler: bool = True,
         global_cols: Optional[List[str]] = None,
     ):
+        global_start = max([df.index.min() for df in df_dict.values()])
+        global_end = min([df.index.max() for df in df_dict.values()])
+
+        for sym, df in df_dict.items():
+            df_dict[sym] = df.reindex(
+                pd.date_range(global_start, global_end, freq='D', tz='UTC')
+            ).ffill().bfill()
+
         panels = []
         for sym, df in df_dict.items():
             df2 = df.copy()
