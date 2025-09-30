@@ -36,6 +36,7 @@ sentence-transformers
 pytorch-forecasting
 pandas
 numpy
+statsmodels
 vaderSentiment
 seaborn 
 matplotlib

@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 import ccxt
-from pycoingecko import CoinGeckoAPI
 
 from core.config import settings
 from data.validation import OHLCV, Trade
@@ -12,42 +11,12 @@ from data.storage.crud import upsert_ohlcv, upsert_trades, get_token
 
 logger = logging.getLogger(__name__)
 
-CG = CoinGeckoAPI()
-
 
 def get_valid_ccxt_pairs(exchange_id: str = 'binance') -> List[str]:
     exchange = ccxt.binance({'enableRateLimit': True})
     markets = exchange.load_markets()
     usdt_pairs = [s for s in markets if s.endswith('/USDT') and markets[s]['active']]
     return usdt_pairs
-
-def backfill_ohlcv_coingecko(symbol_coingecko_id: str, vs_currency: str = "usd", days: str = "max", interval: str = "daily", symbol_label: Optional[str] = None):
-    logger.info("Starting CoinGecko backfill: %s", symbol_coingecko_id)
-    try:
-        raw = CG.get_coin_ohlc_by_id(id=symbol_coingecko_id, vs_currency=vs_currency, days=days)
-    except Exception as e:
-        logger.exception("CoinGecko request failed: %s", e)
-        return
-
-    rows = []
-    for point in raw:  
-        ts = datetime.fromtimestamp(point[0] / 1000.0, tz=timezone.utc)
-        o, h, l, c = point[1], point[2], point[3], point[4]
-        symbol = symbol_label or symbol_coingecko_id.upper()
-        if not get_token(symbol): 
-            logger.warning(f"Unknown symbol: {symbol}")
-            continue
-        rows.append(OHLCV(
-            time=ts,
-            symbol=symbol,
-            interval=interval,
-            exchange="coingecko",
-            open=o, high=h, low=l, close=c, volume=0,  
-            raw={'source': 'coingecko'}
-        ))
-    if rows:
-        upsert_ohlcv(rows)
-        logger.info("CoinGecko backfill inserted %d rows for %s", len(rows), symbol_coingecko_id)
 
 def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', since_ts_ms: Optional[int] = None, limit: int = 1000):
     valid_pairs = get_valid_ccxt_pairs(exchange_id)
