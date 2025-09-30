@@ -8,7 +8,7 @@ from typing import Optional, Tuple, List
 
 
 
-def _scaler_path_for(base_dir: Path, symbol: Optional[str], global_name: str = 'scaler_global.pkl') -> Path:
+def _scaler_path_for(base_dir: Path, symbol: Optional[str], global_name: str = 'scaler_global.pkl'):
     base_dir = Path(base_dir)
     if symbol:
         safe = symbol.replace('/', '_').upper()
