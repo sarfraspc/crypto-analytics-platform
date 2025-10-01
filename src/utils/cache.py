@@ -45,3 +45,12 @@ class RedisCache:
         except Exception as e:
             logger.warning(f"[Redis] Failed to fetch DataFrame key={key}: {e}")
             return None
+
+    def delete_by_pattern(self, pattern: str):
+        try:
+            keys_to_delete = [key for key in self.client.scan_iter(match=pattern)]
+            if keys_to_delete:
+                self.client.delete(*keys_to_delete)
+                logger.debug(f"[Redis] Deleted {len(keys_to_delete)} keys matching pattern={pattern}")
+        except Exception as e:
+            logger.warning(f"[Redis] Failed to delete keys with pattern={pattern}: {e}")
