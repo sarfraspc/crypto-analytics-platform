@@ -7,7 +7,7 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor, normalize_time
-from modules.forecasting.data.scaler_utils import (
+from modules.forecasting.data.preprocess_utils import (
     _scaler_path_for,
     load_scaler_with_meta,
     save_scaler_with_meta,
