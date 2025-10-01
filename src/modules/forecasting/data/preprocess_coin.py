@@ -1,48 +1,30 @@
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
 from sqlalchemy import types as satypes
 from sqlalchemy import text
 
 from core.database import get_timescale_engine
-from modules.forecasting.data.scaler_utils import (
-    _scaler_path_for,
+from modules.forecasting.data.preprocess_utils import (
+    normalize_time,
+    normalize_single_time,
+    clean_and_resample,
+    add_features,
+    scale_features,
     load_scaler_with_meta,
-    save_scaler_with_meta,
+    _scaler_path_for,
 )
 from utils.cache import RedisCache
 
 logger = logging.getLogger(__name__)
 
 
-def normalize_time(df, col="time"):
-    if col not in df.columns:
-        raise ValueError("normalize_time: column 'time' not found")
-    df[col] = pd.to_datetime(df[col])
-    if df[col].dt.tz is None:
-        df[col] = df[col].dt.tz_localize("UTC")
-    else:
-        df[col] = df[col].dt.tz_convert("UTC")
-    df[col] = df[col].dt.tz_localize(None)
-    return df
-
-
-_FREQ_MAP = {
-    "1m": "T",
-    "5m": "5T",
-    "15m": "15T",
-    "30m": "30T",
-    "1h": "H",
-    "2h": "2H",
-    "4h": "4H",
-    "6h": "6H",
-    "12h": "12H",
-    "1d": "D",
-    "1w": "W",
+DEFAULT_FEATURE_WINDOWS = {
+    "D": {"sma": (7, 21), "ema": (8, 20), "vol": (7, 30), "z_score": 30},
+    "H": {"sma": (24, 168), "ema": (24, 168), "vol": (24, 168), "z_score": 30},
 }
 
 
@@ -64,7 +46,7 @@ class CoinPreprocessor:
         self.default_target_freq = default_target_freq
         self.cache = RedisCache(expire_seconds=cache_expire) if use_cache else None
 
-    def get_coin_start(self, symbol: str, exchange: str = "binance", interval: str = "1h") -> pd.Timestamp:
+    def get_coin_start(self, symbol: str, exchange: str = "binance", interval: str = "1h"):
         q = f"""
             SELECT MIN(time) AS start_time
             FROM {self.table}
@@ -74,8 +56,7 @@ class CoinPreprocessor:
         start_time = df_start.iloc[0, 0]
         if pd.isna(start_time):
             raise ValueError(f"No OHLCV data found for {symbol}")
-        start_time = pd.Timestamp(start_time).tz_localize('UTC') if pd.Timestamp(start_time).tz is None else pd.Timestamp(start_time).tz_convert('UTC')
-        return start_time
+        return normalize_single_time(start_time)
 
     def load_data(
         self,
@@ -142,10 +123,7 @@ class CoinPreprocessor:
         if df.empty:
             raise ValueError(f"No data found for {base_symbol}/{exchange}/{interval}")
 
-        if df["time"].dt.tz is None:
-            df["time"] = df["time"].dt.tz_localize("UTC")
-        else:
-            df["time"] = df["time"].dt.tz_convert("UTC")
+        df = normalize_time(df, col="time")
 
         df = (
             df.set_index(pd.DatetimeIndex(df["time"]))
@@ -163,78 +141,6 @@ class CoinPreprocessor:
             self.cache.set_dataframe(cache_key, df)
         return df
 
-    def remove_duplicates(self, df: pd.DataFrame):
-        if df.index.duplicated().any():
-            df = df[~df.index.duplicated(keep="last")]
-        return df
-
-    def ensure_continuous_range(
-        self,
-        df: pd.DataFrame,
-        freq_alias: str = "H",
-        start: Optional[pd.Timestamp] = None,
-        end: Optional[pd.Timestamp] = None,
-        method: str = "ffill",
-    ):
-        if start is None:
-            start = df.index.min() if not df.empty else pd.Timestamp('2017-01-01')  # Crypto-safe default
-        if end is None:
-            end = df.index.max()
-        freq_alias = freq_alias.lower()  # 'h' for deprecation
-        full_idx = pd.date_range(start=start, end=end, freq=freq_alias, tz="UTC")
-        df = df.reindex(full_idx)
-        if method == "ffill":
-            df = df.ffill().bfill()
-        elif method == "bfill":
-            df = df.bfill().ffill()
-        elif method == "interpolate":
-            df = df.interpolate(method="time").ffill().bfill()
-        else:
-            raise ValueError("method must be ffill|bfill|interpolate")
-        return df
-
-    def add_advanced_features(
-        self,
-        df: pd.DataFrame,
-        sma_windows=None,
-        ema_windows=None,
-        vol_windows=None,
-        target_freq: str = "D",
-    ):
-        df = df.copy()
-        if sma_windows is None or ema_windows is None or vol_windows is None:
-            if str(target_freq).upper().startswith("D"):
-                sma_windows = sma_windows or (7, 21)
-                ema_windows = ema_windows or (8, 20)
-                vol_windows = vol_windows or (7, 30)  
-            else: 
-                sma_windows = sma_windows or (24, 168)
-                ema_windows = ema_windows or (24, 168)
-                vol_windows = vol_windows or (24, 168)  
-
-        df["log_return"] = np.log(df["close"] / df["close"].shift(1)).fillna(0)
-        for w in vol_windows:
-            df[f"vol_{w}"] = (
-                df["log_return"].rolling(window=w, min_periods=1).std().fillna(0)
-            )
-        for w in sma_windows:
-            df[f"sma_{w}"] = df["close"].rolling(window=w, min_periods=1).mean()
-        for w in ema_windows:
-            df[f"ema_{w}"] = df["close"].ewm(span=w, adjust=False).mean()
-        df["volume_pct_change"] = df["volume"].pct_change().fillna(0)
-        roll = df["volume"].rolling(30, min_periods=1)
-        df["volume_zscore_30"] = (
-            (df["volume"] - roll.mean()) / roll.std().replace(0, np.nan)
-        ).fillna(0)
-        df["hour"] = df.index.hour
-        df["dayofweek"] = df.index.dayofweek
-        df["month"] = df.index.month
-        df["is_month_start"] = df.index.is_month_start.astype(int)
-        return df
-
-    def _freq_alias(self, interval: str) -> str:
-        return _FREQ_MAP.get(interval, interval)
-
     def preprocess(
         self,
         df: pd.DataFrame,
@@ -245,127 +151,35 @@ class CoinPreprocessor:
         fit_scaler: bool = False,
         save_scaler: bool = True,
         scaler_scope: str = "per_symbol",
-        volatility_window_days: Optional[int] = None,
         fill_method: str = "ffill",
         drop_initial_na: bool = True,
         return_numpy: bool = False,
+        feature_config: Optional[Dict] = None,
     ):
         if df.empty:
             raise ValueError("Input DataFrame is empty")
 
         target_freq = target_freq or self.default_target_freq
-        freq_alias = self._freq_alias(input_interval)
 
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df = df.set_index(pd.to_datetime(df.index))
-        if df.index.tz is None:
-            df.index = df.index.tz_localize("UTC")
-        else:
-            df.index = df.index.tz_convert("UTC")
-
-        if freq_alias == "H":
-            df = self.remove_duplicates(df)
-            df = self.ensure_continuous_range(
-                df, freq_alias="H", start=df.index.min(), end=df.index.max(), method=fill_method
-            )
-
-        if freq_alias == "H" and target_freq.upper() in ["D", "1D"]:
-            agg = {
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-                "volume": "sum",
-            }
-            df_resampled = df.resample(target_freq).agg(agg)
-        else:
-            df_resampled = df.resample(target_freq).agg(
-                {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
-            )
-
-        if fill_method == "ffill":
-            df_resampled = df_resampled.ffill().bfill()
-        elif fill_method == "bfill":
-            df_resampled = df_resampled.bfill().ffill()
-        elif fill_method == "interpolate":
-            df_resampled = df_resampled.interpolate(method="time").ffill().bfill()
-        elif fill_method == "drop":
-            df_resampled = df_resampled.dropna()
-        else:
-            raise ValueError(
-                "fill_method must be one of: 'ffill', 'bfill', 'drop', 'interpolate'"
-            )
-
-        if drop_initial_na:
-            df_resampled = df_resampled.dropna(subset=["open", "close"])
-
-        df = df_resampled.copy()
-        df["returns"] = df["close"].pct_change().fillna(0)
-        df["close_lag1"] = df["close"].shift(1).bfill()
-        volatility_window_days = volatility_window_days or 7
-        df["volatility"] = (
-            df["returns"].rolling(window=volatility_window_days, min_periods=1).std().fillna(0)
+        df = clean_and_resample(
+            df, input_interval, target_freq, fill_method, drop_initial_na
         )
-        df["volume"] = df["volume"].replace(0, np.nan).ffill().fillna(0)
+        
+        df = add_features(df, target_freq, feature_config, DEFAULT_FEATURE_WINDOWS)
 
-        df = self.add_advanced_features(df, target_freq=target_freq)
+        if cols_to_scale is None:
+            cols_to_scale = [
+                "open", "high", "low", "close", "volume", "returns"
+            ] + [c for c in df.columns if c.startswith('volatility_')]
 
-        default_cols = [
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "returns",
-            "volatility",
-        ]
-        cols_to_scale = (
-            list(cols_to_scale) if cols_to_scale is not None else default_cols
+        df_scaled = scale_features(
+            df, self.scaler_dir, self.global_scaler_name, symbol, cols_to_scale, fit_scaler, save_scaler, scaler_scope
         )
-        cols_to_scale = [c for c in cols_to_scale if c in df.columns]
-
-        scaler = None
-        meta_cols = None
-        if scaler_scope == "global":
-            path = _scaler_path_for(self.scaler_dir, None, self.global_scaler_name)
-            scaler, meta_cols = load_scaler_with_meta(path)
-        elif scaler_scope == "per_symbol" and symbol:
-            path = _scaler_path_for(self.scaler_dir, symbol)
-            scaler, meta_cols = load_scaler_with_meta(path)
-
-        if fit_scaler:
-            scaler = MinMaxScaler()
-            scaler.fit(df[cols_to_scale].fillna(0))
-            cols_order = cols_to_scale
-            meta_cols = cols_order
-            if save_scaler:
-                path = _scaler_path_for(
-                    self.scaler_dir,
-                    symbol if scaler_scope == "per_symbol" else None,
-                    self.global_scaler_name,
-                )
-                save_scaler_with_meta(path, scaler, cols_order)
-                logger.info(
-                    "Saved scaler+meta for %s (scope: %s)",
-                    symbol or "global",
-                    scaler_scope,
-                )
-            else:
-                logger.info(
-                    "Fitted scaler in-memory (no save) for EDA: %s",
-                    symbol or "global",
-                )
-
-        if scaler is not None:
-            df_scaled = df.copy()
-            transform_cols = meta_cols or cols_to_scale
-            df_scaled[transform_cols] = scaler.transform(df[transform_cols].fillna(0))
-        else:
-            df_scaled = df.copy()
 
         if return_numpy:
             numeric_cols = df_scaled.select_dtypes(include=[np.number]).columns
             return df_scaled, df_scaled[numeric_cols].values
+            
         return df_scaled, None
 
     def split_by_dates(self, df: pd.DataFrame, train_end: str, val_end: str):
@@ -399,7 +213,7 @@ class CoinPreprocessor:
             if 'time' not in df_to_write.columns:
                 raise ValueError("DataFrame must have a 'time' column or a DatetimeIndex")
 
-        df_to_write = normalize_time(df_to_write) 
+        df_to_write['time'] = df_to_write['time'].dt.tz_localize(None)
         df_to_write.to_sql(
             table_name, con=self.engine, if_exists='append', index=False,
             method='multi', chunksize=5000,
@@ -408,8 +222,23 @@ class CoinPreprocessor:
         )
 
     def update_features(self, symbol: str, exchange: str = "binance",
-                        interval: str = "1h", target_freq: str = "D"):
-        from sqlalchemy import text
+                        interval: str = "1h", target_freq: str = "D",
+                        refit_scaler: bool = False):
+        if self.cache:
+            logger.info("Invalidating cache for symbol %s", symbol.upper())
+            self.cache.delete_by_pattern(f"ohlcv:{symbol.upper()}:*")
+            self.cache.delete_by_pattern(f"ohlcv_features:{symbol.upper()}:*")
+
+        freq_type = "D" if str(target_freq).upper().startswith("D") else "H"
+        windows = DEFAULT_FEATURE_WINDOWS[freq_type]
+        all_windows = windows['sma'] + windows['ema'] + windows['vol'] + (windows.get('z_score', 30),)
+        max_window = max(all_windows)
+
+        if freq_type == 'H':
+            overlap_days = (max_window // 24) + 2
+        else:
+            overlap_days = max_window + 1
+
         q = """
             SELECT MAX(time) FROM ohlcv_features
             WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s;
@@ -419,7 +248,8 @@ class CoinPreprocessor:
         })
         last_processed = last_processed_result.iloc[0, 0] if not last_processed_result.empty and not pd.isna(last_processed_result.iloc[0, 0]) else None
 
-        fit_scaler = False
+        fit_scaler = True if last_processed is None else refit_scaler
+
         if last_processed is None:
             logger.info("No existing features, running full preprocessing for %s", symbol)
             q_check = """
@@ -434,24 +264,33 @@ class CoinPreprocessor:
                 return pd.DataFrame()
 
             df_raw = self.load_data(symbol, exchange, interval, lookback_days=None)
-            fit_scaler = True
         else:
             logger.info("Incremental update from %s onwards for %s", last_processed, symbol)
-            q_new = f"""
-                SELECT time, open, high, low, close, volume
-                FROM {self.table}
-                WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s
-                AND time > %(last_processed)s
-                ORDER BY time ASC;
-            """
-            df_raw = pd.read_sql(q_new, self.engine, params={
-                "symbol": symbol.upper(), "exchange": exchange, "interval": interval,
-                "last_processed": pd.Timestamp(last_processed)
-            }, parse_dates=["time"])
+            
+            last_processed_ts = pd.Timestamp(last_processed)
+            if last_processed_ts.tzinfo is None:
+                last_processed_ts = last_processed_ts.tz_localize('UTC')
+
+            start_date_for_load = last_processed_ts - pd.Timedelta(days=overlap_days)
+            
+            lookback_days = (pd.Timestamp.utcnow() - start_date_for_load).days
+            
+            df_raw = self.load_data(symbol, exchange, interval, lookback_days=lookback_days)
 
         if df_raw.empty:
             logger.info("No new rows to process for %s", symbol)
             return pd.DataFrame()
+
+        if not fit_scaler:
+            path = _scaler_path_for(self.scaler_dir, symbol, None)
+            if path.exists():
+                _, meta_cols = load_scaler_with_meta(path)
+                if meta_cols:
+                    expected_vol_cols = {c for c in meta_cols if 'volatility' in c}
+                    current_vol_cols = {f"volatility_{w}" for w in windows['vol']}
+                    if expected_vol_cols != current_vol_cols:
+                        fit_scaler = True
+                        logger.info("Scaler meta mismatch for %s; forcing refit", symbol)
 
         df_proc, _ = self.preprocess(
             df_raw, symbol=symbol, input_interval=interval, target_freq=target_freq,
@@ -460,6 +299,12 @@ class CoinPreprocessor:
         df_proc['symbol'] = symbol.upper()
         df_proc['exchange'] = exchange
         df_proc['interval'] = interval
+
+        if last_processed:
+            last_processed_ts = pd.Timestamp(last_processed)
+            if last_processed_ts.tzinfo is None:
+                last_processed_ts = last_processed_ts.tz_localize('UTC')
+            df_proc = df_proc[df_proc.index > last_processed_ts]
 
         df_proc = df_proc[~df_proc.index.duplicated(keep='last')]
 
@@ -483,6 +328,13 @@ class CoinPreprocessor:
     
     def load_features_series(self, symbol: str, exchange: str = 'binance', interval: str = '1h', start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
         params = {"symbol": symbol.upper(), "exchange": exchange, "interval": interval}
+        cache_key = f"ohlcv_features:{symbol.upper()}:{exchange}:{interval}:{start.isoformat() if start else 'None'}:{end.isoformat() if end else 'None'}"
+        if self.cache:
+            cached_df = self.cache.get_dataframe(cache_key)
+            if cached_df is not None:
+                logger.info("Loaded %s from Redis cache", cache_key)
+                return cached_df
+
         q = f"SELECT * FROM ohlcv_features WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s"
         if start is not None:
             q += " AND time >= %(start)s"
@@ -492,18 +344,15 @@ class CoinPreprocessor:
             params['end'] = pd.to_datetime(end)
         q += " ORDER BY time ASC;"
 
-
         df = pd.read_sql(q, self.engine, params=params, parse_dates=['time'])
         if df.empty:
             raise ValueError(f"No features found for {symbol}/{exchange}/{interval}")
 
-
-        df['time'] = pd.to_datetime(df['time'])
-        if df['time'].dt.tz is None:
-            df['time'] = df['time'].dt.tz_localize('UTC')
-        else:
-            df['time'] = df['time'].dt.tz_convert('UTC')
-
+        df = normalize_time(df, col="time")
 
         df = df.set_index(pd.DatetimeIndex(df['time'])).drop(columns=['time']).sort_index()
+
+        if self.cache:
+            self.cache.set_dataframe(cache_key, df)
+
         return df
