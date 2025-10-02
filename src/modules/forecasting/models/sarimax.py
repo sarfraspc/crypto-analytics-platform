@@ -17,7 +17,7 @@ class SarimaxModel:
         symbol: str,
         order: tuple = (1, 1, 1),
         seasonal_order: tuple = (0, 0, 0, 0),
-        model_dir: str = "src/modules/forecasting/models/saved/sarimax",
+        model_dir: str = r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved\sarimax",
     ):
         self.symbol = symbol.upper()
         self.order = order
@@ -49,16 +49,17 @@ class SarimaxModel:
         self.model_fit = self.model.fit(disp=False)
         logger.info(f"Finished training SARIMAX for {self.symbol}")
 
-    def forecast(self, steps: int = 7, last_date: Optional[pd.Timestamp] = None):
+    def forecast(self, steps: int = 7, last_date: Optional[pd.Timestamp] = None, freq: str = 'D'):
         if self.model_fit is None:
             raise RuntimeError("Model is not trained. Call train() first.")
         forecast = self.model_fit.forecast(steps=steps)
 
         if last_date is not None:
+            start_date = last_date + pd.to_timedelta(1, unit=freq)
             forecast.index = pd.date_range(
-                last_date + pd.Timedelta(days=1),
+                start=start_date,
                 periods=steps,
-                freq="D",
+                freq=freq,
             )
         return forecast
 
@@ -74,22 +75,19 @@ class SarimaxModel:
         self.model_fit = joblib.load(self.model_path)
         logger.info(f"Loaded SARIMAX model for {self.symbol} from {self.model_path}")
 
-
-def train_and_forecast(symbol: str, exchange: str = 'binance', interval: str = '1h', forecast_steps: int = 7, retrain_if_exists: bool = False, ensure_features: bool = True):
-    coin_pre = CoinPreprocessor()
-    if ensure_features:
-        coin_pre.update_features(symbol, exchange=exchange, interval=interval, target_freq='D')
-
-    df_feat = coin_pre.load_features_series(symbol, exchange=exchange, interval=interval)
-
-
-    sarimax_model = SarimaxModel(symbol)
-    if sarimax_model.model_path.exists() and not retrain_if_exists:
-        sarimax_model.load()
+def train_and_forecast(symbol: str, df: pd.DataFrame = None, exchange: str = 'binance', interval: str = '1h', forecast_steps: int = 7, retrain_if_exists: bool = False, ensure_features: bool = True):
+    if df is None:
+        coin_pre = CoinPreprocessor()
+        if ensure_features:
+            coin_pre.update_features(symbol, exchange=exchange, interval=interval, target_freq='H')  
+        df = coin_pre.load_features_series(symbol, exchange=exchange, interval=interval)
+    
+    model = SarimaxModel(symbol)
+    if model.model_path.exists() and not retrain_if_exists:
+        model.load()
     else:
-        sarimax_model.train(df_feat, target_col='close')
-        sarimax_model.save()
-
-
-    forecast = sarimax_model.forecast(steps=forecast_steps, last_date=df_feat.index[-1])
-    return {'forecast': forecast, 'history': df_feat['close']}
+        model.train(df, target_col='close')
+        model.save()
+    
+    forecast = model.forecast(steps=forecast_steps, last_date=df.index[-1], freq='H')
+    return {'forecast': forecast, 'history': df['close']}
