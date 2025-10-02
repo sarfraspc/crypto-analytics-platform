@@ -24,6 +24,7 @@ env/
 mlruns/
 logs/
 mlflow_data/
+panel_wide.csv
 
 # IDE
 .vscode/
@@ -31,3 +32,8 @@ mlflow_data/
 
 # Docker
 *.log
+
+# Lightning/TensorBoard logs
+lightning_logs/
+tslogs/
+src/logs/tft_logs/

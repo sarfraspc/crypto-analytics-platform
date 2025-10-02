@@ -43,7 +43,6 @@ def retrain_all(
                 results["sarimax"][sym] = sar_res["forecast"]
                 print(f"Trained/Loaded SARIMAX for {sym}")
 
-            # 3. Run Prophet
             if "prophet" in models:
                 prop_res = prophet_train_and_forecast(
                     symbol=sym,
