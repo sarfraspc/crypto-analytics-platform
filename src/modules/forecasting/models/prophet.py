@@ -15,7 +15,7 @@ class ProphetModel:
     def __init__(
         self,
         symbol: str,
-        model_dir: str = "src/modules/forecasting/models/saved/prophet",
+        model_dir: str = r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved\prophet",
         changepoint_prior_scale: float = 0.05,
         seasonality_prior_scale: float = 10.0,
         holidays_prior_scale: float = 10.0,
@@ -60,20 +60,21 @@ class ProphetModel:
         self.model.fit(df_prophet)
         logger.info(f"Finished training Prophet for {self.symbol}")
 
-    def forecast(self, steps: int = 7, last_date: Optional[pd.Timestamp] = None):
+    def forecast(self, steps: int = 7, last_date: Optional[pd.Timestamp] = None, freq: str = 'D'):
         if self.model is None:
             raise RuntimeError("Model is not trained. Call train() first.")
 
-        future = self.model.make_future_dataframe(periods=steps, freq="D")
+        future = self.model.make_future_dataframe(periods=steps, freq=freq)
         forecast = self.model.predict(future)
 
         forecast_future = forecast[["ds", "yhat"]].tail(steps).set_index("ds")["yhat"]
 
         if last_date is not None:
+            start_date = last_date + pd.to_timedelta(1, unit=freq)
             forecast_future.index = pd.date_range(
-                last_date + pd.Timedelta(days=1),
+                start=start_date,
                 periods=steps,
-                freq="D",
+                freq=freq,
             )
         return forecast_future
 
@@ -89,20 +90,19 @@ class ProphetModel:
         self.model = joblib.load(self.model_path)
         logger.info(f"Loaded Prophet model for {self.symbol} from {self.model_path}")
 
-
-def train_and_forecast(symbol: str, exchange: str = 'binance', interval: str = '1h', forecast_steps: int = 7, retrain_if_exists: bool = False, ensure_features: bool = True):
-    coin_pre = CoinPreprocessor()
-    if ensure_features:
-        coin_pre.update_features(symbol, exchange=exchange, interval=interval, target_freq='D')
-
-    df_feat = coin_pre.load_features_series(symbol, exchange=exchange, interval=interval)
-
-    prophet_model = ProphetModel(symbol)
-    if prophet_model.model_path.exists() and not retrain_if_exists:
-        prophet_model.load()
+def train_and_forecast(symbol: str, df: pd.DataFrame = None, exchange: str = 'binance', interval: str = '1h', forecast_steps: int = 7, retrain_if_exists: bool = False, ensure_features: bool = True):
+    if df is None:
+        coin_pre = CoinPreprocessor()
+        if ensure_features:
+            coin_pre.update_features(symbol, exchange=exchange, interval=interval, target_freq='H')  # Match freq
+        df = coin_pre.load_features_series(symbol, exchange=exchange, interval=interval)
+    
+    model = ProphetModel(symbol)
+    if model.model_path.exists() and not retrain_if_exists:
+        model.load()
     else:
-        prophet_model.train(df_feat, target_col='close')
-        prophet_model.save()
-
-    forecast = prophet_model.forecast(steps=forecast_steps, last_date=df_feat.index[-1])
-    return {'forecast': forecast, 'history': df_feat['close']}
+        model.train(df, target_col='close')
+        model.save()
+    
+    forecast = model.forecast(steps=forecast_steps, last_date=df.index[-1], freq='H')
+    return {'forecast': forecast, 'history': df['close']}

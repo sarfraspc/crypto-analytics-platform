@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
+from sqlalchemy import text
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor, normalize_time
 from modules.forecasting.data.preprocess_utils import (
@@ -25,6 +26,7 @@ class PanelPreprocessor:
         self.scaler_dir = Path(scaler_dir)
         self.global_scaler_name = global_scaler_name
         self.coin_pre = CoinPreprocessor(scaler_dir=self.scaler_dir)
+        self.engine = self.coin_pre.engine 
 
     def preprocess_panel(
         self,
@@ -35,8 +37,9 @@ class PanelPreprocessor:
         save_scaler: bool = True,
         global_cols: Optional[List[str]] = None,
     ):
-        global_start = max([df.index.min() for df in df_dict.values()])
-        global_end = min([df.index.max() for df in df_dict.values()])
+        # CHANGED: Use min/max for full union range (handles gaps with ffill/bfill)
+        global_start = min([df.index.min() for df in df_dict.values()])
+        global_end = max([df.index.max() for df in df_dict.values()])
 
         for sym, df in df_dict.items():
             df_dict[sym] = df.reindex(
@@ -91,21 +94,41 @@ class PanelPreprocessor:
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         panel.to_parquet(out_path)
 
+    def _convert_to_long_format(self, panel: pd.DataFrame, exchange: str, interval: str) -> pd.DataFrame:
+        """Convert wide format panel to long format for database storage"""
+        # Identify feature columns (exclude metadata columns)
+        feature_cols = [col for col in panel.columns 
+                       if col not in ['time', 'symbol', 'exchange', 'interval'] 
+                       and pd.api.types.is_numeric_dtype(panel[col])]
+        
+        # Melt to long format
+        long_panel = panel.melt(
+            id_vars=['time', 'symbol'],
+            value_vars=feature_cols,
+            var_name='feature_name',
+            value_name='feature_value'
+        )
+        
+        # Add exchange and interval
+        long_panel['exchange'] = exchange
+        long_panel['interval'] = interval
+        
+        return long_panel
+
     def save_panel_to_timescaledb(
         self,
         panel: pd.DataFrame,
         table_name: str,
-        engine,
         exchange: str = "binance",
         interval: str = "1h",
     ):
-        df_to_write = panel.copy()
-        df_to_write["exchange"] = exchange
-        df_to_write["interval"] = interval
+        # Convert to long format for database storage
+        df_to_write = self._convert_to_long_format(panel, exchange, interval)
         df_to_write = normalize_time(df_to_write)
+        
         df_to_write.to_sql(
             table_name,
-            con=engine,
+            con=self.engine,
             if_exists="append",
             index=False,
             method="multi",
@@ -135,7 +158,6 @@ class PanelPreprocessor:
         self.save_panel_to_timescaledb(
             panel,
             "ohlcv_features_panel",
-            self.coin_pre.engine,
             exchange=exchange,
             interval=interval,
         )
