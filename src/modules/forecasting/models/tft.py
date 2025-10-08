@@ -1,6 +1,4 @@
-import numpy as np
 import pandas as pd
-import torch
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
 from pytorch_forecasting.data import GroupNormalizer
 from pytorch_forecasting.metrics import MAE, QuantileLoss

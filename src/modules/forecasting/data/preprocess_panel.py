@@ -37,7 +37,6 @@ class PanelPreprocessor:
         save_scaler: bool = True,
         global_cols: Optional[List[str]] = None,
     ):
-        # CHANGED: Use min/max for full union range (handles gaps with ffill/bfill)
         global_start = min([df.index.min() for df in df_dict.values()])
         global_end = max([df.index.max() for df in df_dict.values()])
 
@@ -94,22 +93,17 @@ class PanelPreprocessor:
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         panel.to_parquet(out_path)
 
-    def _convert_to_long_format(self, panel: pd.DataFrame, exchange: str, interval: str) -> pd.DataFrame:
-        """Convert wide format panel to long format for database storage"""
-        # Identify feature columns (exclude metadata columns)
+    def _convert_to_long_format(self, panel: pd.DataFrame, exchange: str, interval: str):
         feature_cols = [col for col in panel.columns 
                        if col not in ['time', 'symbol', 'exchange', 'interval'] 
                        and pd.api.types.is_numeric_dtype(panel[col])]
         
-        # Melt to long format
         long_panel = panel.melt(
             id_vars=['time', 'symbol'],
             value_vars=feature_cols,
             var_name='feature_name',
             value_name='feature_value'
         )
-        
-        # Add exchange and interval
         long_panel['exchange'] = exchange
         long_panel['interval'] = interval
         
@@ -122,7 +116,6 @@ class PanelPreprocessor:
         exchange: str = "binance",
         interval: str = "1h",
     ):
-        # Convert to long format for database storage
         df_to_write = self._convert_to_long_format(panel, exchange, interval)
         df_to_write = normalize_time(df_to_write)
         
