@@ -112,7 +112,7 @@ def add_features(
     target_freq: str,
     feature_config: Optional[Dict] = None,
     DEFAULT_FEATURE_WINDOWS: dict = None
-) -> pd.DataFrame:
+):
     df = df.copy()
     
     freq_type = "D" if str(target_freq).upper().startswith("D") else "H"

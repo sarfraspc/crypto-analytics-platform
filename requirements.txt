@@ -6,7 +6,7 @@ uvicorn[standard]
 ccxt
 requests
 web3
-pydantic
+pydantic==2.12.0
 pydantic-settings
 pycoingecko
 ta-lib
@@ -15,7 +15,7 @@ praw
 # Databases
 psycopg2-binary
 sqlalchemy
-timescale
+timescaledb
 chromadb
 redis
 celery
@@ -23,7 +23,8 @@ python-dotenv
 pyyaml
 
 # ML / Analytics (CPU-only)
-tensorflow-cpu==2.20.0
+tensorflow-cpu==2.15.0
+tf-keras==2.15.0  
 torch==2.3.1+cpu
 torchvision==0.18.1+cpu
 torchaudio==2.3.1+cpu
@@ -38,14 +39,16 @@ pandas
 numpy>=1.21,<2.0
 statsmodels
 vaderSentiment
-seaborn 
+seaborn
 matplotlib
+plotly
+psutil 
 
 # MLOps
 mlflow
 
 # MCP
-mcp
+mcp==1.8.1
 mcp-server
 
 # Dev tools
@@ -55,4 +58,3 @@ flake8
 mypy
 pytest
 pytest-asyncio
-

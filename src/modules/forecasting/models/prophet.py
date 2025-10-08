@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 import joblib
 import pandas as pd
@@ -94,7 +94,7 @@ def train_and_forecast(symbol: str, df: pd.DataFrame = None, exchange: str = 'bi
     if df is None:
         coin_pre = CoinPreprocessor()
         if ensure_features:
-            coin_pre.update_features(symbol, exchange=exchange, interval=interval, target_freq='H')  # Match freq
+            coin_pre.update_features(symbol, exchange=exchange, interval=interval, target_freq='h') 
         df = coin_pre.load_features_series(symbol, exchange=exchange, interval=interval)
     
     model = ProphetModel(symbol)
@@ -104,5 +104,5 @@ def train_and_forecast(symbol: str, df: pd.DataFrame = None, exchange: str = 'bi
         model.train(df, target_col='close')
         model.save()
     
-    forecast = model.forecast(steps=forecast_steps, last_date=df.index[-1], freq='H')
+    forecast = model.forecast(steps=forecast_steps, last_date=df.index[-1], freq='h')
     return {'forecast': forecast, 'history': df['close']}
