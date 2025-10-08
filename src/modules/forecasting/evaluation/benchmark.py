@@ -5,6 +5,8 @@ from pathlib import Path
 import shutil
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
+from modules.forecasting.data.preprocess_panel import PanelPreprocessor
+from modules.forecasting.explainers.xai import explain_model_predictions
 from modules.forecasting.models.sarimax import SarimaxModel
 from modules.forecasting.models.prophet import ProphetModel
 from modules.forecasting.models.cnn_lstm import CNNLSTMForecaster
@@ -79,6 +81,17 @@ def evaluate_sarimax(
         forecast = sarimax_model.forecast(steps=len(test_df), last_date=train_val_df.index[-1], freq=data_freq)
         y_pred = forecast.values[:len(test_df)]
         y_true = test_df['close'].values
+
+    coin_pre = CoinPreprocessor()
+    explanation = explain_model_predictions(
+        model_type='SARIMAX',  
+        model=sarimax_model,   
+        preprocessor=coin_pre,
+        symbol=symbol,
+        test_df=test_df,      
+        n_samples=50           
+    )
+    print(f"Top SHAP feature for {symbol} (SARIMAX): {explanation['features'][np.argmax(np.mean(np.abs(explanation['shap_values']), axis=0))]}")
     
     metrics = compute_forecast_metrics(y_true, y_pred)
     
@@ -123,6 +136,17 @@ def evaluate_prophet(
         forecast = prophet_model.forecast(steps=len(test_df), last_date=train_val_df.index[-1], freq=data_freq)
         y_pred = forecast.values[:len(test_df)]
         y_true = test_df['close'].values
+
+    coin_pre = CoinPreprocessor()
+    explanation = explain_model_predictions(
+        model_type='Prophet',
+        model=prophet_model,
+        preprocessor=coin_pre,
+        symbol=symbol,
+        test_df=test_df,
+        n_samples=50
+    )
+    print(f"Top SHAP feature for {symbol} (Prophet): {explanation['features'][np.argmax(np.mean(np.abs(explanation['shap_values']), axis=0))]}")
     
     metrics = compute_forecast_metrics(y_true, y_pred)
     
@@ -137,44 +161,37 @@ def evaluate_prophet(
     return {'metrics': metrics, 'params': params}
 
 
-def evaluate_cnn_lstm(
-    symbol: str,
-    train_df: pd.DataFrame,
-    val_df: pd.DataFrame,
-    test_df: pd.DataFrame,
-    sequence_length: int = 30,
-    forecast_horizon: int = 7,
-    retrain_if_exists: bool = False,
-    **kwargs
-):
-    forecaster = CNNLSTMForecaster(sequence_length=sequence_length, forecast_horizon=forecast_horizon)
+def evaluate_cnn_lstm(symbol: str, train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.DataFrame, sequence_length: int = 30, forecast_horizon: int = 7, retrain_if_exists: bool = False, **kwargs):
+    available_features = [col for col in train_df.select_dtypes(include=[np.number]).columns if col != 'time']
+    feature_cols = available_features[:5]  
+    
+    forecaster = CNNLSTMForecaster(sequence_length, forecast_horizon, feature_cols=feature_cols)
     forecaster.prepare_data(train_df, val_df, test_df)
-    if len(forecaster.X_test) == 0:
-        return {'metrics': {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}, 'params': {}}
-    forecaster.build_model()
 
-    checkpoint_path = Path(r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved\cnn-lstm\cnn_lstm_model.keras")
-    checkpoint_path.parent.mkdir(exist_ok=True)  
+    forecaster.feature_cols = feature_cols 
     
-    if checkpoint_path.exists() and not retrain_if_exists:
-        forecaster.load(str(checkpoint_path))
-        print(f"Loaded CNN-LSTM from {checkpoint_path}")  
-    else:
-        forecaster.train(epochs=50, checkpoint_path=str(checkpoint_path))
-        forecaster.save(str(checkpoint_path))
-        print(f"Trained and saved new CNN-LSTM to {checkpoint_path}") 
+    if len(forecaster.X_test) == 0:
+        return {'metrics': {'mae': np.nan, 'r2': np.nan, 'rmse': np.nan}, 'params': {}}
+
+    weights_path = Path(r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved\cnn-lstm\cnn_lstm_model.weights.h5")
     
-    y_pred = forecaster.model.predict(forecaster.X_test)
+    loaded = forecaster.load(str(weights_path), retrain_if_fails=not retrain_if_exists)
+    if not loaded:
+        print(f"Failed to load; skipping CNN-LSTM for {symbol}")
+        return {'metrics': {'mae': np.nan, 'r2': np.nan, 'rmse': np.nan}, 'params': {}}
     
+    y_pred = forecaster.predict()
     metrics = compute_forecast_metrics(forecaster.y_test, y_pred, multi_horizon=True)
     
-    params = {
-        'sequence_length': sequence_length,
-        'forecast_horizon': forecast_horizon,
-        'feature_cols': forecaster.feature_cols
-    }
+    try:
+        coin_pre = CoinPreprocessor()
+        explanation = explain_model_predictions(model_type='CNN-LSTM', model=forecaster, preprocessor=coin_pre, symbol=symbol, test_df=test_df, n_samples=20)
+        print(f"Top SHAP for {symbol}: {explanation['features'][np.argmax(np.mean(np.abs(explanation['shap_values']), axis=0))]}")
+    except Exception as e:
+        print(f"SHAP skipped: {e}")
     
-    log_model_params_and_metrics('CNN-LSTM', symbol, params, metrics, str(checkpoint_path.parent))
+    params = {'sequence_length': sequence_length, 'feature_cols': feature_cols}
+    log_model_params_and_metrics('CNN-LSTM', symbol, params, metrics, str(weights_path.parent))
     
     return {'metrics': metrics, 'params': params}
 
@@ -221,6 +238,17 @@ def evaluate_tft(
     median_idx = next(i for i, q in enumerate(forecaster.tft.loss.quantiles) if q == 0.5)
     y_pred = preds_raw.output[0][:, median_idx, :]
     y_true = preds_raw.y[0] if isinstance(preds_raw.y, (tuple, list)) else preds_raw.y
+
+    # coin_pre = CoinPreprocessor()
+    # explanation = explain_model_predictions(
+    #     model_type='TFT',
+    #     model=forecaster,
+    #     preprocessor=coin_pre,  # FIXED: Coin instead of Panel
+    #     symbol=symbol,
+    #     test_df=test_df,
+    #     n_samples=50
+    # )
+    # print(f"Top SHAP feature for {symbol} (TFT): {explanation['features'][np.argmax(np.mean(np.abs(explanation['shap_values']), axis=0))]}")
     
     metrics = compute_forecast_metrics(y_true, y_pred, multi_horizon=True)
     
@@ -245,6 +273,9 @@ def run_benchmark(symbol: str = 'BTCUSDT', exchange: str = 'binance', interval: 
     train_df, val_df, test_df = split_data_for_evaluation(df_feat)
 
     if 'symbol' not in train_df.columns:
+        train_df = train_df.copy()
+        val_df = val_df.copy()
+        test_df = test_df.copy()
         train_df['symbol'] = symbol
         val_df['symbol'] = symbol
         test_df['symbol'] = symbol
@@ -263,17 +294,17 @@ def run_benchmark(symbol: str = 'BTCUSDT', exchange: str = 'binance', interval: 
     results['prophet'] = evaluate_prophet(symbol, train_df, val_df, test_df, forecast_steps, retrain_if_exists, rolling_eval=rolling_eval)
     print(f"Prophet MAE: {results['prophet']['metrics']['mae']:.4f}")
     
-    results['cnn_lstm'] = evaluate_cnn_lstm(symbol, train_df, val_df, test_df, forecast_horizon=forecast_steps, retrain_if_exists=retrain_if_exists)
-    print(f"CNN-LSTM MAE: {results['cnn_lstm']['metrics']['mae']:.4f}")
+    # results['cnn_lstm'] = evaluate_cnn_lstm(symbol, train_df, val_df, test_df, forecast_horizon=forecast_steps, retrain_if_exists=retrain_if_exists)
+    # print(f"CNN-LSTM MAE: {results['cnn_lstm']['metrics']['mae']:.4f}")
     
-    results['tft'] = evaluate_tft(symbol, train_df, val_df, test_df, max_prediction_length=forecast_steps, retrain_if_exists=retrain_if_exists)
-    print(f"TFT MAE: {results['tft']['metrics']['mae']:.4f}")
+    # results['tft'] = evaluate_tft(symbol, train_df, val_df, test_df, max_prediction_length=forecast_steps, retrain_if_exists=retrain_if_exists)
+    # print(f"TFT MAE: {results['tft']['metrics']['mae']:.4f}")
     
     summary = pd.DataFrame([
-        {'Model': 'SARIMAX', 'MAE': results['sarimax']['metrics']['mae'], 'RMSE': results['sarimax']['metrics']['rmse'], 'MAPE': results['sarimax']['metrics']['mape'], 'Directional Acc': results['sarimax']['metrics']['directional_acc']},
-        {'Model': 'Prophet', 'MAE': results['prophet']['metrics']['mae'], 'RMSE': results['prophet']['metrics']['rmse'], 'MAPE': results['prophet']['metrics']['mape'], 'Directional Acc': results['prophet']['metrics']['directional_acc']},
-        {'Model': 'CNN-LSTM', 'MAE': results['cnn_lstm']['metrics']['mae'], 'RMSE': results['cnn_lstm']['metrics']['rmse'], 'MAPE': results['cnn_lstm']['metrics']['mape'], 'Directional Acc': results['cnn_lstm']['metrics']['directional_acc']},
-        {'Model': 'TFT', 'MAE': results['tft']['metrics']['mae'], 'RMSE': results['tft']['metrics']['rmse'], 'MAPE': results['tft']['metrics']['mape'], 'Directional Acc': results['tft']['metrics']['directional_acc']}
+        {'Model': 'SARIMAX', 'MAE': results['sarimax']['metrics']['mae'], 'RMSE': results['sarimax']['metrics']['rmse'], 'R2': results['sarimax']['metrics']['r2'], 'MAPE': results['sarimax']['metrics']['mape'], 'Directional Acc': results['sarimax']['metrics']['directional_acc']},
+        {'Model': 'Prophet', 'MAE': results['prophet']['metrics']['mae'], 'RMSE': results['prophet']['metrics']['rmse'], 'R2': results['prophet']['metrics']['r2'], 'MAPE': results['prophet']['metrics']['mape'], 'Directional Acc': results['prophet']['metrics']['directional_acc']},
+        # {'Model': 'CNN-LSTM', 'MAE': results['cnn_lstm']['metrics']['mae'], 'RMSE': results['cnn_lstm']['metrics']['rmse'], 'R2': results['cnn_lstm']['metrics']['r2'], 'MAPE': results['cnn_lstm']['metrics']['mape'], 'Directional Acc': results['cnn_lstm']['metrics']['directional_acc']},
+        # {'Model': 'TFT', 'MAE': results['tft']['metrics']['mae'], 'RMSE': results['tft']['metrics']['rmse'], 'R2': results['tft']['metrics']['r2'], 'MAPE': results['tft']['metrics']['mape'], 'Directional Acc': results['tft']['metrics']['directional_acc']}
     ])
     print("\nBenchmark Summary:\n", summary)
     

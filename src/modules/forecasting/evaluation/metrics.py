@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score  
 from typing import Dict, Union, List
 
 
@@ -15,6 +15,7 @@ def compute_forecast_metrics(
     if multi_horizon:
         maes = [mean_absolute_error(y_true[:, h], y_pred[:, h]) for h in range(y_true.shape[1])]
         rmses = [np.sqrt(mean_squared_error(y_true[:, h], y_pred[:, h])) for h in range(y_true.shape[1])]
+        r2s = [r2_score(y_true[:, h], y_pred[:, h]) for h in range(y_true.shape[1])] 
         
         mapes = []
         for h in range(y_true.shape[1]):
@@ -36,16 +37,19 @@ def compute_forecast_metrics(
         return {
             'mae': np.mean(maes),
             'rmse': np.mean(rmses),
+            'r2': np.mean(r2s),  
             'mape': np.mean(mapes),
             'directional_acc': np.mean(dir_accs),
             'mae_per_horizon': maes,
             'rmse_per_horizon': rmses,
+            'r2_per_horizon': r2s,  
             'mape_per_horizon': mapes,
             'directional_acc_per_horizon': dir_accs
         }
     else:
         mae = mean_absolute_error(y_true, y_pred)
         rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+        r2 = r2_score(y_true, y_pred)  
         mape = np.mean(np.abs((y_true - y_pred) / np.where(y_true == 0, 1, y_true))) * 100
-        directional_acc = np.mean(np.sign(np.diff(y_true)) == np.sign(np.diff(y_pred))) * 100
-        return {'mae': mae, 'rmse': rmse, 'mape': mape, 'directional_acc': directional_acc}
+        directional_acc = np.mean(np.sign(np.diff(y_true)) == np.sign(np.diff(y_pred))) * 100 if len(np.diff(y_true)) > 0 else np.nan
+        return {'mae': mae, 'rmse': rmse, 'r2': r2, 'mape': mape, 'directional_acc': directional_acc}  
