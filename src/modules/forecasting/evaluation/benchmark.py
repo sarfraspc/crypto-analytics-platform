@@ -1,21 +1,18 @@
 import pandas as pd
 import numpy as np
-from typing import Any
-from pathlib import Path
-import shutil
+from typing import Any, List
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
 from modules.forecasting.explainers.xai import explain_model_predictions
 from modules.forecasting.models.sarimax import SarimaxModel
 from modules.forecasting.models.prophet import ProphetModel
-from modules.forecasting.models.cnn_lstm import CNNLSTMForecaster
-from modules.forecasting.models.tft import TFTForecaster
+from modules.forecasting.models.cnn_lstm import CNNLSTMPanelForecaster
+from modules.forecasting.models.tft import TFTPanelForecaster
 from modules.forecasting.evaluation.metrics import compute_forecast_metrics
 from modules.forecasting.registry.mlflow_utils import init_mlflow_experiment, log_model_params_and_metrics
-from pytorch_forecasting import TemporalFusionTransformer
-import torch  
 
+logger = logging.getLogger(__name__)
 
 def split_data_for_evaluation(df: pd.DataFrame, test_size: float = 0.1, val_size: float = 0.1):
     n = len(df)
@@ -161,110 +158,147 @@ def evaluate_prophet(
     return {'metrics': metrics, 'params': params}
 
 
-def evaluate_cnn_lstm(symbol: str, train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.DataFrame, sequence_length: int = 30, forecast_horizon: int = 7, retrain_if_exists: bool = False, **kwargs):
-    available_features = [col for col in train_df.select_dtypes(include=[np.number]).columns if col != 'time']
-    feature_cols = available_features[:5]  
-    
-    forecaster = CNNLSTMForecaster(sequence_length, forecast_horizon, feature_cols=feature_cols)
-    forecaster.prepare_data(train_df, val_df, test_df)
-
-    forecaster.feature_cols = feature_cols 
-    
-    if len(forecaster.X_test) == 0:
-        return {'metrics': {'mae': np.nan, 'r2': np.nan, 'rmse': np.nan}, 'params': {}}
-
-    weights_path = Path(r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved\cnn-lstm\cnn_lstm_model.weights.h5")
-    
-    loaded = forecaster.load(str(weights_path), retrain_if_fails=not retrain_if_exists)
-    if not loaded:
-        print(f"Failed to load; skipping CNN-LSTM for {symbol}")
-        return {'metrics': {'mae': np.nan, 'r2': np.nan, 'rmse': np.nan}, 'params': {}}
-    
-    y_pred = forecaster.predict()
-    metrics = compute_forecast_metrics(forecaster.y_test, y_pred, multi_horizon=True)
-    
-    try:
-        coin_pre = CoinPreprocessor()
-        explanation = explain_model_predictions(model_type='CNN-LSTM', model=forecaster, preprocessor=coin_pre, symbol=symbol, test_df=test_df, n_samples=20)
-        print(f"Top SHAP for {symbol}: {explanation['features'][np.argmax(np.mean(np.abs(explanation['shap_values']), axis=0))]}")
-    except Exception as e:
-        print(f"SHAP skipped: {e}")
-    
-    params = {'sequence_length': sequence_length, 'feature_cols': feature_cols}
-    log_model_params_and_metrics('CNN-LSTM', symbol, params, metrics, str(weights_path.parent))
-    
-    return {'metrics': metrics, 'params': params}
-
-def evaluate_tft(
+def evaluate_cnn_lstm_panel(
     symbol: str,
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
-    max_encoder_length: int = 30,
-    max_prediction_length: int = 7,
+    forecast_steps: int = 24,
     retrain_if_exists: bool = False,
+    panel_symbols: List[str] = None,
     **kwargs
 ):
-    forecaster = TFTForecaster(
-        max_encoder_length=max_encoder_length,
-        max_prediction_length=max_prediction_length
-    )
-    forecaster.prepare_data(train_df, val_df, test_df)
-    if len(forecaster.test_df) == 0:
+    if len(test_df) == 0:
         return {'metrics': {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}, 'params': {}}
-    forecaster.build_model()
+
+    if panel_symbols is None:
+        panel_symbols = [symbol, 'ETHUSDT', 'ADAUSDT', 'DOTUSDT', 'LINKUSDT']
     
-    checkpoint_dir = Path(r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved\tft")
-    checkpoint_dir.mkdir(exist_ok=True)
-    best_checkpoint_path = checkpoint_dir / "tft_best.ckpt"
-    
-    loaded = False
-    if best_checkpoint_path.exists() and not retrain_if_exists:
+    try:
+        cnn_model = CNNLSTMPanelForecaster(forecast_horizon=forecast_steps)
+        
+        if not cnn_model.model_path.exists():
+            logger.warning(f"No pre-trained CNN-LSTM panel model found at {cnn_model.model_path}")
+            return {'metrics': {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}, 'params': {}}
+        
+        cnn_model.load()
+        
+        forecast = cnn_model.forecast(symbol, steps=forecast_steps)
+        
+        if len(forecast) > 0 and len(test_df) >= forecast_steps:
+            y_pred = forecast.values
+            y_true = test_df['close'].head(forecast_steps).values
+            metrics = compute_forecast_metrics(y_true, y_pred)
+        else:
+            metrics = {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}
+
         try:
-            checkpoint = torch.load(str(best_checkpoint_path), map_location=torch.device('cpu'))
-            forecaster.tft.load_state_dict(checkpoint['state_dict'], strict=False)  
-            print(f"Loaded TFT state_dict from {best_checkpoint_path} on CPU")
-            loaded = True
+            panel_pre = PanelPreprocessor()
+            explanation = explain_model_predictions(
+                model_type='CNN-LSTM',
+                model=cnn_model,
+                preprocessor=panel_pre,
+                symbol=symbol,
+                test_df=test_df,
+                n_samples=20
+            )
+            print(f"Top SHAP feature for {symbol} (CNN-LSTM): {explanation['features'][np.argmax(np.mean(np.abs(explanation['shap_values']), axis=0))]}")
         except Exception as e:
-            print(f"Manual load failed ({e}), falling back to train on CPU")
-    
-    if not loaded:
-        forecaster.train(max_epochs=50, checkpoint_dir=str(checkpoint_dir))
-        shutil.copy(forecaster.trainer.checkpoint_callback.best_model_path, best_checkpoint_path)
-        forecaster.tft = TemporalFusionTransformer.load_from_checkpoint(str(best_checkpoint_path), map_location=torch.device('cpu'))
-        print(f"Trained and saved new TFT to {best_checkpoint_path}")
+            logger.warning(f"SHAP explanation failed for CNN-LSTM: {e}")
+        
+        params = {
+            'sequence_length': cnn_model.sequence_length,
+            'forecast_horizon': cnn_model.forecast_horizon,
+            'panel_symbols': panel_symbols,
+            'feature_cols': cnn_model.feature_cols[:5]  
+        }
+        
+        log_model_params_and_metrics('CNN-LSTM-Panel', symbol, params, metrics, str(cnn_model.model_dir))
+        
+        return {'metrics': metrics, 'params': params}
+        
+    except Exception as e:
+        logger.error(f"CNN-LSTM evaluation failed: {e}")
+        return {'metrics': {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}, 'params': {}}
 
-    preds_raw = forecaster.tft.predict(forecaster.test_dataloader, return_y=True, mode="raw")
-    median_idx = next(i for i, q in enumerate(forecaster.tft.loss.quantiles) if q == 0.5)
-    y_pred = preds_raw.output[0][:, median_idx, :]
-    y_true = preds_raw.y[0] if isinstance(preds_raw.y, (tuple, list)) else preds_raw.y
 
-    # coin_pre = CoinPreprocessor()
-    # explanation = explain_model_predictions(
-    #     model_type='TFT',
-    #     model=forecaster,
-    #     preprocessor=coin_pre,  # FIXED: Coin instead of Panel
-    #     symbol=symbol,
-    #     test_df=test_df,
-    #     n_samples=50
-    # )
-    # print(f"Top SHAP feature for {symbol} (TFT): {explanation['features'][np.argmax(np.mean(np.abs(explanation['shap_values']), axis=0))]}")
-    
-    metrics = compute_forecast_metrics(y_true, y_pred, multi_horizon=True)
-    
-    params = {
-        'max_encoder_length': max_encoder_length,
-        'max_prediction_length': max_prediction_length,
-        'hidden_size': forecaster.hidden_size,
-        'learning_rate': forecaster.learning_rate
-    }
-    
-    log_model_params_and_metrics('TFT', symbol, params, metrics, str(checkpoint_dir))
-    
-    return {'metrics': metrics, 'params': params}
+def evaluate_tft_panel(
+    symbol: str,
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    forecast_steps: int = 24,
+    retrain_if_exists: bool = False,
+    panel_symbols: List[str] = None,
+    **kwargs
+):
+    if len(test_df) == 0:
+        return {'metrics': {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}, 'params': {}}
 
-def run_benchmark(symbol: str = 'BTCUSDT', exchange: str = 'binance', interval: str = '1h', 
-                  forecast_steps: int = 7, rolling_eval: bool = True, retrain_if_exists: bool = False):
+    if panel_symbols is None:
+        panel_symbols = [symbol, 'ETHUSDT', 'ADAUSDT', 'DOTUSDT', 'LINKUSDT']
+    
+    try:
+        tft_model = TFTPanelForecaster(max_prediction_length=forecast_steps)
+        
+        if not tft_model.model_path.exists():
+            logger.warning(f"No pre-trained TFT panel model found at {tft_model.model_path}")
+            return {'metrics': {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}, 'params': {}}
+        
+        tft_model.load()
+        
+        forecast = tft_model.forecast(symbol, steps=forecast_steps)
+
+        if len(forecast) > 0 and len(test_df) >= forecast_steps:
+            y_pred = forecast.values
+            y_true = test_df['close'].head(forecast_steps).values
+            metrics = compute_forecast_metrics(y_true, y_pred)
+        else:
+            metrics = {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}
+ 
+        try:
+            panel_pre = PanelPreprocessor()
+            explanation = explain_model_predictions(
+                model_type='TFT',
+                model=tft_model,
+                preprocessor=panel_pre,
+                symbol=symbol,
+                test_df=test_df,
+                n_samples=20
+            )
+            print(f"Top SHAP feature for {symbol} (TFT): {explanation['features'][np.argmax(np.mean(np.abs(explanation['shap_values']), axis=0))]}")
+        except Exception as e:
+            logger.warning(f"SHAP explanation failed for TFT: {e}")
+        
+        params = {
+            'max_encoder_length': tft_model.max_encoder_length,
+            'max_prediction_length': tft_model.max_prediction_length,
+            'panel_symbols': panel_symbols,
+            'hidden_size': tft_model.hidden_size
+        }
+        
+        log_model_params_and_metrics('TFT-Panel', symbol, params, metrics, str(tft_model.model_dir))
+        
+        return {'metrics': metrics, 'params': params}
+        
+    except Exception as e:
+        logger.error(f"TFT evaluation failed: {e}")
+        return {'metrics': {'mae': np.nan, 'rmse': np.nan, 'mape': np.nan, 'directional_acc': np.nan}, 'params': {}}
+
+
+def run_benchmark(
+    symbol: str = 'BTCUSDT', 
+    exchange: str = 'binance', 
+    interval: str = '1h', 
+    forecast_steps: int = 24, 
+    rolling_eval: bool = False, 
+    retrain_if_exists: bool = False,
+    models: List[str] = None,
+    panel_symbols: List[str] = None
+):
+    if models is None:
+        models = ['sarimax', 'prophet', 'cnn_lstm', 'tft']
+    
     init_mlflow_experiment()
     
     coin_pre = CoinPreprocessor()
@@ -279,6 +313,7 @@ def run_benchmark(symbol: str = 'BTCUSDT', exchange: str = 'binance', interval: 
         train_df['symbol'] = symbol
         val_df['symbol'] = symbol
         test_df['symbol'] = symbol
+    
     if 'time' not in train_df.columns:
         train_df['time'] = train_df.index
         val_df['time'] = val_df.index
@@ -286,26 +321,87 @@ def run_benchmark(symbol: str = 'BTCUSDT', exchange: str = 'binance', interval: 
 
     results = {}
     
-    print(f"{ 'Rolling' if rolling_eval else 'Single'} OOS eval for {symbol}...")
+    print(f"Running benchmark for {symbol}...")
+    print(f"Data split - Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
+
+    if 'sarimax' in models:
+        print("Evaluating SARIMAX...")
+        results['sarimax'] = evaluate_sarimax(
+            symbol, train_df, val_df, test_df, forecast_steps, 
+            retrain_if_exists, rolling_eval=rolling_eval
+        )
+        print(f"SARIMAX MAE: {results['sarimax']['metrics']['mae']:.4f}")
     
-    results['sarimax'] = evaluate_sarimax(symbol, train_df, val_df, test_df, forecast_steps, retrain_if_exists, rolling_eval=rolling_eval)
-    print(f"SARIMAX MAE: {results['sarimax']['metrics']['mae']:.4f}")
+    if 'prophet' in models:
+        print("Evaluating Prophet...")
+        results['prophet'] = evaluate_prophet(
+            symbol, train_df, val_df, test_df, forecast_steps,
+            retrain_if_exists, rolling_eval=rolling_eval
+        )
+        print(f"Prophet MAE: {results['prophet']['metrics']['mae']:.4f}")
+
+    if 'cnn_lstm' in models:
+        print("Evaluating CNN-LSTM Panel...")
+        results['cnn_lstm'] = evaluate_cnn_lstm_panel(
+            symbol, train_df, val_df, test_df, forecast_steps,
+            retrain_if_exists, panel_symbols=panel_symbols
+        )
+        print(f"CNN-LSTM MAE: {results['cnn_lstm']['metrics']['mae']:.4f}")
     
-    results['prophet'] = evaluate_prophet(symbol, train_df, val_df, test_df, forecast_steps, retrain_if_exists, rolling_eval=rolling_eval)
-    print(f"Prophet MAE: {results['prophet']['metrics']['mae']:.4f}")
+    if 'tft' in models:
+        print("Evaluating TFT Panel...")
+        results['tft'] = evaluate_tft_panel(
+            symbol, train_df, val_df, test_df, forecast_steps,
+            retrain_if_exists, panel_symbols=panel_symbols
+        )
+        print(f"TFT MAE: {results['tft']['metrics']['mae']:.4f}")
+
+    summary_data = []
+    for model_name in models:
+        if model_name in results and 'metrics' in results[model_name]:
+            metrics = results[model_name]['metrics']
+            summary_data.append({
+                'Model': model_name.upper(),
+                'MAE': metrics.get('mae', np.nan),
+                'RMSE': metrics.get('rmse', np.nan),
+                'R2': metrics.get('r2', np.nan),
+                'MAPE': metrics.get('mape', np.nan),
+                'Directional Acc': metrics.get('directional_acc', np.nan)
+            })
     
-    # results['cnn_lstm'] = evaluate_cnn_lstm(symbol, train_df, val_df, test_df, forecast_horizon=forecast_steps, retrain_if_exists=retrain_if_exists)
-    # print(f"CNN-LSTM MAE: {results['cnn_lstm']['metrics']['mae']:.4f}")
-    
-    # results['tft'] = evaluate_tft(symbol, train_df, val_df, test_df, max_prediction_length=forecast_steps, retrain_if_exists=retrain_if_exists)
-    # print(f"TFT MAE: {results['tft']['metrics']['mae']:.4f}")
-    
-    summary = pd.DataFrame([
-        {'Model': 'SARIMAX', 'MAE': results['sarimax']['metrics']['mae'], 'RMSE': results['sarimax']['metrics']['rmse'], 'R2': results['sarimax']['metrics']['r2'], 'MAPE': results['sarimax']['metrics']['mape'], 'Directional Acc': results['sarimax']['metrics']['directional_acc']},
-        {'Model': 'Prophet', 'MAE': results['prophet']['metrics']['mae'], 'RMSE': results['prophet']['metrics']['rmse'], 'R2': results['prophet']['metrics']['r2'], 'MAPE': results['prophet']['metrics']['mape'], 'Directional Acc': results['prophet']['metrics']['directional_acc']},
-        # {'Model': 'CNN-LSTM', 'MAE': results['cnn_lstm']['metrics']['mae'], 'RMSE': results['cnn_lstm']['metrics']['rmse'], 'R2': results['cnn_lstm']['metrics']['r2'], 'MAPE': results['cnn_lstm']['metrics']['mape'], 'Directional Acc': results['cnn_lstm']['metrics']['directional_acc']},
-        # {'Model': 'TFT', 'MAE': results['tft']['metrics']['mae'], 'RMSE': results['tft']['metrics']['rmse'], 'R2': results['tft']['metrics']['r2'], 'MAPE': results['tft']['metrics']['mape'], 'Directional Acc': results['tft']['metrics']['directional_acc']}
-    ])
-    print("\nBenchmark Summary:\n", summary)
+    summary = pd.DataFrame(summary_data)
+    print("\nBenchmark Summary:")
+    print(summary.to_string(index=False))
     
     return results
+
+
+if __name__ == "__main__":
+    import argparse
+    import logging
+    
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    parser = argparse.ArgumentParser(description='Run forecasting model benchmark')
+    parser.add_argument('--symbol', default='BTCUSDT', help='Symbol to benchmark')
+    parser.add_argument('--exchange', default='binance', help='Exchange name')
+    parser.add_argument('--interval', default='1h', help='Data interval')
+    parser.add_argument('--forecast-steps', type=int, default=24, help='Forecast horizon')
+    parser.add_argument('--models', nargs='+', default=['sarimax', 'prophet', 'cnn_lstm', 'tft'], 
+                       help='Models to evaluate')
+    parser.add_argument('--rolling-eval', action='store_true', help='Use rolling evaluation')
+    parser.add_argument('--retrain-if-exists', action='store_true', help='Retrain models if they exist')
+    parser.add_argument('--panel-symbols', nargs='+', help='Symbols for panel models training')
+    
+    args = parser.parse_args()
+    
+    results = run_benchmark(
+        symbol=args.symbol,
+        exchange=args.exchange,
+        interval=args.interval,
+        forecast_steps=args.forecast_steps,
+        rolling_eval=args.rolling_eval,
+        retrain_if_exists=args.retrain_if_exists,
+        models=args.models,
+        panel_symbols=args.panel_symbols
+    )
