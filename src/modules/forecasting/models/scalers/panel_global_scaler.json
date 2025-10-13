@@ -1,1 +1,1 @@
-{"cols_order": ["close", "returns", "sma_7", "ema_8", "volume_zscore_30", "dayofweek"], "scaler_type": "MinMaxScaler", "saved_at": "2025-10-01T11:18:21.134179+00:00"}
+{"cols_order": ["open", "high", "low", "close", "volume", "returns", "close_lag1", "volatility", "log_return", "vol_7", "vol_30", "sma_7", "sma_21", "ema_8", "ema_20", "volume_pct_change", "volume_zscore_30", "hour", "dayofweek", "month", "is_month_start"], "scaler_type": "MinMaxScaler", "saved_at": "2025-10-12T14:49:08.063994+00:00"}

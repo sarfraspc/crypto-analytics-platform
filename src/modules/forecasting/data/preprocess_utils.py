@@ -12,18 +12,17 @@ logger = logging.getLogger(__name__)
 
 _FREQ_MAP = {
     "1m": "T",
-    "5m": "5T",
+    "5m": "5T", 
     "15m": "15T",
     "30m": "30T",
-    "1h": "h",
-    "2h": "2H",
-    "4h": "4H",
-    "6h": "6H",
-    "12h": "12H",
+    "1h": "h",  
+    "2h": "2h",
+    "4h": "4h", 
+    "6h": "6h", 
+    "12h": "12h",
     "1d": "D",
     "1w": "W",
 }
-
 _OHLCV_AGG_RULES = {
     "open": "first",
     "high": "max",
@@ -137,10 +136,11 @@ def add_features(
     df["returns"] = df["returns"].fillna(0)
 
     for w in config['vol_windows']:
-        df[f"volatility_{w}"] = df["returns"].rolling(window=w, min_periods=1).std().fillna(0)
+        df[f"vol_{w}"] = df["returns"].rolling(window=w, min_periods=1).std().fillna(0)
 
     for w in config['sma_windows']:
         df[f"sma_{w}"] = df["close"].rolling(window=w, min_periods=1).mean()
+
     for w in config['ema_windows']:
         df[f"ema_{w}"] = df["close"].ewm(span=w, adjust=False).mean()
 

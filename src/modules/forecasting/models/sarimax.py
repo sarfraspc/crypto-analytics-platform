@@ -17,14 +17,14 @@ class SarimaxModel:
         symbol: str,
         order: tuple = (1, 1, 1),
         seasonal_order: tuple = (0, 0, 0, 0),
-        model_dir: str = r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved\sarimax",
+        MODEL_DIR = Path("src/modules/forecasting/models/saved/sarimax"),
     ):
         self.symbol = symbol.upper()
         self.order = order
         self.seasonal_order = seasonal_order
         self.model = None
         self.model_fit = None
-        self.model_dir = Path(model_dir)
+        self.model_dir = Path(MODEL_DIR)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.model_path = self.model_dir / f"sarimax_{self.symbol}.pkl"
 
