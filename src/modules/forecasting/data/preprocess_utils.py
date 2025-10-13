@@ -218,15 +218,11 @@ def _scaler_path_for(base_dir: Path, symbol: Optional[str], global_name: str = '
     return base_dir / global_name
 
 
-
-
 def save_scaler_with_meta(path: Path, scaler: MinMaxScaler, cols_order: List[str]):
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(scaler, path)
     meta = {'cols_order': cols_order, 'scaler_type': type(scaler).__name__, 'saved_at': pd.Timestamp.utcnow().isoformat()}
     path.with_suffix('.json').write_text(json.dumps(meta))
-
-
 
 
 def load_scaler_with_meta(path: Path):
@@ -238,8 +234,6 @@ def load_scaler_with_meta(path: Path):
     return scaler, meta.get('cols_order')
 
 
-
-
 def normalize_time(df, col="time"):
     if col not in df.columns:
         raise ValueError("normalize_time: column 'time' not found")
@@ -249,7 +243,6 @@ def normalize_time(df, col="time"):
     else:
         df[col] = df[col].dt.tz_convert("UTC")
     return df
-
 
 
 def normalize_single_time(time_value):
