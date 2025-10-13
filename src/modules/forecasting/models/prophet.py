@@ -15,7 +15,7 @@ class ProphetModel:
     def __init__(
         self,
         symbol: str,
-        model_dir: str = r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved\prophet",
+        model_dir: str = "src/modules/forecasting/models/saved/prophet",
         changepoint_prior_scale: float = 0.05,
         seasonality_prior_scale: float = 10.0,
         holidays_prior_scale: float = 10.0,

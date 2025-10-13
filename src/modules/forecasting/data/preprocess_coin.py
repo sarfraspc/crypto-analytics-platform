@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FEATURE_WINDOWS = {
     "D": {"sma": (7, 21), "ema": (8, 20), "vol": (7, 30), "z_score": 30},
-    "H": {"sma": (24, 168), "ema": (24, 168), "vol": (24, 168), "z_score": 30},
+    "H": {"sma": (7, 21), "ema": (8, 20), "vol": (7, 30), "z_score": 30},
 }
 
 
@@ -181,29 +181,6 @@ class CoinPreprocessor:
             return df_scaled, df_scaled[numeric_cols].values
             
         return df_scaled, None
-
-    def split_by_dates(self, df: pd.DataFrame, train_end: str, val_end: str):
-        train_end = pd.to_datetime(train_end).tz_localize('UTC') if pd.to_datetime(train_end).tzinfo is None else pd.to_datetime(train_end).tz_convert('UTC')
-        val_end = pd.to_datetime(val_end).tz_localize('UTC') if pd.to_datetime(val_end).tzinfo is None else pd.to_datetime(val_end).tz_convert('UTC')
-        train = df[df.index <= train_end].copy()
-        val = df[(df.index > train_end) & (df.index <= val_end)].copy()
-        test = df[df.index > val_end].copy()
-        return train, val, test
-
-    def create_sequences(self, df: pd.DataFrame, seq_length: int = 7, forecast_horizon: int = 7, feature_cols: Optional[Sequence[str]] = None, target_col: str = 'close', as_numpy: bool = True):
-        if feature_cols is None:
-            feature_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if target_col not in df.columns:
-            raise ValueError('Target column not found')
-        features = df[list(feature_cols)].values
-        target = df[target_col].values
-        X, y = [], []
-        for i in range(seq_length, len(df) - forecast_horizon + 1):
-            X.append(features[i - seq_length:i])
-            y.append(target[i:i + forecast_horizon])
-        X = np.asarray(X)
-        y = np.asarray(y)
-        return (X, y) if as_numpy else (X.tolist(), y.tolist())
 
     def save_to_timescaledb(self, df: pd.DataFrame, table_name: str):
         if isinstance(df.index, pd.DatetimeIndex):

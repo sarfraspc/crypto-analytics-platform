@@ -21,23 +21,37 @@ def log_model_params_and_metrics(
     metrics: Dict[str, float],
     artifacts_path: str = None
 ):
+    if symbol == 'multiple' and 'symbols' in params:
+        symbol_str = f"panel_{len(params['symbols'])}_symbols"
+    else:
+        symbol_str = symbol
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"{model_type}_{symbol}_{timestamp}"
+    run_name = f"{model_type}_{symbol_str}_{timestamp}"
     
-    with mlflow.start_run(run_name=run_name):
-        mlflow.log_param("model_type", model_type)
-        mlflow.log_param("symbol", symbol)
-        for key, value in params.items():
-            mlflow.log_param(f"{key}", value)
+    try:
+        with mlflow.start_run(run_name=run_name):
+            mlflow.log_param("model_type", model_type)
+            mlflow.log_param("symbol", symbol_str)
+            
+            for key, value in params.items():
+                if isinstance(value, (list, dict)):
+                    mlflow.log_param(f"{key}", str(value))
+                else:
+                    mlflow.log_param(f"{key}", value)
 
-        for key, value in metrics.items():
-            if isinstance(value, (list, np.ndarray)):
-                for i, v in enumerate(value):
-                    mlflow.log_metric(f"{key}_{i+1}", v)
-            else:
-                mlflow.log_metric(key, value)
+            for key, value in metrics.items():
+                if isinstance(value, (list, np.ndarray)):
+                    for i, v in enumerate(value):
+                        if np.isfinite(v): 
+                            mlflow.log_metric(f"{key}_{i+1}", float(v))
+                else:
+                    if np.isfinite(value): 
+                        mlflow.log_metric(key, float(value))
 
-        if artifacts_path and os.path.exists(artifacts_path):
-            mlflow.log_artifacts(artifacts_path)
-        
-        print(f"Logged run '{run_name}' to MLflow with metrics: {metrics}")
+            if artifacts_path and os.path.exists(artifacts_path):
+                mlflow.log_artifacts(artifacts_path)
+            
+            print(f"Logged run '{run_name}' to MLflow")
+    except Exception as e:
+        print(f"Failed to log to MLflow: {e}")
