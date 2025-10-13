@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-MODEL_DIR = Path(r"D:\python_projects\crypto-analytics-platform\src\modules\forecasting\models\saved")
+MODEL_DIR = Path("src\modules\forecasting\models\saved")
 SARIMAX_BASE_DIR = MODEL_DIR / "sarimax"
 
 class AsyncStdioWrapper:
@@ -140,9 +140,9 @@ class SarimaxMCP:
             df = df[df.index >= pd.to_datetime(start_date)]
 
         last_date = df.index[-1]
-        forecast = model.forecast(steps=horizon, last_date=last_date, freq='H')
+        forecast = model.forecast(steps=horizon, last_date=last_date, freq='h')
         forecast_df = pd.DataFrame({
-            'timestamp': pd.date_range(start=last_date + pd.Timedelta(hours=1), periods=horizon, freq='H'),
+            'timestamp': pd.date_range(start=last_date + pd.Timedelta(hours=1), periods=horizon, freq='h'),
             'predicted_close': forecast.values
         })
 
