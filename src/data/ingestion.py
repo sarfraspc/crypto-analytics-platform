@@ -1,7 +1,7 @@
 import asyncio
 import time
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import List, Dict
 from sqlalchemy import text
 
@@ -9,7 +9,7 @@ import mlflow
 
 from core.database import get_timescale_engine, get_metadata_engine
 from core.config import settings
-from data.storage.crud import update_ingestion_job
+from data.storage.crud import update_ingestion_job, get_last_success
 from data.validation import IngestionJob
 from data.ingestion.market_client import backfill_ohlcv_ccxt, poll_trades_ccxt
 from data.ingestion.chain_client import scan_eth_transfers
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 TS_ENG = get_timescale_engine()
 META_ENG = get_metadata_engine()
 
-def get_symbols_from_tokens(limit: int = 50) -> List[Dict]:
+def get_symbols_from_tokens(limit: int = 50):
     with META_ENG.connect() as conn:
         query = text("""
             SELECT 
@@ -44,14 +44,6 @@ def get_symbols_from_tokens(limit: int = 50) -> List[Dict]:
     logger.info("Loaded %d top-ranked symbols from tokens", len(symbols))
     return symbols
 
-def get_last_success(pipeline: str) -> datetime:
-    with TS_ENG.connect() as conn:
-        last = conn.execute(
-            text("SELECT last_success FROM ingestion_jobs WHERE pipeline = :pipeline ORDER BY last_success DESC LIMIT 1"),
-            {'pipeline': pipeline}
-        ).scalar()
-    return last or (datetime.now(timezone.utc) - timedelta(hours=1))
-
 async def run_backfill(symbols: List[Dict] = None):
     symbols = symbols or get_symbols_from_tokens(limit=50)
     logger.info("Starting backfill for %d symbols", len(symbols))
@@ -61,11 +53,9 @@ async def run_backfill(symbols: List[Dict] = None):
     for i, s in enumerate(symbols):
         logger.info("Backfilling %s/%s: %s", i+1, len(symbols), s['label'])
         try:
-            # Daily candles (coarser, for SARIMAX/Prophet; ~2k+ bars for old coins)
             bars_daily = backfill_ohlcv_ccxt(s['exchange'], s['use_ccxt_symbol'], timeframe='1d', since_ts_ms=old_since_ms)
             logger.info("Fetched %d daily bars for %s (full history)", bars_daily, s['label'])
             
-            # Hourly candles (finer, for CNN-LSTM/TFT; ~50k+ bars for old coins)
             bars_hourly = backfill_ohlcv_ccxt(s['exchange'], s['use_ccxt_symbol'], timeframe='1h', since_ts_ms=old_since_ms)
             logger.info("Fetched %d hourly bars for %s (full history)", bars_hourly, s['label'])
         except Exception as e:
