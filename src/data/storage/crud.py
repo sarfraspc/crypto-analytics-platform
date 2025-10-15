@@ -1,6 +1,6 @@
 import json
 from typing import Optional, List, Dict
-from decimal import Decimal
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
@@ -97,7 +97,7 @@ def upsert_news(articles: List[NewsArticle]):
             'url': a.url,
             'published': a.published,
             'text': a.text,
-            'raw': json.dumps(a.raw or {})
+            'raw': json.dumps({**(a.raw or {}), 'score': a.score})
         }
         for a in articles
     ]
@@ -115,7 +115,7 @@ def upsert_reddit(posts: List[RedditPost]):
         INSERT INTO reddit_posts (id, subreddit, author, title, body, score, created, raw)
         VALUES (:id, :subreddit, :author, :title, :body, :score, :created, :raw)
         ON CONFLICT (id) DO NOTHING
-    """)
+    """ )
     params = [
         {
             'id': p.id,
@@ -123,9 +123,9 @@ def upsert_reddit(posts: List[RedditPost]):
             'author': p.author,
             'title': p.title,
             'body': p.body,
-            'score': p.score,
+            'score': p.upvote_score,
             'created': p.created,
-            'raw': json.dumps(p.raw or {})
+            'raw': json.dumps({**(p.raw or {}), 'sentiment_score': p.score})
         }
         for p in posts
     ]
@@ -188,6 +188,14 @@ def upsert_onchain_metrics(metrics: List[OnchainMetric]):
         logger.info(f"Upserted {len(metrics)} onchain metrics")
     except Exception as e:
         logger.error(f"Error upserting onchain metrics: {e}")
+
+def get_last_success(pipeline: str) -> datetime:
+    with TS_ENG.connect() as conn:
+        last = conn.execute(
+            text("SELECT last_success FROM ingestion_jobs WHERE pipeline = :pipeline ORDER BY last_success DESC LIMIT 1"),
+            {'pipeline': pipeline}
+        ).scalar()
+    return last or (datetime.now(timezone.utc) - timedelta(hours=1))
 
 def update_ingestion_job(job: IngestionJob):
     update_sql = text("""
