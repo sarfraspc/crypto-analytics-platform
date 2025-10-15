@@ -24,8 +24,9 @@ env/
 mlruns/
 logs/
 mlflow_data/
+src/data/datasets/
+data/panel_cache/
 panel_wide.csv
-panel_cache/
 
 # IDE
 .vscode/
