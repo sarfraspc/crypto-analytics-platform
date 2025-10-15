@@ -56,7 +56,7 @@ class NewsArticle(BaseModel):
     url: Optional[str] = None
     published: Optional[datetime] = None
     text: Optional[str] = None
-    sentiment_score: Optional[float] = None
+    score: Optional[float] = None
     raw: Optional[Dict[str, Any]] = None
 
 class RedditPost(BaseModel):
@@ -65,8 +65,8 @@ class RedditPost(BaseModel):
     author: Optional[str] = None
     title: Optional[str] = None
     body: Optional[str] = None
-    score: Optional[int] = None
-    sentiment_score: Optional[float] = None
+    upvote_score: Optional[int] = None
+    score: Optional[float] = None
     created: Optional[datetime] = None
     raw: Optional[Dict[str, Any]] = None
 
