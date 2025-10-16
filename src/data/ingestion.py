@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 import mlflow  
 
+from core.config import settings
 from core.database import get_timescale_engine, get_metadata_engine
 from core.config import settings
 from data.storage.crud import update_ingestion_job, get_last_success
@@ -19,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 TS_ENG = get_timescale_engine()
 META_ENG = get_metadata_engine()
+
+def setup_mlflow():
+    mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+    logger.info(f"MLflow configured with: {settings.MLFLOW_TRACKING_URI}")
 
 def get_symbols_from_tokens(limit: int = 50):
     with META_ENG.connect() as conn:
@@ -45,6 +50,7 @@ def get_symbols_from_tokens(limit: int = 50):
     return symbols
 
 async def run_backfill(symbols: List[Dict] = None):
+    setup_mlflow() 
     symbols = symbols or get_symbols_from_tokens(limit=50)
     logger.info("Starting backfill for %d symbols", len(symbols))
     
@@ -74,6 +80,8 @@ async def run_backfill(symbols: List[Dict] = None):
     logger.info("Backfill complete")
 
 async def run_ingestion_cycle(pipeline: str = 'full_cycle', symbols: List[Dict] = None):
+    setup_mlflow()
+
     start_time = datetime.now()
     symbols = symbols or get_symbols_from_tokens(limit=50)
     logger.info(f"Starting {pipeline} with %d symbols", len(symbols))
@@ -119,6 +127,7 @@ async def run_ingestion_cycle(pipeline: str = 'full_cycle', symbols: List[Dict] 
         logger.error(f"{pipeline} failed: {e}")
 
 async def run_polling(symbols: List[str] = None):
+    setup_mlflow() 
     symbols = symbols or [s['use_ccxt_symbol'] for s in get_symbols_from_tokens(limit=10)]
     logger.info("Polling %d symbols", len(symbols))
     tasks = [asyncio.create_task(poll_trades_ccxt('binance', symbol, poll_interval=5.0)) for symbol in symbols]
@@ -126,6 +135,7 @@ async def run_polling(symbols: List[str] = None):
 
 if __name__ == "__main__":
     import sys
+    setup_mlflow()
     arg = sys.argv[1] if len(sys.argv) > 1 else None
     if arg == '--backfill':
         asyncio.run(run_backfill())
