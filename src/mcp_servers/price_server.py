@@ -12,83 +12,15 @@ from mcp.types import CallToolRequest, CallToolResult, Tool, TextContent
 from modules.forecasting.models.sarimax import SarimaxModel
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics
+from core.logging_config import setup_logging
+from utils.mcp_utils import AsyncStdioWrapper
 
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
-MODEL_DIR = Path("src\modules\forecasting\models\saved")
+MODEL_DIR = Path("src/modules/forecasting/models/saved")
 SARIMAX_BASE_DIR = MODEL_DIR / "sarimax"
-
-class AsyncStdioWrapper:
-    def __init__(self, fileobj, mode: str):
-        self._file = fileobj
-        self._mode = mode
-        self._loop = None
-        self._closed = False
-
-    async def __aenter__(self):
-        self._loop = asyncio.get_running_loop()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        self._closed = True
-        return False
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        data = await self.readline()
-        if not data:
-            raise StopAsyncIteration
-        return data
-
-    async def read(self, n: int = -1):
-        if self._closed:
-            return b""
-        loop = self._loop or asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._file.read, n)
-
-    async def readline(self):
-        if self._closed:
-            return b""
-        loop = self._loop or asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._file.readline)
-
-    async def readexactly(self, n: int):
-        if self._closed:
-            return b""
-        loop = self._loop or asyncio.get_running_loop()
-
-        def _readexactly(cnt):
-            data = b''
-            while len(data) < cnt:
-                chunk = self._file.read(cnt - len(data))
-                if not chunk:
-                    break
-                data += chunk
-            return data
-
-        return await loop.run_in_executor(None, _readexactly, n)
-
-    async def write(self, data: bytes):
-        if self._closed:
-            return 0
-        loop = self._loop or asyncio.get_running_loop()
-
-        def _write(d):
-            written = self._file.write(d)
-            try:
-                self._file.flush()
-            except Exception:
-                pass
-            return written
-
-        return await loop.run_in_executor(None, _write, data)
-
-    async def drain(self):
-        await asyncio.sleep(0)
 
 class SarimaxMCP:
     def __init__(self):
@@ -137,7 +69,10 @@ class SarimaxMCP:
 
         df = self.coin_pre.load_features_series(symbol)
         if start_date:
-            df = df[df.index >= pd.to_datetime(start_date)]
+            try:
+                df = df[df.index >= pd.to_datetime(start_date)]
+            except ValueError:
+                logger.warning(f"Invalid start_date format: {start_date}. Ignoring date filter.")
 
         last_date = df.index[-1]
         forecast = model.forecast(steps=horizon, last_date=last_date, freq='h')
