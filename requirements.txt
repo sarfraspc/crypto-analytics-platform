@@ -16,11 +16,15 @@ praw
 psycopg2-binary
 sqlalchemy
 timescaledb
-chromadb
 redis
 celery
 python-dotenv
 pyyaml
+
+# RAG (Vector Store + Search + HF)
+qdrant-client
+rank-bm25
+transformers
 
 # ML / Analytics (CPU-only)
 tensorflow-cpu==2.15.0
@@ -43,6 +47,7 @@ seaborn
 matplotlib
 plotly
 psutil 
+nltk
 
 # MLOps
 mlflow

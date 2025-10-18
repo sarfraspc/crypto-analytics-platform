@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     REDIS_PORT: int
     REDIS_DB: int
 
+    # Vector DB (Qdrant)
+    QDRANT_URL: str 
+    QDRANT_COLLECTION: str
+
     # MLflow
     MLFLOW_TRACKING_URI: str
     MLFLOW_ARTIFACT_ROOT: str
