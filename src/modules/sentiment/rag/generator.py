@@ -10,10 +10,10 @@ class Generator:
         self.max_context_len = max_context_len
 
     def generate(self, query: str, contexts: List[Dict[str, Any]]):
-        context_str = "\n".join([f"Context: {c['content'][:self.max_context_len]}" for c in contexts])
-        prompt = f"Question: {query}\nContext: {context_str}\nAnswer:"
+        context_str = "\n".join([f"Source: {c['metadata'].get('source', 'unknown')} - {c['content'][:self.max_context_len]}" for c in contexts])
+        prompt = f"Answer the following question based on the provided contexts. Cite the sources used in your answer.\n\nQuestion: {query}\n\nContexts:\n{context_str}\n\nAnswer:"
         try:
-            response = self.generator(prompt, max_length=100, num_return_sequences=1)[0]['generated_text']
+            response = self.generator(prompt, max_length=150, num_return_sequences=1)[0]['generated_text']
             answer = response.split("Answer:")[-1].strip() if "Answer:" in response else response.strip()
             logger.info(f"Generated response for query: {query[:50]}...")
             return answer
