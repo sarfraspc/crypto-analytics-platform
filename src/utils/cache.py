@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import redis
@@ -54,3 +54,13 @@ class RedisCache:
                 logger.debug(f"[Redis] Deleted {len(keys_to_delete)} keys matching pattern={pattern}")
         except Exception as e:
             logger.warning(f"[Redis] Failed to delete keys with pattern={pattern}: {e}")
+
+    def get_stats(self, pattern: str = "*"):
+        try:
+            count = 0
+            for _ in self.client.scan_iter(match=pattern):
+                count += 1
+            return {"keys": count}
+        except Exception as e:
+            logger.warning(f"[Redis] Failed to get stats for pattern={pattern}: {e}")
+            return {}
