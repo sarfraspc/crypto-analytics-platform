@@ -20,7 +20,6 @@ def ingest(embedder: Embedder, vector_store: QdrantVectorStore, retriever: Retri
     docs = embedder.fetch_docs()
     chunks, embeddings, metadatas = embedder.process_docs(docs, chunk_method='sentence')
     vector_store.add(chunks, embeddings, metadatas)
-    retriever.index_for_hybrid()
     logger.info("Ingestion complete.")
 
 def query_rag(query: str, retriever: Retriever, generator: Generator, k: int = 3, log_mlflow: bool = False):
@@ -39,7 +38,7 @@ def query_rag(query: str, retriever: Retriever, generator: Generator, k: int = 3
             artifact = {
                 "query": query,
                 "contexts": [c['content'] for c in contexts],
-                "retrieved_ids": [c['metadata'].get('doc_id') for c in contexts if c['metadata'].get('doc_id')],  # Fixed
+                "retrieved_ids": [c['metadata'].get('doc_id') for c in contexts if c['metadata'].get('doc_id')],
                 "response": response
             }
             artifact_filename = f"query_artifacts_{uuid.uuid4().hex[:8]}.json"
@@ -66,7 +65,6 @@ if __name__ == "__main__":
     if args.ingest:
         ingest(embedder, vector_store, retriever)
     elif args.query:
-        retriever.index_for_hybrid()
         print(query_rag(args.query, retriever, generator, log_mlflow=args.log))
     else:
         logger.error("Use --ingest or --query <text>")

@@ -1,84 +1,118 @@
 import logging
-from typing import List, Dict, Any
-from rank_bm25 import BM25Okapi
+from typing import Dict
 import numpy as np
+from qdrant_client import models
+
 from modules.sentiment.rag.vector_store import QdrantVectorStore
 from modules.sentiment.rag.embedder import Embedder
 
 logger = logging.getLogger(__name__)
 
 class Retriever:
-    def __init__(self, embedder: Embedder, vector_store: QdrantVectorStore, alpha: float = 0.7, expansion_terms: List[str] = None, boost_keywords: Dict[str, float] = None):
+    def __init__(self, embedder: Embedder, vector_store: QdrantVectorStore, alpha: float = 0.5, boost_keywords: Dict[str, float] = None):
         self.embedder = embedder
         self.vector_store = vector_store
-        self.alpha = alpha  
+        self.client = vector_store.client
+        self.collection_name = vector_store.collection_name
         self.model = self.embedder.model
-        self.bm25 = None
-        self.indexed_docs = []  
-        self.indexed_metadatas = []  
-        self.expansion_terms = expansion_terms or ["bitcoin", "crypto", "market", "price", "discussion", "fear", "greed", "sentiment"]
+        self.alpha = alpha
         self.boost_keywords = boost_keywords or {"sentiment": 1.2, "btc": 1.2}
 
-    def index_for_hybrid(self):
-        results = self.vector_store.get_all()
-        self.indexed_docs = results["documents"]
-        self.indexed_metadatas = results["metadatas"]
-        tokenized_docs = [doc.lower().split() for doc in self.indexed_docs]
-        self.bm25 = BM25Okapi(tokenized_docs)
-        logger.info(f"Built BM25 index over {len(self.indexed_docs)} docs.")
+    def retrieve(self, query: str, k: int = 5, min_score: float = 0.05, raw_min_score: float = 0.005):
+        query_emb = self.model.encode(query)
+        sem_results = self.client.search(
+            collection_name=self.collection_name,
+            query_vector=query_emb.tolist(),  
+            limit=k * 4, 
+            with_payload=True
+        )
+        
+        query_words = [word for word in query.lower().split() if len(word) > 2] 
+        if not query_words:
+            logger.warning(f"No meaningful query words for keyword filter: '{query}'")
+            return []
+        
+        keyword_filter = models.Filter(
+            should=[
+                models.FieldCondition(
+                    key="document", 
+                    match=models.MatchText(text=word)
+                ) for word in query_words
+            ]
+        )
+        
+        key_results = self.client.search(
+            collection_name=self.collection_name,
+            query_vector=query_emb.tolist(),
+            query_filter=keyword_filter,
+            limit=k * 4
+        )
+        
+        rrf_scores = {} 
 
-    def retrieve(self, query: str, k: int = 5, min_score: float = 0.05):  
-        expanded_query = f"{query} {' '.join(self.expansion_terms)}"
-        query_lower = expanded_query.lower()
-        query_tokens = query_lower.split()
-        query_emb = self.model.encode([expanded_query])
+        for rank, hit in enumerate(sem_results):
+            if hit.id not in rrf_scores:
+                rrf_scores[hit.id] = 0.0
+            rrf_scores[hit.id] += self.alpha / (60 + rank + 1)
 
-        sem_results = self.vector_store.query_semantic(query_emb[0], n_results=k*4)
-        num_sem_results = len(sem_results["documents"])
-        logger.debug(f"Semantic search returned {num_sem_results} results for expanded query: '{expanded_query}'")
-        sem_scores = np.array(sem_results["distances"]) if num_sem_results > 0 else np.array([])
-        sem_ranks = np.argsort(-sem_scores) if num_sem_results > 0 else np.array([])
+        for rank, hit in enumerate(key_results):
+            if hit.id not in rrf_scores:
+                rrf_scores[hit.id] = 0.0
+            rrf_scores[hit.id] += (1 - self.alpha) / (60 + rank + 1)
+            
+        if not rrf_scores:
+            logger.warning(f"No results found for query: '{query}'")
+            return []
 
-        if self.bm25:
-            bm25_scores = self.bm25.get_scores(query_tokens)
-            bm25_ranks = np.argsort(-bm25_scores)[:k*4]
-        else:
-            bm25_scores = np.zeros(len(self.indexed_docs))
-            bm25_ranks = np.arange(min(k*4, len(self.indexed_docs)))
-        num_bm25 = len(bm25_ranks)
+        raw_scores = list(rrf_scores.values())
+        max_raw = max(raw_scores)
+        if max_raw < raw_min_score:
+            logger.warning(f"Low raw RRF scores for '{query}'; max raw score: {max_raw:.4f}")
+            return []
 
-        rrf_scores = np.zeros(len(self.indexed_docs))
-        max_iter = max(len(sem_ranks), num_bm25, k*4)
-        for i in range(max_iter):
-            if num_sem_results > 0 and i < len(sem_ranks):
-                doc_idx_sem = sem_ranks[i]
-                if 0 <= doc_idx_sem < len(rrf_scores):
-                    rrf_scores[doc_idx_sem] += self.alpha / (60 + i + 1)
-            if i < num_bm25:
-                doc_idx_bm25 = bm25_ranks[i]
-                if 0 <= doc_idx_bm25 < len(rrf_scores):
-                    rrf_scores[doc_idx_bm25] += (1 - self.alpha) / (60 + i + 1)
+        for doc_id in rrf_scores:
+            rrf_scores[doc_id] /= max_raw
 
-        if np.max(rrf_scores) > 0:
-            rrf_scores = rrf_scores / np.max(rrf_scores) 
-
-        top_indices = np.argsort(-rrf_scores)[:k]        
-        good_indices = [idx for idx in top_indices if rrf_scores[idx] >= min_score]
-        if len(good_indices) >= k or len(good_indices) > 0:
-            top_indices = good_indices[:k]
-        else:
-            logger.warning(f"Low scores for '{query}'; using top k")
+        sorted_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
+        
+        top_k_ids = sorted_ids[:k]
+        
+        final_docs = self.client.retrieve(
+            collection_name=self.collection_name,
+            ids=[id for id in top_k_ids],  
+            with_payload=True
+        )
+        
+        doc_map = {doc.id: doc for doc in final_docs}
+        
         retrieved = []
-        for idx in top_indices:
-            score = float(rrf_scores[idx])
-            content = self.indexed_docs[idx]
+        for doc_id in top_k_ids:
+            if doc_id not in doc_map:
+                continue
+            doc = doc_map[doc_id]
+            score = rrf_scores.get(doc_id, 0.0)
+            content = doc.payload.get("document", "")
+            content_trunc = content[:300] + "..." if len(content) > 300 else content
+            
+            content_lower = content.lower()
             for keyword, multiplier in self.boost_keywords.items():
-                if keyword in content.lower():
+                if keyword in content_lower:
                     score *= multiplier
+            
             retrieved.append({
-                'content': content[:300],
-                'metadata': self.indexed_metadatas[idx],
+                'content': content_trunc,
+                'metadata': doc.payload.get("metadata", {}),
                 'score': score
             })
-        logger.debug(f"Retrieved {len(retrieved)} chunks (avg score: {np.mean([r['score'] for r in retrieved]):.3f}) for '{query}'")
+        
+        good_retrieved = [r for r in retrieved if r['score'] >= min_score]
+        if not good_retrieved:
+            logger.warning(f"No results met min_score threshold for '{query}' after boosting")
+            return []
+        
+        good_retrieved.sort(key=lambda x: x['score'], reverse=True)
+        retrieved = good_retrieved[:k]
+        
+        avg_score = np.mean([r['score'] for r in retrieved])
+        logger.debug(f"Retrieved {len(retrieved)} chunks (avg score: {avg_score:.3f}) for '{query}'")
         return retrieved
