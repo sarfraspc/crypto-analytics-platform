@@ -1,6 +1,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from core.config import settings
+from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
 import urllib.parse
 
 def _build_postgres_url(user, password, host, port, db):
@@ -32,3 +34,30 @@ def get_metadata_engine() -> Engine:
         pool_pre_ping=True,
         future=True,
     )
+
+TimescaleSessionLocal = sessionmaker(bind=get_timescale_engine(), autocommit=False, autoflush=False, future=True)
+MetadataSessionLocal = sessionmaker(bind=get_metadata_engine(), autocommit=False, autoflush=False, future=True)
+
+@contextmanager
+def get_timescale_db():
+    session = TimescaleSessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+@contextmanager
+def get_metadata_db():
+    session = MetadataSessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

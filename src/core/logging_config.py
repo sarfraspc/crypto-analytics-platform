@@ -1,4 +1,4 @@
-import logging
+import logging.config
 import json
 
 class JSONFormatter(logging.Formatter):
@@ -14,10 +14,27 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_obj)
 
 def setup_logging():
-    handler = logging.StreamHandler()
-    handler.setFormatter(JSONFormatter())
-
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.handlers.clear()
-    root.addHandler(handler)
+    LOGGING_CONFIG = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'json': {
+                '()': lambda: JSONFormatter(),
+            },
+        },
+        'handlers': {
+            'default': {
+                'level': 'INFO',
+                'formatter': 'json',
+                'class': 'logging.StreamHandler',
+            },
+        },
+        'loggers': {
+            '': {
+                'handlers': ['default'],
+                'level': 'INFO',
+                'propagate': True
+            }
+        }
+    }
+    logging.config.dictConfig(LOGGING_CONFIG)
