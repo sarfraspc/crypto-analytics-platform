@@ -1,24 +1,30 @@
 import time
 import logging
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional
+from sqlalchemy.orm import Session
+import signal
+from collections import deque
 
 import ccxt
 
 from core.config import settings
 from data.validation import OHLCV, Trade
-from data.storage.crud import upsert_ohlcv, upsert_trades, get_token 
+from data.storage.crud import upsert_ohlcv, upsert_trades, get_token
+from core.logging_config import setup_logging
 
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
-def get_valid_ccxt_pairs(exchange_id: str = 'binance') -> List[str]:
+def get_valid_ccxt_pairs(exchange_id: str = 'binance'):
     exchange = ccxt.binance({'enableRateLimit': True})
     markets = exchange.load_markets()
     usdt_pairs = [s for s in markets if s.endswith('/USDT') and markets[s]['active']]
     return usdt_pairs
 
-def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', since_ts_ms: Optional[int] = None, limit: int = 1000):
+def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id: str, symbol: str, timeframe: str = '1m', since_ts_ms: Optional[int] = None, limit: int = 1000):
+    logger.info("Starting backfill_ohlcv_ccxt for %s %s", exchange_id, symbol)
     valid_pairs = get_valid_ccxt_pairs(exchange_id)
     if symbol not in valid_pairs:
         logger.warning(f"{exchange_id} does not have market {symbol}; skipping")
@@ -45,7 +51,7 @@ def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', si
         if not bars:
             break
         base_symbol = symbol.split('/')[0]
-        if not get_token(base_symbol):
+        if not get_token(db_metadata, base_symbol):
             logger.warning(f"Unknown symbol: {base_symbol}")
             break
         for bar in bars:
@@ -60,15 +66,23 @@ def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', si
             break
         time.sleep(1.0)  
     if all_bars:
-        upsert_ohlcv(all_bars)
+        upsert_ohlcv(db_timescale, all_bars)
     logger.info("CCXT backfill done: %s %s bars=%d", exchange_id, symbol, len(all_bars))
     return len(all_bars)
 
-def poll_trades_ccxt(exchange_id: str, symbol: str, poll_interval: float = 2.0):
+def poll_trades_ccxt(db: Session, exchange_id: str, symbol: str, poll_interval: float = 2.0):
+    logger.info("Starting poll_trades_ccxt for %s %s", exchange_id, symbol)
+    shutdown = False
+    def shutdown_handler(signum, frame):
+        nonlocal shutdown
+        logger.info("Shutdown signal received. Exiting poll_trades_ccxt...")
+        shutdown = True
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
     ExchangeClass = getattr(ccxt, exchange_id)
     exchange = ExchangeClass({'enableRateLimit': True})
-    last_seen = set()
-    while True:
+    last_seen = deque(maxlen=3000)
+    while not shutdown:
         try:
             trades = exchange.fetch_trades(symbol, limit=1000)
             rows = []
@@ -83,15 +97,14 @@ def poll_trades_ccxt(exchange_id: str, symbol: str, poll_interval: float = 2.0):
                     trade_id=trade_id, price=float(t['price']), amount=float(t['amount']),
                     side=t.get('side'), raw=t
                 ))
-                last_seen.add(trade_id)
+                last_seen.append(trade_id)
             if rows:
-                upsert_trades(rows)
-            if len(last_seen) > 5000:
-                last_seen = set(list(last_seen)[-3000:])
-            time.sleep(poll_interval)
+                upsert_trades(db, rows)
+            time.sleep(poll_interval) 
         except ccxt.RateLimitExceeded:
             logger.warning("CCXT poll rate limit; sleeping 60s")
             time.sleep(60)
         except Exception as e:
             logger.exception("poll_trades_ccxt error: %s", e)
-            time.sleep(5)
+            time.sleep(5) 
+    return 0 
