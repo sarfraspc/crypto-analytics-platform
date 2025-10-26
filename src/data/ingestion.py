@@ -70,14 +70,23 @@ async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: Lis
 
     try:
         market_results = await asyncio.gather(*tasks[:len(symbols)*2]) 
-        alt_data_results = await asyncio.gather(*tasks[len(symbols)*2:])
+        alt_data_results = await asyncio.gather(*tasks[len(symbols)*2:], return_exceptions=True)
 
-        total_ohlcv_inserted = sum(market_results)
+        processed_alt = []
+        for res in alt_data_results:
+            if isinstance(res, Exception):
+                logger.error(f"Alt task failed: {res}")
+                processed_alt.append(0) 
+            else:
+                processed_alt.append(res)
 
-        whale_count = alt_data_results[0]
-        cp_count, cp_skipped = alt_data_results[1]
-        reddit_count, reddit_skipped = alt_data_results[2]
-        fng_count, _ = alt_data_results[3]
+        total_ohlcv_inserted = sum(market_results) 
+
+        whale_count = processed_alt[0] if isinstance(processed_alt[0], dict) else 0
+        whale_count = whale_count.get('whale_alerts', 0) if isinstance(whale_count, dict) else whale_count
+        cp_count, cp_skipped = processed_alt[1] if processed_alt[1] else (0, 0)
+        reddit_count, reddit_skipped = processed_alt[2] if processed_alt[2] else (0, 0)
+        fng_count, _ = processed_alt[3] if processed_alt[3] else (0, 0)
 
         total_inserted = total_ohlcv_inserted + whale_count + cp_count + reddit_count + fng_count
         total_skipped = cp_skipped + reddit_skipped
@@ -174,14 +183,23 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
 
     try:
         market_results = await asyncio.gather(*market_tasks)
-        alt_data_results = await asyncio.gather(*alt_data_tasks)
+        alt_data_results = await asyncio.gather(*alt_data_tasks, return_exceptions=True)
 
-        total_ohlcv_inserted = sum(market_results)
+        processed_alt = []
+        for res in alt_data_results:
+            if isinstance(res, Exception):
+                logger.error(f"Alt task failed: {res}")
+                processed_alt.append(0) 
+            else:
+                processed_alt.append(res)
 
-        whale_count = alt_data_results[0]
-        cp_count, cp_skipped = alt_data_results[1]
-        reddit_count, reddit_skipped = alt_data_results[2]
-        fng_count, _ = alt_data_results[3]
+        total_ohlcv_inserted = sum(market_results)  
+
+        whale_count = processed_alt[0] if isinstance(processed_alt[0], dict) else 0
+        whale_count = whale_count.get('whale_alerts', 0) if isinstance(whale_count, dict) else whale_count
+        cp_count, cp_skipped = processed_alt[1] if processed_alt[1] else (0, 0)
+        reddit_count, reddit_skipped = processed_alt[2] if processed_alt[2] else (0, 0)
+        fng_count, _ = processed_alt[3] if processed_alt[3] else (0, 0)
 
         total_inserted = total_ohlcv_inserted + whale_count + cp_count + reddit_count + fng_count
         total_skipped = cp_skipped + reddit_skipped
@@ -231,4 +249,5 @@ if __name__ == "__main__":
         elif args.poll:
             asyncio.run(run_polling(db_metadata, db_timescale))
         else:
-            asyncio.run(run_ingestion_cycle(db_metadata, db_timescale, pipeline=args.pipeline, symbols=args.limit)) 
+            symbols = get_symbols_from_tokens(db_metadata, limit=args.limit)
+            asyncio.run(run_ingestion_cycle(db_metadata, db_timescale, pipeline=args.pipeline, symbols=symbols))

@@ -117,9 +117,9 @@ CREATE TABLE IF NOT EXISTS whale_alerts (
     from_address TEXT,
     to_address TEXT,
     amount NUMERIC,
-    asset TEXT,
+    asset TEXT NOT NULL,
     raw JSONB,
-    PRIMARY KEY (time, tx_hash)
+    PRIMARY KEY (time, tx_hash, asset)
 );
 SELECT create_hypertable('whale_alerts', 'time', if_not_exists => TRUE);
 

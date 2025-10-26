@@ -81,7 +81,7 @@ class RedditPost(Base):
     author = Column(String)
     title = Column(String)
     body = Column(TEXT)
-    score = Column(Integer)  # upvote_score
+    score = Column(Integer)
     created = Column(DateTime(timezone=True)) 
     raw = Column(JSON)
 
