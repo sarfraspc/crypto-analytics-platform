@@ -31,7 +31,14 @@ def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id
         return 0
 
     ExchangeClass = getattr(ccxt, exchange_id)
-    exchange = ExchangeClass({'enableRateLimit': True})
+    exchange = ExchangeClass({
+        'enableRateLimit': True,
+        'options': {
+            'defaultType': 'spot',  
+            'recvWindow': 10000,  
+        },
+        'encoding': 'utf-8',  
+    })
     if exchange_id.lower() == 'binance' and settings.BINANCE_API_KEY:
         exchange.apiKey = settings.BINANCE_API_KEY
         exchange.secret = settings.BINANCE_API_SECRET

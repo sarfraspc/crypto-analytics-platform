@@ -1,5 +1,6 @@
 from typing import List
 from datetime import datetime, timedelta, timezone
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from data.validation import (
@@ -77,67 +78,68 @@ def upsert_trades(db: Session, rows: List[Trade]):
 def upsert_news(db: Session, articles: List[NewsArticle]):
     if not articles:
         return
+    
+    inserted_count = 0
+    for article in articles:
+        exists = db.execute(select(NewsArticleModel).where(NewsArticleModel.id == article.id)).scalar_one_or_none()
+        if not exists:
+            db.add(NewsArticleModel(
+                id=article.id, title=article.title, source=article.source, url=article.url,
+                published=article.published, text=article.text,
+                raw=article.raw or {}
+            ))
+            inserted_count += 1
+    
     try:
-        for article in articles:
-            exists = db.execute(
-                select(NewsArticleModel).where(
-                    NewsArticleModel.id == article.id
-                )
-            ).scalar_one_or_none()
-            if not exists:
-                news = NewsArticleModel(
-                    id=article.id, title=article.title, source=article.source, url=article.url,
-                    published=article.published, text=article.text,
-                    raw=article.raw or {}
-                )
-                db.add(news)
-        logger.info(f"Inserted {len(articles)} news articles")
+        db.commit()
+        logger.info(f"Actually inserted {inserted_count} news articles (attempted {len(articles)})")
     except Exception as e:
+        logger.error(f"Upsert failed for news articles: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         db.rollback()
-        logger.error(f"Error upserting news: {e}")
         raise
 
 def upsert_reddit(db: Session, posts: List[RedditPost]):
     if not posts:
         return
+    
+    inserted_count = 0
+    for post in posts:
+        exists = db.execute(select(RedditPostModel).where(RedditPostModel.id == post.id)).scalar_one_or_none()
+        if not exists:
+            db.add(RedditPostModel(
+                id=post.id, subreddit=post.subreddit, author=post.author, title=post.title,
+                body=post.body, score=post.upvote_score, created=post.created,
+                raw=post.raw or {}
+            ))
+            inserted_count += 1
+    
     try:
-        for post in posts:
-            exists = db.execute(
-                select(RedditPostModel).where(
-                    RedditPostModel.id == post.id
-                )
-            ).scalar_one_or_none()
-            if not exists:
-                reddit = RedditPostModel(
-                    id=post.id, subreddit=post.subreddit, author=post.author, title=post.title,
-                    body=post.body, score=post.upvote_score, created=post.created,
-                    raw=post.raw or {}
-                )
-                db.add(reddit)
-        logger.info(f"Inserted {len(posts)} Reddit posts")
+        db.commit()
+        logger.info(f"Actually inserted {inserted_count} Reddit posts (attempted {len(posts)})")
     except Exception as e:
+        logger.error(f"Upsert failed for Reddit posts: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         db.rollback()
-        logger.error(f"Error upserting Reddit posts: {e}")
         raise
 
 def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert]):
     if not alerts:
         return
     try:
-        for alert in alerts:
-            exists = db.execute(
-                select(WhaleAlertModel).where(
-                    WhaleAlertModel.tx_hash == alert.tx_hash
-                )
-            ).scalar_one_or_none()
-            if not exists:
-                whale = WhaleAlertModel(
-                    time=alert.time, tx_hash=alert.tx_hash, chain=alert.chain,
-                    from_address=alert.from_address, to_address=alert.to_address,
-                    amount=alert.amount, asset=alert.asset, raw=alert.raw or {}
-                )
-                db.add(whale)
-        logger.info(f"Inserted {len(alerts)} whale alerts")
+        values = [
+            {
+                'time': alert.time, 'tx_hash': alert.tx_hash, 'chain': alert.chain,
+                'from_address': alert.from_address, 'to_address': alert.to_address,
+                'amount': alert.amount, 'asset': alert.asset, 'raw': alert.raw or {}
+            }
+            for alert in alerts
+        ]
+        stmt = insert(WhaleAlertModel).values(values)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=['time', 'tx_hash', 'asset']  
+        )
+        result = db.execute(stmt)
+        db.flush()
+        logger.info(f"Upserted {result.rowcount} whale alerts")
     except Exception as e:
         db.rollback()
         logger.error(f"Error upserting whale alerts: {e}")
@@ -146,25 +148,30 @@ def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert]):
 def upsert_onchain_metrics(db: Session, metrics: List[OnchainMetric]):
     if not metrics:
         return
+    
+    values = [
+        {
+            'time': metric.time,
+            'chain': metric.chain,
+            'metric': metric.metric,
+            'value': metric.value,
+            'raw': metric.raw or {}
+        }
+        for metric in metrics
+    ]
+    
+    stmt = insert(OnchainMetricModel).values(values)
+    stmt = stmt.on_conflict_do_nothing(
+        index_elements=['time', 'chain', 'metric']
+    )
+    
     try:
-        for metric in metrics:
-            exists = db.execute(
-                select(OnchainMetricModel).where(
-                    OnchainMetricModel.time == metric.time,
-                    OnchainMetricModel.chain == metric.chain,
-                    OnchainMetricModel.metric == metric.metric
-                )
-            ).scalar_one_or_none()
-            if not exists:
-                onchain = OnchainMetricModel(
-                    time=metric.time, chain=metric.chain, metric=metric.metric,
-                    value=metric.value, raw=metric.raw or {}
-                )
-                db.add(onchain)
-        logger.info(f"Inserted {len(metrics)} onchain metrics")
+        result = db.execute(stmt)
+        db.flush()
+        logger.info(f"Upserted {result.rowcount} onchain metrics")
     except Exception as e:
+        logger.error(f"Upsert failed for onchain metrics: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         db.rollback()
-        logger.error(f"Error upserting onchain metrics: {e}")
         raise
 
 def get_last_success(db: Session, pipeline: str):

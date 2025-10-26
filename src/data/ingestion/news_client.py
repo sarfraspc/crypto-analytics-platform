@@ -24,7 +24,7 @@ vader = SentimentIntensityAnalyzer()
 def ingest_fng(db: Session):
     logger.info("Starting FNG ingestion")
     try:
-        resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
+        resp = requests.get(settings.ALTERNATIVE_ME_URL, timeout=10)
         resp.raise_for_status()
         j = resp.json()
         data = j.get('data', [])
@@ -61,7 +61,7 @@ def ingest_cryptopanic(db: Session, api_key: Optional[str] = None, limit: int = 
         return 0, 0
 
     last_success_time = get_last_success(db, ingestion_pipeline)
-    url = f"https://cryptopanic.com/api/v1/posts/?auth_token={key}&kind=news&public=true&currencies=BTC&filter=global&limit=50&page=1&hourly=true"
+    url = f"{settings.CRYPTOPANIC_URL}?auth_token={key}&kind=news&public=true&currencies=BTC&filter=global&limit=50&page=1&hourly=true"
     backoff = 1
     for attempt in range(max_retries):
         try:
