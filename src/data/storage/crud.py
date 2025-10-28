@@ -185,7 +185,6 @@ def get_last_success(db: Session, pipeline: str):
         db.rollback()  
         logger.error(f"Error fetching last success for {pipeline}: {e}")
         return datetime.now(timezone.utc) - timedelta(hours=1)
-        raise
 
 def update_ingestion_job(db: Session, job: IngestionJob):
     try:
