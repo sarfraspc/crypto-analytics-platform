@@ -126,6 +126,8 @@ SELECT create_hypertable('whale_alerts', 'time', if_not_exists => TRUE);
 ALTER TABLE IF EXISTS whale_alerts OWNER TO crypto_user;
 GRANT ALL PRIVILEGES ON TABLE whale_alerts TO crypto_user;
 
+SELECT add_retention_policy('whale_alerts', INTERVAL '60 days');
+
 -- On-chain metrics (aggregated flows/stats)
 CREATE TABLE IF NOT EXISTS onchain_metrics (
     time TIMESTAMPTZ NOT NULL,
@@ -139,6 +141,8 @@ SELECT create_hypertable('onchain_metrics', 'time', if_not_exists => TRUE);
 
 ALTER TABLE IF EXISTS onchain_metrics OWNER TO crypto_user;
 GRANT ALL PRIVILEGES ON TABLE onchain_metrics TO crypto_user;
+
+SELECT add_retention_policy('onchain_metrics', INTERVAL '90 days');
 
 -- News articles
 CREATE TABLE IF NOT EXISTS news_articles (
