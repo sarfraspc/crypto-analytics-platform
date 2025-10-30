@@ -1,239 +1,212 @@
-import json
-from typing import Optional, List, Dict
+from typing import List
 from datetime import datetime, timedelta, timezone
-
-from sqlalchemy import text
-
-from core.database import get_timescale_engine, get_metadata_engine
-from data.validation import OHLCV, Trade, NewsArticle, RedditPost, WhaleAlert, OnchainMetric, IngestionJob, ChainState
-
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+from data.validation import (
+    OHLCV, Trade, NewsArticle, RedditPost, WhaleAlert, OnchainMetric, IngestionJob, ChainState
+)
+from data.storage.models import (
+    Token as TokenModel, OHLCV as OHLCVModel, Trade as TradeModel, WhaleAlert as WhaleAlertModel,
+    OnchainMetric as OnchainMetricModel, NewsArticle as NewsArticleModel,
+    RedditPost as RedditPostModel, IngestionJob as IngestionJobModel, ChainState as ChainStateModel
+)
 import logging
 
 logger = logging.getLogger(__name__)
 
-META_ENG = get_metadata_engine() 
-TS_ENG = get_timescale_engine()   
 
-def get_token(symbol: str) -> Optional[Dict]:
+def get_token(db: Session, symbol: str):
     try:
-        with META_ENG.connect() as conn:
-            r = conn.execute(text("SELECT * FROM tokens WHERE symbol = :symbol"), {'symbol': symbol}).fetchone()
-            return r._asdict() if r else None
+        token = db.execute(select(TokenModel).where(TokenModel.symbol == symbol)).scalar_one_or_none()
+        return token.__dict__ if token else None
     except Exception as e:
         logger.error(f"Error fetching token {symbol}: {e}")
         return None
 
-def upsert_ohlcv(rows: List[OHLCV]):
+def upsert_ohlcv(db: Session, rows: List[OHLCV]):
     if not rows:
         return
-    insert_sql = text("""
-        INSERT INTO ohlcv (time, symbol, exchange, interval, open, high, low, close, volume, raw)
-        VALUES (:time, :symbol, :exchange, :interval, :open, :high, :low, :close, :volume, :raw)
-        ON CONFLICT (time, symbol, exchange, interval) DO NOTHING
-    """)
-    params = [
-        {
-            'time': r.time,
-            'symbol': r.symbol,
-            'exchange': r.exchange,
-            'interval': r.interval,
-            'open': r.open,
-            'high': r.high,
-            'low': r.low,
-            'close': r.close,
-            'volume': r.volume,
-            'raw': json.dumps(r.raw or {})
-        }
-        for r in rows
-    ]
     try:
-        with TS_ENG.begin() as conn:
-            conn.execute(insert_sql, params)
-        logger.info(f"Upserted {len(rows)} OHLCV rows")
+        for row in rows:
+            exists = db.execute(
+                select(OHLCVModel).where(
+                    OHLCVModel.time == row.time,
+                    OHLCVModel.symbol == row.symbol,
+                    OHLCVModel.exchange == row.exchange,
+                    OHLCVModel.interval == row.interval
+                )
+            ).scalar_one_or_none()
+            if not exists:
+                ohlcv = OHLCVModel(
+                    time=row.time, symbol=row.symbol, exchange=row.exchange, interval=row.interval,
+                    open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+                    raw=row.raw or {}
+                )
+                db.add(ohlcv)
+        logger.info(f"Inserted {len(rows)} OHLCV rows")
     except Exception as e:
+        db.rollback()
         logger.error(f"Error upserting OHLCV: {e}")
+        raise
 
-def upsert_trades(rows: List[Trade]):
+def upsert_trades(db: Session, rows: List[Trade]):
     if not rows:
         return
-    insert_sql = text("""
-        INSERT INTO trades (time, exchange, symbol, trade_id, price, amount, side, raw)
-        VALUES (:time, :exchange, :symbol, :trade_id, :price, :amount, :side, :raw)
-        ON CONFLICT (time, exchange, symbol, trade_id) DO NOTHING
-    """)
-    params = [
-        {
-            'time': r.time,
-            'exchange': r.exchange,
-            'symbol': r.symbol,
-            'trade_id': r.trade_id,
-            'price': r.price,
-            'amount': r.amount,
-            'side': r.side,
-            'raw': json.dumps(r.raw or {})
-        }
-        for r in rows
-    ]
     try:
-        with TS_ENG.begin() as conn:
-            conn.execute(insert_sql, params)
-        logger.info(f"Upserted {len(rows)} trades")
+        for row in rows:
+            exists = db.execute(
+                select(TradeModel).where(
+                    TradeModel.time == row.time,
+                    TradeModel.exchange == row.exchange,
+                    TradeModel.symbol == row.symbol,
+                    TradeModel.trade_id == row.trade_id
+                )
+            ).scalar_one_or_none()
+            if not exists:
+                trade = TradeModel(
+                    time=row.time, exchange=row.exchange, symbol=row.symbol, trade_id=row.trade_id,
+                    price=row.price, amount=row.amount, side=row.side, raw=row.raw or {}
+                )
+                db.add(trade)
+        logger.info(f"Inserted {len(rows)} trades")
     except Exception as e:
+        db.rollback()
         logger.error(f"Error upserting trades: {e}")
+        raise
 
-def upsert_news(articles: List[NewsArticle]):
+def upsert_news(db: Session, articles: List[NewsArticle]):
     if not articles:
         return
-    insert_sql = text("""
-        INSERT INTO news_articles (id, title, source, url, published, text, raw)
-        VALUES (:id, :title, :source, :url, :published, :text, :raw)
-        ON CONFLICT (id) DO NOTHING
-    """)
-    params = [
-        {
-            'id': a.id,
-            'title': a.title,
-            'source': a.source,
-            'url': a.url,
-            'published': a.published,
-            'text': a.text,
-            'raw': json.dumps({**(a.raw or {}), 'score': a.score})
-        }
-        for a in articles
-    ]
+    
+    inserted_count = 0
+    for article in articles:
+        exists = db.execute(select(NewsArticleModel).where(NewsArticleModel.id == article.id)).scalar_one_or_none()
+        if not exists:
+            db.add(NewsArticleModel(
+                id=article.id, title=article.title, source=article.source, url=article.url,
+                published=article.published, text=article.text,
+                raw=article.raw or {}
+            ))
+            inserted_count += 1
+    
     try:
-        with TS_ENG.begin() as conn:
-            conn.execute(insert_sql, params)
-        logger.info(f"Upserted {len(articles)} news articles")
+        db.commit()
+        logger.info(f"Actually inserted {inserted_count} news articles (attempted {len(articles)})")
     except Exception as e:
-        logger.error(f"Error upserting news: {e}")
+        logger.error(f"Upsert failed for news articles: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
+        db.rollback()
+        raise
 
-def upsert_reddit(posts: List[RedditPost]):
+def upsert_reddit(db: Session, posts: List[RedditPost]):
     if not posts:
         return
-    insert_sql = text("""
-        INSERT INTO reddit_posts (id, subreddit, author, title, body, score, created, raw)
-        VALUES (:id, :subreddit, :author, :title, :body, :score, :created, :raw)
-        ON CONFLICT (id) DO NOTHING
-    """ )
-    params = [
-        {
-            'id': p.id,
-            'subreddit': p.subreddit,
-            'author': p.author,
-            'title': p.title,
-            'body': p.body,
-            'score': p.upvote_score,
-            'created': p.created,
-            'raw': json.dumps({**(p.raw or {}), 'sentiment_score': p.score})
-        }
-        for p in posts
-    ]
+    
+    inserted_count = 0
+    for post in posts:
+        exists = db.execute(select(RedditPostModel).where(RedditPostModel.id == post.id)).scalar_one_or_none()
+        if not exists:
+            db.add(RedditPostModel(
+                id=post.id, subreddit=post.subreddit, author=post.author, title=post.title,
+                body=post.body, score=post.upvote_score, created=post.created,
+                raw=post.raw or {}
+            ))
+            inserted_count += 1
+    
     try:
-        with TS_ENG.begin() as conn:
-            conn.execute(insert_sql, params)
-        logger.info(f"Upserted {len(posts)} Reddit posts")
+        db.commit()
+        logger.info(f"Actually inserted {inserted_count} Reddit posts (attempted {len(posts)})")
     except Exception as e:
-        logger.error(f"Error upserting Reddit posts: {e}")
+        logger.error(f"Upsert failed for Reddit posts: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
+        db.rollback()
+        raise
 
-def upsert_whale_alerts(alerts: List[WhaleAlert]):
+def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert]):
     if not alerts:
         return
-    insert_sql = text("""
-        INSERT INTO whale_alerts (time, tx_hash, chain, from_address, to_address, amount, asset, raw)
-        VALUES (:time, :tx_hash, :chain, :from_address, :to_address, :amount, :asset, :raw)
-        ON CONFLICT (time, tx_hash) DO NOTHING
-    """)
-    params = [
-        {
-            'time': a.time,
-            'tx_hash': a.tx_hash,
-            'chain': a.chain,
-            'from_address': a.from_address,
-            'to_address': a.to_address,
-            'amount': a.amount,  
-            'asset': a.asset,
-            'raw': json.dumps(a.raw or {})
-        }
-        for a in alerts
-    ]
     try:
-        with TS_ENG.begin() as conn:
-            conn.execute(insert_sql, params)
-        logger.info(f"Upserted {len(alerts)} whale alerts")
+        values = [
+            {
+                'time': alert.time, 'tx_hash': alert.tx_hash, 'chain': alert.chain,
+                'from_address': alert.from_address, 'to_address': alert.to_address,
+                'amount': alert.amount, 'asset': alert.asset, 'raw': alert.raw or {}
+            }
+            for alert in alerts
+        ]
+        stmt = insert(WhaleAlertModel).values(values)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=['time', 'tx_hash', 'asset']  
+        )
+        result = db.execute(stmt)
+        db.flush()
+        logger.info(f"Upserted {result.rowcount} whale alerts")
     except Exception as e:
+        db.rollback()
         logger.error(f"Error upserting whale alerts: {e}")
+        raise
 
-def upsert_onchain_metrics(metrics: List[OnchainMetric]):
+def upsert_onchain_metrics(db: Session, metrics: List[OnchainMetric]):
     if not metrics:
         return
-    insert_sql = text("""
-        INSERT INTO onchain_metrics (time, chain, metric, value, raw)
-        VALUES (:time, :chain, :metric, :value, :raw)
-        ON CONFLICT (time, chain, metric) DO NOTHING
-    """)
-    params = [
+    
+    values = [
         {
-            'time': m.time,
-            'chain': m.chain,
-            'metric': m.metric,
-            'value': m.value,  
-            'raw': json.dumps(m.raw or {})
+            'time': metric.time,
+            'chain': metric.chain,
+            'metric': metric.metric,
+            'value': metric.value,
+            'raw': metric.raw or {}
         }
-        for m in metrics
+        for metric in metrics
     ]
+    
+    stmt = insert(OnchainMetricModel).values(values)
+    stmt = stmt.on_conflict_do_nothing(
+        index_elements=['time', 'chain', 'metric']
+    )
+    
     try:
-        with TS_ENG.begin() as conn:
-            conn.execute(insert_sql, params)
-        logger.info(f"Upserted {len(metrics)} onchain metrics")
+        result = db.execute(stmt)
+        db.flush()
+        logger.info(f"Upserted {result.rowcount} onchain metrics")
     except Exception as e:
-        logger.error(f"Error upserting onchain metrics: {e}")
+        logger.error(f"Upsert failed for onchain metrics: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
+        db.rollback()
+        raise
 
-def get_last_success(pipeline: str) -> datetime:
-    with TS_ENG.connect() as conn:
-        last = conn.execute(
-            text("SELECT last_success FROM ingestion_jobs WHERE pipeline = :pipeline ORDER BY last_success DESC LIMIT 1"),
-            {'pipeline': pipeline}
-        ).scalar()
-    return last or (datetime.now(timezone.utc) - timedelta(hours=1))
-
-def update_ingestion_job(job: IngestionJob):
-    update_sql = text("""
-        INSERT INTO ingestion_jobs (pipeline, last_run, last_success, details)
-        VALUES (:pipeline, :last_run, :last_success, :details)
-        ON CONFLICT (pipeline) DO UPDATE SET
-            last_run = EXCLUDED.last_run,
-            last_success = EXCLUDED.last_success,
-            details = EXCLUDED.details
-    """)
+def get_last_success(db: Session, pipeline: str):
     try:
-        with TS_ENG.begin() as conn:
-            conn.execute(update_sql, {
-                'pipeline': job.pipeline,
-                'last_run': job.last_run,
-                'last_success': job.last_success,
-                'details': json.dumps(job.details or {})
-            })
+        job = db.execute(
+            select(IngestionJobModel).where(IngestionJobModel.pipeline == pipeline)
+            .order_by(IngestionJobModel.last_success.desc())
+        ).scalar_one_or_none()
+        return job.last_success if job else (datetime.now(timezone.utc) - timedelta(hours=1))
+    except Exception as e:
+        db.rollback()  
+        logger.error(f"Error fetching last success for {pipeline}: {e}")
+        return datetime.now(timezone.utc) - timedelta(hours=1)
+
+def update_ingestion_job(db: Session, job: IngestionJob):
+    try:
+        job_model = IngestionJobModel(
+            pipeline=job.pipeline, last_run=job.last_run, last_success=job.last_success,
+            details=job.details or {}
+        )
+        db.merge(job_model)
         logger.info(f"Updated ingestion job for pipeline {job.pipeline}")
     except Exception as e:
+        db.rollback()
         logger.error(f"Error updating ingestion job: {e}")
+        raise
 
-def update_chain_state(state: ChainState):
-    update_sql = text("""
-        INSERT INTO chain_state (chain, last_block, last_updated)
-        VALUES (:chain, :last_block, :last_updated)
-        ON CONFLICT (chain) DO UPDATE SET
-            last_block = EXCLUDED.last_block,
-            last_updated = EXCLUDED.last_updated
-    """)
+def update_chain_state(db: Session, state: ChainState):
     try:
-        with TS_ENG.begin() as conn:
-            conn.execute(update_sql, {
-                'chain': state.chain,
-                'last_block': state.last_block,
-                'last_updated': state.last_updated
-            })
+        chain_state = ChainStateModel(
+            chain=state.chain, last_block=state.last_block, last_updated=state.last_updated
+        )
+        db.merge(chain_state)
         logger.info(f"Updated chain state for {state.chain}")
     except Exception as e:
+        db.rollback()
         logger.error(f"Error updating chain state: {e}")
-
+        raise
