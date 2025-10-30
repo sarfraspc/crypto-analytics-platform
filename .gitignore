@@ -1,5 +1,6 @@
 # mine
 plan
+
 # Python
 __pycache__/
 *.py[cod]
@@ -24,6 +25,10 @@ env/
 mlruns/
 logs/
 mlflow_data/
+src/data/datasets/
+src/modules/sentiment/models/saved/
+data/panel_cache/
+panel_wide.csv
 
 # IDE
 .vscode/
@@ -31,3 +36,8 @@ mlflow_data/
 
 # Docker
 *.log
+
+# Lightning/TensorBoard logs
+lightning_logs/
+tslogs/
+src/logs/tft_logs/

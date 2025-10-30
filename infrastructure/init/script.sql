@@ -150,9 +150,12 @@ CREATE TABLE IF NOT EXISTS news_articles (
     text TEXT,
     raw JSONB
 );
+SELECT create_hypertable('news_articles', 'published', if_not_exists => TRUE);
 
 ALTER TABLE IF EXISTS news_articles OWNER TO crypto_user;
 GRANT ALL PRIVILEGES ON TABLE news_articles TO crypto_user;
+
+SELECT add_retention_policy('news_articles', INTERVAL '90 days');
 
 -- Reddit posts
 CREATE TABLE IF NOT EXISTS reddit_posts (
@@ -165,9 +168,12 @@ CREATE TABLE IF NOT EXISTS reddit_posts (
     created TIMESTAMPTZ,
     raw JSONB
 );
+SELECT create_hypertable('reddit_posts', 'created', if_not_exists => TRUE);
 
 ALTER TABLE IF EXISTS reddit_posts OWNER TO crypto_user;
 GRANT ALL PRIVILEGES ON TABLE reddit_posts TO crypto_user;
+
+SELECT add_retention_policy('reddit_posts', INTERVAL '90 days');
 
 -- Ingestion jobs tracker
 CREATE TABLE IF NOT EXISTS ingestion_jobs (
