@@ -3,8 +3,12 @@ try:
 except ImportError:
     from pydantic import BaseSettings
 
+from typing import Dict, List
+import json
+from pydantic import field_validator
+
 class Settings(BaseSettings):
-     # Postgres (metadata DB)
+    # Postgres (metadata DB)
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
@@ -31,11 +35,11 @@ class Settings(BaseSettings):
     MLFLOW_TRACKING_URI: str
     MLFLOW_ARTIFACT_ROOT: str
 
-    # API Keys (optional)
+    # API Keys 
     COINGECKO_API_KEY: str | None = None
     BINANCE_API_KEY: str | None = None
     BINANCE_API_SECRET: str | None = None
-    ALCHEMY_API_KEY: str | None = None
+    INFURA_PROJECT_ID: str | None = None
     CRYPTOPANIC_API_KEY: str | None = None
     REDDIT_CLIENT_ID: str | None = None
     REDDIT_CLIENT_SECRET: str | None = None
@@ -49,7 +53,27 @@ class Settings(BaseSettings):
     MCP_DISCOVERY: bool = True
     MCP_TIMEOUT: int = 30
 
+    # Infura 
+    INFURA_HTTPS: str
+    INFURA_WSS: str
+
+    # Other
+    ALTERNATIVE_ME_URL: str
+    CRYPTOPANIC_URL: str
+    EXCHANGE_ADDRESSES: Dict[str, List[str]]
+
+    @field_validator('EXCHANGE_ADDRESSES', mode='before')
+    @classmethod
+    def parse_exchange_addrs(cls, v):
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
     class Config:
         env_file = ".env"
+
+    @property
+    def exchange_addrs(self) -> set[str]:
+        return set(addr.lower() for addrs in self.EXCHANGE_ADDRESSES.values() for addr in addrs)
 
 settings = Settings()

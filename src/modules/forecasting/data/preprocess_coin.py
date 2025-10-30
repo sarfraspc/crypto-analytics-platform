@@ -5,9 +5,11 @@ from typing import Dict, Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 from sqlalchemy import types as satypes
-from sqlalchemy import text
+from sqlalchemy import func
+from sqlalchemy.orm import sessionmaker
 
 from core.database import get_timescale_engine
+from data.storage.models import OHLCV, OHLCVFeature
 from modules.forecasting.data.preprocess_utils import (
     normalize_time,
     normalize_single_time,
@@ -47,16 +49,17 @@ class CoinPreprocessor:
         self.cache = RedisCache(expire_seconds=cache_expire) if use_cache else None
 
     def get_coin_start(self, symbol: str, exchange: str = "binance", interval: str = "1h"):
-        q = f"""
-            SELECT MIN(time) AS start_time
-            FROM {self.table}
-            WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s;
-        """
-        df_start = pd.read_sql(q, self.engine, params={"symbol": symbol.upper(), "exchange": exchange, "interval": interval})
-        start_time = df_start.iloc[0, 0]
-        if pd.isna(start_time):
-            raise ValueError(f"No OHLCV data found for {symbol}")
-        return normalize_single_time(start_time)
+        Session = sessionmaker(bind=self.engine)
+        with Session() as session:
+            start_time = session.query(func.min(OHLCV.time)).filter(
+                OHLCV.symbol == symbol.upper(),
+                OHLCV.exchange == exchange,
+                OHLCV.interval == interval
+            ).scalar()
+
+            if pd.isna(start_time):
+                raise ValueError(f"No OHLCV data found for {symbol}")
+            return normalize_single_time(start_time)
 
     def load_data(
         self,
@@ -69,56 +72,40 @@ class CoinPreprocessor:
             symbol.split("/")[0].upper() if "/" in symbol else symbol.upper()
         )
 
-        if lookback_days is None:
-            span_query = f'''
-                SELECT (NOW()::date - MIN(time)::date) AS days_span
-                FROM {self.table}
-                WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s;
-            '''
-            days_span_df = pd.read_sql(
-                span_query,
-                self.engine,
-                params={
-                    "symbol": base_symbol,
-                    "exchange": exchange,
-                    "interval": interval,
-                },
-            )
-            lookback_days = int(days_span_df.iloc[0, 0]) + 1
-            logger.info(
-                "Using lookback_days=%s for %s/%s/%s",
-                lookback_days,
-                base_symbol,
-                exchange,
-                interval,
-            )
+        Session = sessionmaker(bind=self.engine)
+        with Session() as session:
+            if lookback_days is None:
+                days_span = session.query(func.max(OHLCV.time) - func.min(OHLCV.time)).filter(
+                    OHLCV.symbol == base_symbol,
+                    OHLCV.exchange == exchange,
+                    OHLCV.interval == interval
+                ).scalar()
+                lookback_days = days_span.days + 1 if days_span else 1
+                logger.info(
+                    "Using lookback_days=%s for %s/%s/%s",
+                    lookback_days,
+                    base_symbol,
+                    exchange,
+                    interval,
+                )
 
-        cache_key = f"ohlcv:{base_symbol}:{exchange}:{interval}:{lookback_days}"
-        if self.cache:
-            cached_df = self.cache.get_dataframe(cache_key)
-            if cached_df is not None:
-                logger.info("Loaded %s from Redis cache", cache_key)
-                return cached_df
+            cache_key = f"ohlcv:{base_symbol}:{exchange}:{interval}:{lookback_days}"
+            if self.cache:
+                cached_df = self.cache.get_dataframe(cache_key)
+                if cached_df is not None:
+                    logger.info("Loaded %s from Redis cache", cache_key)
+                    return cached_df
 
-        start_ts = pd.Timestamp.utcnow() - pd.Timedelta(days=lookback_days)
-        q = f'''
-            SELECT time, open, high, low, close, volume
-            FROM {self.table}
-            WHERE symbol = %(symbol)s AND exchange = %(exchange)s
-            AND interval = %(interval)s AND time >= %(start)s
-            ORDER BY time ASC;
-        '''
-        df = pd.read_sql(
-            q,
-            self.engine,
-            params={
-                "symbol": base_symbol,
-                "exchange": exchange,
-                "interval": interval,
-                "start": start_ts,
-            },
-            parse_dates=["time"],
-        )
+            start_ts = pd.Timestamp.utcnow() - pd.Timedelta(days=lookback_days)
+            
+            query = session.query(OHLCV.time, OHLCV.open, OHLCV.high, OHLCV.low, OHLCV.close, OHLCV.volume).filter(
+                OHLCV.symbol == base_symbol,
+                OHLCV.exchange == exchange,
+                OHLCV.interval == interval,
+                OHLCV.time >= start_ts
+            ).order_by(OHLCV.time.asc())
+
+            df = pd.read_sql(query.statement, self.engine, parse_dates=["time"])
 
         if df.empty:
             raise ValueError(f"No data found for {base_symbol}/{exchange}/{interval}")
@@ -216,92 +203,89 @@ class CoinPreprocessor:
         else:
             overlap_days = max_window + 1
 
-        q = """
-            SELECT MAX(time) FROM ohlcv_features
-            WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s;
-        """
-        last_processed_result = pd.read_sql(q, self.engine, params={
-            "symbol": symbol.upper(), "exchange": exchange, "interval": interval
-        })
-        last_processed = last_processed_result.iloc[0, 0] if not last_processed_result.empty and not pd.isna(last_processed_result.iloc[0, 0]) else None
+        Session = sessionmaker(bind=self.engine)
+        with Session() as session:
+            last_processed = session.query(func.max(OHLCVFeature.time)).filter(
+                OHLCVFeature.symbol == symbol.upper(),
+                OHLCVFeature.exchange == exchange,
+                OHLCVFeature.interval == interval
+            ).scalar()
 
-        fit_scaler = True if last_processed is None else refit_scaler
+            fit_scaler = True if last_processed is None else refit_scaler
 
-        if last_processed is None:
-            logger.info("No existing features, running full preprocessing for %s", symbol)
-            q_check = """
-                SELECT COUNT(*) FROM ohlcv_features 
-                WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s;
-            """
-            count = pd.read_sql(q_check, self.engine, params={
-                "symbol": symbol.upper(), "exchange": exchange, "interval": interval
-            }).iloc[0, 0]
-            if count > 0:
-                logger.warning("Features already exist for %s; skipping full to avoid duplicates", symbol)
+            if last_processed is None:
+                logger.info("No existing features, running full preprocessing for %s", symbol)
+                
+                count = session.query(func.count(OHLCVFeature.time)).filter(
+                    OHLCVFeature.symbol == symbol.upper(),
+                    OHLCVFeature.exchange == exchange,
+                    OHLCVFeature.interval == interval
+                ).scalar()
+
+                if count > 0:
+                    logger.warning("Features already exist for %s; skipping full to avoid duplicates", symbol)
+                    return pd.DataFrame()
+
+                df_raw = self.load_data(symbol, exchange, interval, lookback_days=None)
+            else:
+                logger.info("Incremental update from %s onwards for %s", last_processed, symbol)
+                
+                last_processed_ts = pd.Timestamp(last_processed)
+                if last_processed_ts.tzinfo is None:
+                    last_processed_ts = last_processed_ts.tz_localize('UTC')
+
+                start_date_for_load = last_processed_ts - pd.Timedelta(days=overlap_days)
+                
+                lookback_days = (pd.Timestamp.utcnow() - start_date_for_load).days
+                
+                df_raw = self.load_data(symbol, exchange, interval, lookback_days=lookback_days)
+
+            if df_raw.empty:
+                logger.info("No new rows to process for %s", symbol)
                 return pd.DataFrame()
 
-            df_raw = self.load_data(symbol, exchange, interval, lookback_days=None)
-        else:
-            logger.info("Incremental update from %s onwards for %s", last_processed, symbol)
-            
-            last_processed_ts = pd.Timestamp(last_processed)
-            if last_processed_ts.tzinfo is None:
-                last_processed_ts = last_processed_ts.tz_localize('UTC')
+            if not fit_scaler:
+                path = _scaler_path_for(self.scaler_dir, symbol, None)
+                if path.exists():
+                    _, meta_cols = load_scaler_with_meta(path)
+                    if meta_cols:
+                        expected_vol_cols = {c for c in meta_cols if 'volatility' in c}
+                        current_vol_cols = {f"volatility_{w}" for w in windows['vol']}
+                        if expected_vol_cols != current_vol_cols:
+                            fit_scaler = True
+                            logger.info("Scaler meta mismatch for %s; forcing refit", symbol)
 
-            start_date_for_load = last_processed_ts - pd.Timedelta(days=overlap_days)
-            
-            lookback_days = (pd.Timestamp.utcnow() - start_date_for_load).days
-            
-            df_raw = self.load_data(symbol, exchange, interval, lookback_days=lookback_days)
+            df_proc, _ = self.preprocess(
+                df_raw, symbol=symbol, input_interval=interval, target_freq=target_freq,
+                fit_scaler=fit_scaler, save_scaler=fit_scaler
+            )
+            df_proc['symbol'] = symbol.upper()
+            df_proc['exchange'] = exchange
+            df_proc['interval'] = interval
 
-        if df_raw.empty:
-            logger.info("No new rows to process for %s", symbol)
-            return pd.DataFrame()
+            if last_processed:
+                last_processed_ts = pd.Timestamp(last_processed)
+                if last_processed_ts.tzinfo is None:
+                    last_processed_ts = last_processed_ts.tz_localize('UTC')
+                df_proc = df_proc[df_proc.index > last_processed_ts]
 
-        if not fit_scaler:
-            path = _scaler_path_for(self.scaler_dir, symbol, None)
-            if path.exists():
-                _, meta_cols = load_scaler_with_meta(path)
-                if meta_cols:
-                    expected_vol_cols = {c for c in meta_cols if 'volatility' in c}
-                    current_vol_cols = {f"volatility_{w}" for w in windows['vol']}
-                    if expected_vol_cols != current_vol_cols:
-                        fit_scaler = True
-                        logger.info("Scaler meta mismatch for %s; forcing refit", symbol)
+            df_proc = df_proc[~df_proc.index.duplicated(keep='last')]
 
-        df_proc, _ = self.preprocess(
-            df_raw, symbol=symbol, input_interval=interval, target_freq=target_freq,
-            fit_scaler=fit_scaler, save_scaler=fit_scaler
-        )
-        df_proc['symbol'] = symbol.upper()
-        df_proc['exchange'] = exchange
-        df_proc['interval'] = interval
+            if not df_proc.empty:
+                if last_processed is None:  
+                    session.query(OHLCVFeature).filter(
+                        OHLCVFeature.symbol == symbol.upper(),
+                        OHLCVFeature.exchange == exchange,
+                        OHLCVFeature.interval == interval
+                    ).delete(synchronize_session=False)
+                    session.commit()
 
-        if last_processed:
-            last_processed_ts = pd.Timestamp(last_processed)
-            if last_processed_ts.tzinfo is None:
-                last_processed_ts = last_processed_ts.tz_localize('UTC')
-            df_proc = df_proc[df_proc.index > last_processed_ts]
+                self.save_to_timescaledb(df_proc, "ohlcv_features")
+                logger.info("Upserted %d rows for %s", len(df_proc), symbol)
+            else:
+                logger.info("No rows to save for %s", symbol)
 
-        df_proc = df_proc[~df_proc.index.duplicated(keep='last')]
-
-        if not df_proc.empty:
-            if last_processed is None:  
-                delete_q = """
-                    DELETE FROM ohlcv_features
-                    WHERE symbol = :symbol AND exchange = :exchange AND interval = :interval;
-                    """
-                with self.engine.connect() as connection:
-                    connection.execute(text(delete_q), {
-                        "symbol": symbol.upper(), "exchange": exchange, "interval": interval
-                    })
-
-            self.save_to_timescaledb(df_proc, "ohlcv_features")
-            logger.info("Upserted %d rows for %s", len(df_proc), symbol)
-        else:
-            logger.info("No rows to save for %s", symbol)
-
-        return df_proc
+            return df_proc
     
     def load_features_series(self, symbol: str, exchange: str = 'binance', interval: str = '1h', start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
         params = {"symbol": symbol.upper(), "exchange": exchange, "interval": interval}
@@ -312,16 +296,23 @@ class CoinPreprocessor:
                 logger.info("Loaded %s from Redis cache", cache_key)
                 return cached_df
 
-        q = f"SELECT * FROM ohlcv_features WHERE symbol = %(symbol)s AND exchange = %(exchange)s AND interval = %(interval)s"
-        if start is not None:
-            q += " AND time >= %(start)s"
-            params['start'] = pd.to_datetime(start)
-        if end is not None:
-            q += " AND time <= %(end)s"
-            params['end'] = pd.to_datetime(end)
-        q += " ORDER BY time ASC;"
+        Session = sessionmaker(bind=self.engine)
+        with Session() as session:
+            query = session.query(OHLCVFeature).filter(
+                OHLCVFeature.symbol == symbol.upper(),
+                OHLCVFeature.exchange == exchange,
+                OHLCVFeature.interval == interval
+            )
 
-        df = pd.read_sql(q, self.engine, params=params, parse_dates=['time'])
+            if start is not None:
+                query = query.filter(OHLCVFeature.time >= pd.to_datetime(start))
+            if end is not None:
+                query = query.filter(OHLCVFeature.time <= pd.to_datetime(end))
+            
+            query = query.order_by(OHLCVFeature.time.asc())
+
+            df = pd.read_sql(query.statement, self.engine, parse_dates=['time'])
+
         if df.empty:
             raise ValueError(f"No features found for {symbol}/{exchange}/{interval}")
 

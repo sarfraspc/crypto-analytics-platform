@@ -2,7 +2,8 @@ import logging
 from typing import List
 from datetime import datetime, timedelta
 import nltk
-from sqlalchemy import text
+from sqlalchemy.orm import sessionmaker
+from src.data.storage.models import NewsArticle, RedditPost
 from sentence_transformers import SentenceTransformer
 from core.database import get_timescale_engine
 
@@ -24,16 +25,27 @@ class Embedder:
 
     def fetch_docs(self, days_back: int = 30):
         cutoff = datetime.now() - timedelta(days=days_back)
-        query = text("""
-            SELECT id, title || ' ' || COALESCE(text, '') AS content, 'news' AS source
-            FROM news_articles WHERE published > :cutoff
-            UNION ALL
-            SELECT id, title || ' ' || COALESCE(body, '') AS content, 'reddit' AS source
-            FROM reddit_posts WHERE created > :cutoff
-        """)
-        with self.engine.connect() as conn:
-            result = conn.execute(query, {'cutoff': cutoff}).fetchall()
-        docs = [{'id': row[0], 'content': row[1], 'source': row[2]} for row in result]
+        
+        Session = sessionmaker(bind=self.engine)
+        with Session() as session:
+            news_articles = session.query(NewsArticle).filter(NewsArticle.published > cutoff).all()
+            reddit_posts = session.query(RedditPost).filter(RedditPost.created > cutoff).all()
+        
+        docs = []
+        for article in news_articles:
+            docs.append({
+                'id': article.id,
+                'content': f"{article.title} {article.text or ''}",
+                'source': 'news'
+            })
+            
+        for post in reddit_posts:
+            docs.append({
+                'id': post.id,
+                'content': f"{post.title} {post.body or ''}",
+                'source': 'reddit'
+            })
+        
         logger.info(f"Fetched {len(docs)} docs from last {days_back} days.")
         return docs
 
