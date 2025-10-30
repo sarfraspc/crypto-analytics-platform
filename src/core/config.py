@@ -6,7 +6,6 @@ except ImportError:
 from typing import Dict, List
 import json
 from pydantic import field_validator
-from ast import literal_eval
 
 class Settings(BaseSettings):
     # Postgres (metadata DB)
@@ -67,10 +66,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_exchange_addrs(cls, v):
         if isinstance(v, str):
-            try:
-                return json.loads(v)
-            except json.JSONDecodeError:
-                return literal_eval(v)
+            return json.loads(v)
         return v
 
     class Config:
