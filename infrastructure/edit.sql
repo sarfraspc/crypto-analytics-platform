@@ -33,6 +33,7 @@ SELECT create_hypertable('ohlcv_features', 'time', if_not_exists => TRUE);
 ALTER TABLE IF EXISTS ohlcv_features OWNER TO crypto_user;
 GRANT ALL PRIVILEGES ON TABLE ohlcv_features TO crypto_user;
 
+
 CREATE TABLE IF NOT EXISTS ohlcv_features_panel (
   time TIMESTAMP NOT NULL,
   symbol TEXT NOT NULL,
@@ -46,4 +47,42 @@ SELECT create_hypertable('ohlcv_features_panel', 'time', if_not_exists => TRUE);
 
 ALTER TABLE IF EXISTS ohlcv_features_panel OWNER TO crypto_user;
 GRANT ALL PRIVILEGES ON TABLE ohlcv_features_panel TO crypto_user;
+
+
+CREATE TABLE IF NOT EXISTS ta_signals (
+    time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    interval TEXT NOT NULL,
+    signal TEXT,                       
+    rsi DOUBLE PRECISION,
+    macd_hist DOUBLE PRECISION,
+    pattern TEXT,                     
+    PRIMARY KEY (symbol, exchange, interval)
+);
+
+SELECT create_hypertable('ta_signals', 'time', if_not_exists => TRUE);
+
+ALTER TABLE IF EXISTS ta_signals OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE ta_signals TO crypto_user;
+
+
+CREATE TABLE IF NOT EXISTS ta_signals_history (
+    time TIMESTAMPTZ NOT NULL,
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    interval TEXT NOT NULL,
+    signal TEXT,
+    rsi DOUBLE PRECISION,
+    macd_hist DOUBLE PRECISION,
+    pattern TEXT,
+    PRIMARY KEY (time, symbol, exchange, interval)
+);
+
+SELECT create_hypertable('ta_signals_history', 'time', if_not_exists => TRUE);
+
+ALTER TABLE IF EXISTS ta_signals_history OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE ta_signals_history TO crypto_user;
+
+SELECT add_retention_policy('ta_signals_history', INTERVAL '180 days', if_not_exists => TRUE);
 

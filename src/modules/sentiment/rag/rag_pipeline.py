@@ -11,9 +11,15 @@ from modules.sentiment.rag.generator import Generator
 from utils.cache import RedisCache
 from modules.sentiment.evaluation.rag_metrics import faithfulness
 from modules.sentiment.evaluation.mlflow_logger import setup_mlflow, start_rag_run, log_rag_metrics, end_rag_run
+from core.config import settings  
 
+cache = RedisCache(
+    host=settings.REDIS_HOST,
+    port=settings.REDIS_PORT,
+    db=settings.REDIS_DB,
+    expire_seconds=3600
+)
 logger = logging.getLogger(__name__)
-cache = RedisCache(expire_seconds=3600)
 
 def ingest(embedder: Embedder, vector_store: QdrantVectorStore, retriever: Retriever):
     vector_store.delete_all()
