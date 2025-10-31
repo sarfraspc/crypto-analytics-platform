@@ -80,3 +80,23 @@ class ChainState(BaseModel):
     chain: str
     last_block: Optional[int] = None
     last_updated: Optional[datetime] = None
+
+class TASignal(BaseModel):
+    symbol: str
+    exchange: str
+    interval: str
+    time: Optional[datetime] = None
+    signal: Optional[str] = None
+    rsi: Optional[float] = None
+    macd_hist: Optional[float] = None
+    pattern: Optional[str] = None
+
+class TASignalHistory(BaseModel):
+    time: datetime
+    symbol: str
+    exchange: str
+    interval: str
+    signal: Optional[str] = None
+    rsi: Optional[float] = None
+    macd_hist: Optional[float] = None
+    pattern: Optional[str] = None

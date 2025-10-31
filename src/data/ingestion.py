@@ -15,6 +15,7 @@ from data.storage.models import Token
 from data.ingestion.market_client import backfill_ohlcv_ccxt, poll_trades_ccxt
 from data.ingestion.chain_client import scan_eth_transfers
 from data.ingestion.news_client import ingest_cryptopanic, ingest_reddit_praw, ingest_fng
+from modules.onchain.patterns.ta_patterns import generate_ta_signal
 
 from core.logging_config import setup_logging
 
@@ -46,6 +47,14 @@ def get_symbols_from_tokens(db: Session, limit: int = 50):
     except Exception as e:
         logger.error(f"Error fetching symbols: {e}")
         return []
+
+def backfill_and_ta(db_timescale, db_metadata, exchange, symbol, interval, since_ms):
+    inserted_rows = backfill_ohlcv_ccxt(db_timescale, db_metadata, exchange, symbol, interval, since_ms)
+    if inserted_rows > 0:
+        logger.info(f"Running TA signal generation for {symbol} ({interval})")
+        generate_ta_signal(symbol=symbol, exchange=exchange, interval=interval)
+    return inserted_rows
+
 
 async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: List[Dict] = None):
     start_time = datetime.now()
@@ -163,7 +172,7 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
     for s in symbols:
         task = loop.run_in_executor(
             None,
-            backfill_ohlcv_ccxt,
+            backfill_and_ta,
             db_timescale,
             db_metadata,
             s['exchange'],
