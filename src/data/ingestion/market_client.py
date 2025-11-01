@@ -87,7 +87,14 @@ def poll_trades_ccxt(db: Session, exchange_id: str, symbol: str, poll_interval: 
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
     ExchangeClass = getattr(ccxt, exchange_id)
-    exchange = ExchangeClass({'enableRateLimit': True})
+    exchange = ExchangeClass({
+        'enableRateLimit': True,
+        'options': {
+            'defaultType': 'spot',
+            'recvWindow': 10000,
+        },
+        'encoding': 'utf-8',
+    })
     last_seen = deque(maxlen=3000)
     while not shutdown:
         try:
