@@ -1,6 +1,6 @@
 from web3 import Web3
 from sqlalchemy import select
-from typing import List, Optional, Any
+from typing import Any
 from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.orm import Session
@@ -9,8 +9,8 @@ import time
 from tenacity import retry, wait_exponential, stop_after_attempt
 
 from core.config import settings
-from data.validation import WhaleAlert, ChainState, OnchainMetric
-from data.storage.crud import upsert_whale_alerts, update_chain_state, upsert_onchain_metrics
+from data.validation import WhaleAlert, ChainState
+from data.storage.crud import upsert_whale_alerts, update_chain_state
 from core.logging_config import setup_logging
 
 setup_logging()
@@ -23,8 +23,9 @@ def get_last_chain_block(db: Session, chain: str = 'ethereum'):
     state = db.execute(select(ChainStateModel).where(ChainStateModel.chain == chain)).scalar_one_or_none()
     return state.last_block if state else None
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=10), stop=stop_after_attempt(5))
+@retry(wait=wait_exponential(multiplier=2, min=2, max=30), stop=stop_after_attempt(10))  # Slower retry
 def _get_logs_with_retry(w3, from_block, to_block):
+    time.sleep(1) 
     return w3.eth.get_logs({
         "fromBlock": from_block,
         "toBlock": to_block,
@@ -58,47 +59,7 @@ def clean_hexbytes(obj: Any) -> Any:
         return obj.hex()
     return obj
 
-def calculate_metrics_from_logs(w3, logs: List, alerts: List[WhaleAlert], unique_addrs: set, total_logs: int, block_timestamp: int):
-    if not logs:
-        return []
-    
-    try:
-        total_tx = len(set(log['transactionHash'].hex() for log in logs))  
-        total_logs = len(logs)
-        
-        latest_block = w3.eth.get_block('latest')
-        avg_gas_price = Decimal(latest_block.get('baseFeePerGas', 0) or 20000000000)  
-        active_addrs_total = len(unique_addrs) or 1000  
-        
-        time = datetime.fromtimestamp(block_timestamp, tz=timezone.utc)
-        
-        eth_net_flow = Decimal(0)
-        token_net_flows = {}
-        for alert in alerts:
-            if alert.asset and (alert.from_address and alert.from_address.lower() in settings.exchange_addrs or alert.to_address and alert.to_address.lower() in settings.exchange_addrs):
-                decimals = get_token_decimals(w3, alert.asset)
-                normalized_amount = alert.amount / Decimal(10**decimals)
-                
-                if alert.from_address and alert.from_address.lower() in settings.exchange_addrs:
-                    token_net_flows[alert.asset] = token_net_flows.get(alert.asset, Decimal(0)) - normalized_amount
-                if alert.to_address and alert.to_address.lower() in settings.exchange_addrs:
-                    token_net_flows[alert.asset] = token_net_flows.get(alert.asset, Decimal(0)) + normalized_amount
 
-        metrics_list = [
-            OnchainMetric(time=time, chain='ethereum', metric='total_transactions', value=Decimal(total_tx)),
-            OnchainMetric(time=time, chain='ethereum', metric='avg_gas_price_wei', value=avg_gas_price),
-            OnchainMetric(time=time, chain='ethereum', metric='erc20_transfer_count', value=Decimal(total_logs)),
-            OnchainMetric(time=time, chain='ethereum', metric='active_addresses_total', value=Decimal(active_addrs_total)),
-            OnchainMetric(time=time, chain='ethereum', metric='exchange_net_flow_eth_wei', value=eth_net_flow),
-        ]
-
-        for asset, flow in token_net_flows.items():
-            metrics_list.append(OnchainMetric(time=time, chain='ethereum', metric=f'exchange_net_flow_{asset.lower()}_total', value=flow))
-
-        return metrics_list
-    except Exception as e:
-        logger.error(f"Error calculating metrics: {e}")
-        return []
 
 def process_transfer_log(log, threshold_wei: int, block_timestamp: int):
     try:
@@ -166,16 +127,12 @@ def scan_eth_transfers(db: Session, batch_size: int = 500, threshold_eth: float 
                 alerts.append(alert)
             unique_addrs.update(addrs)
 
-        metrics = calculate_metrics_from_logs(w3, logs, alerts, unique_addrs, total_transfer_logs, block_timestamp)
-
         if alerts:
             upsert_whale_alerts(db, alerts)
-        if metrics:
-            upsert_onchain_metrics(db, metrics)
         update_chain_state(db, ChainState(chain='ethereum', last_block=end_block, last_updated=datetime.now(timezone.utc)))
 
-        logger.info(f"Scan complete: {len(alerts)} alerts, {len(metrics)} metrics")
-        return {'whale_alerts': len(alerts), 'onchain_metrics': len(metrics)}
+        logger.info(f"Scan complete: {len(alerts)} alerts")
+        return {'whale_alerts': len(alerts)}
 
     except Exception as e:
         logger.error(f"Ethereum scan failed: {e}")

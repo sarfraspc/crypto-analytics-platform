@@ -15,7 +15,6 @@ from data.storage.models import Token
 from data.ingestion.market_client import backfill_ohlcv_ccxt, poll_trades_ccxt
 from data.ingestion.chain_client import scan_eth_transfers
 from data.ingestion.news_client import ingest_cryptopanic, ingest_reddit_praw, ingest_fng
-from modules.onchain.patterns.ta_patterns import generate_ta_signal
 
 from core.logging_config import setup_logging
 
@@ -50,9 +49,6 @@ def get_symbols_from_tokens(db: Session, limit: int = 50):
 
 def backfill_and_ta(db_timescale, db_metadata, exchange, symbol, interval, since_ms):
     inserted_rows = backfill_ohlcv_ccxt(db_timescale, db_metadata, exchange, symbol, interval, since_ms)
-    if inserted_rows > 0:
-        logger.info(f"Running TA signal generation for {symbol} ({interval})")
-        generate_ta_signal(symbol=symbol, exchange=exchange, interval=interval)
     return inserted_rows
 
 
@@ -91,8 +87,7 @@ async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: Lis
 
         total_ohlcv_inserted = sum(market_results) 
 
-        whale_count = processed_alt[0] if isinstance(processed_alt[0], dict) else 0
-        whale_count = whale_count.get('whale_alerts', 0) if isinstance(whale_count, dict) else whale_count
+        whale_count = processed_alt[0].get('whale_alerts', 0) if isinstance(processed_alt[0], dict) else 0
         cp_count, cp_skipped = processed_alt[1] if processed_alt[1] else (0, 0)
         reddit_count, reddit_skipped = processed_alt[2] if processed_alt[2] else (0, 0)
         fng_count, _ = processed_alt[3] if processed_alt[3] else (0, 0)
@@ -204,8 +199,7 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
 
         total_ohlcv_inserted = sum(market_results)  
 
-        whale_count = processed_alt[0] if isinstance(processed_alt[0], dict) else 0
-        whale_count = whale_count.get('whale_alerts', 0) if isinstance(whale_count, dict) else whale_count
+        whale_count = processed_alt[0].get('whale_alerts', 0) if isinstance(processed_alt[0], dict) else 0
         cp_count, cp_skipped = processed_alt[1] if processed_alt[1] else (0, 0)
         reddit_count, reddit_skipped = processed_alt[2] if processed_alt[2] else (0, 0)
         fng_count, _ = processed_alt[3] if processed_alt[3] else (0, 0)
