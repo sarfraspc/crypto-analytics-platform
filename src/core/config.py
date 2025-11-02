@@ -79,6 +79,18 @@ class Settings(BaseSettings):
             "0x77134cbc06cb00b66f4c7e623d5fdbf6777635ec"
         ]
     }
+    STATIC_KNOWN_TOKENS: List[str] = [
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH
+        "0x6b175474e89094c44da98b954eedeac495271d0f",  # DAI
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
+        "0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT
+        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",  # WBTC
+        "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",  # UNI
+        "0x514910771af9ca656af840dff83e8264ecf986ca",  # LINK
+        "0x57ab1ec28d129707052df4df418d58a2d46d5f51",  # SUSHI
+        "0x0bc529c00c6401aef6d220be8c6ea1667f6ad93e",  # YFI
+        "0x9f8f72aa9304c8b593d555f12ef6589cc3db0f0a",  # MKR
+    ]
     
     class Config:
         env_file = ".env"
