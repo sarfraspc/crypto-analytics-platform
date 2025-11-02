@@ -124,25 +124,36 @@ def upsert_reddit(db: Session, posts: List[RedditPost]):
         db.rollback()
         raise
 
-def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert]):
+def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert], chunk_size: int = 500):
     if not alerts:
         return
+
     try:
-        values = [
-            {
-                'time': alert.time, 'tx_hash': alert.tx_hash, 'chain': alert.chain,
-                'from_address': alert.from_address, 'to_address': alert.to_address,
-                'amount': alert.amount, 'asset': alert.asset, 'raw': alert.raw or {}
-            }
-            for alert in alerts
-        ]
-        stmt = insert(WhaleAlertModel).values(values)
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=['time', 'tx_hash', 'asset']  
-        )
-        result = db.execute(stmt)
-        db.flush()
-        logger.info(f"Upserted {result.rowcount} whale alerts")
+        total = 0
+        for i in range(0, len(alerts), chunk_size):
+            batch = alerts[i:i + chunk_size]
+
+            values = [
+                {
+                    'time': a.time,
+                    'tx_hash': a.tx_hash,
+                    'chain': a.chain,
+                    'from_address': a.from_address,
+                    'to_address': a.to_address,
+                    'amount': a.amount,
+                    'asset': a.asset,
+                    'raw': a.raw or {}
+                }
+                for a in batch
+            ]
+
+            stmt = insert(WhaleAlertModel).values(values)
+            stmt = stmt.on_conflict_do_nothing(index_elements=['time', 'tx_hash', 'asset'])
+            db.execute(stmt)
+            db.flush()
+            total += len(batch)
+
+        logger.info(f"Upserted {total} whale alerts in chunks")
     except Exception as e:
         db.rollback()
         logger.error(f"Error upserting whale alerts: {e}")
@@ -267,9 +278,18 @@ def insert_ta_signals_history(db: Session, signals: List[TASignalHistory]):
             for s in signals
         ]
         stmt = insert(TASignalHistoryModel).values(values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['time', 'symbol', 'exchange', 'interval'],
+            set_= {
+                'signal': stmt.excluded.signal,
+                'rsi': stmt.excluded.rsi,
+                'macd_hist': stmt.excluded.macd_hist,
+                'pattern': stmt.excluded.pattern
+            }
+        )
         result = db.execute(stmt)
         db.flush()
-        logger.info(f"Inserted {result.rowcount} TA history rows")
+        logger.info(f"Upserted {result.rowcount} TA history rows")
     except Exception as e:
         db.rollback()
         logger.error(f"Error inserting ta_signals_history: {e}")
