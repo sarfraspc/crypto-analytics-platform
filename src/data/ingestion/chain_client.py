@@ -1,42 +1,121 @@
 from web3 import Web3
-from sqlalchemy import select
-from typing import List, Optional, Any
+from sqlalchemy import select, func
+from typing import Any, Dict, List, Optional, Set
 from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.orm import Session
 import logging
 import time
+import random
+from pycoingecko import CoinGeckoAPI  
 from tenacity import retry, wait_exponential, stop_after_attempt
 
 from core.config import settings
-from data.validation import WhaleAlert, ChainState, OnchainMetric
-from data.storage.crud import upsert_whale_alerts, update_chain_state, upsert_onchain_metrics
+from data.validation import WhaleAlert, ChainState
+from data.storage.crud import upsert_whale_alerts, update_chain_state
 from core.logging_config import setup_logging
+from data.storage.models import Token as TokenModel 
 
 setup_logging()
 logger = logging.getLogger(__name__)
+CG = CoinGeckoAPI()
 
 TRANSFER_TOPIC = "0x" + Web3.keccak(text="Transfer(address,address,uint256)").hex()
+
+EXCHANGE_ADDRESSES = settings.EXCHANGE_ADDRESSES
+ALL_EXCHANGE_ADDRS = set(addr.lower() for addrs in EXCHANGE_ADDRESSES.values() for addr in addrs)
+
+def get_top_eth_tokens(db: Session, limit: int = 20) -> List[Dict[str, str]]:
+    try:
+        result = db.execute(
+            select(TokenModel)
+            .where(
+                func.jsonb_extract_path_text(TokenModel.token_metadata, 'market_cap_rank').isnot(None),
+                func.jsonb_extract_path_text(TokenModel.token_metadata, 'detail_platforms', 'ethereum').isnot(None)
+            )
+            .order_by(
+                func.cast(func.jsonb_extract_path_text(TokenModel.token_metadata, 'market_cap_rank'), func.Integer)
+            )
+            .limit(limit)
+        ).scalars().all()
+
+        top_tokens = []
+        for token in result:
+            metadata = token.token_metadata or {}
+            platforms = metadata.get('detail_platforms', {})
+            eth_addr = platforms.get('ethereum')
+            if eth_addr:
+                top_tokens.append({
+                    'contract_addr': eth_addr.lower(),
+                    'coingecko_id': token.coingecko_id,
+                    'symbol': token.symbol
+                })
+        
+        logger.info(f"Loaded {len(top_tokens)} top ETH tokens from DB (limit={limit})")
+        return top_tokens
+    except Exception as e:
+        logger.error(f"Error fetching top ETH tokens from DB: {e}", exc_info=True)
+        return [
+            {'contract_addr': addr.lower(), 'coingecko_id': 'weth', 'symbol': 'WETH'}  
+            for addr in settings.STATIC_KNOWN_TOKENS
+        ][:limit]
+
+def fetch_prices_bulk(coingecko_ids: List[str]) -> Dict[str, float]:
+    if not coingecko_ids:
+        return {}
+    
+    try:
+        ids_str = ','.join(coingecko_ids)
+        prices_data = CG.get_price(ids=ids_str, vs_currencies='usd')
+        return {cg_id: data['usd'] for cg_id, data in prices_data.items()}
+    except Exception as e:
+        logger.warning(f"Failed to bulk fetch prices for {len(coingecko_ids)} IDs: {e}", exc_info=True)
+        return {}
 
 def get_last_chain_block(db: Session, chain: str = 'ethereum'):
     from data.storage.models import ChainState as ChainStateModel
     state = db.execute(select(ChainStateModel).where(ChainStateModel.chain == chain)).scalar_one_or_none()
     return state.last_block if state else None
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=10), stop=stop_after_attempt(5))
-def _get_logs_with_retry(w3, from_block, to_block):
-    return w3.eth.get_logs({
-        "fromBlock": from_block,
-        "toBlock": to_block,
-        "topics": [TRANSFER_TOPIC]
-    })
+@retry(wait=wait_exponential(multiplier=2, min=2, max=30), stop=stop_after_attempt(10))
+def _get_logs_with_retry(w3, from_block, to_block, known_tokens: List[str], step=50):
+    all_logs = []
+    for start in range(from_block, to_block + 1, step):
+        end = min(start + step - 1, to_block)
+        try:
+            logs = w3.eth.get_logs({
+                "fromBlock": start,
+                "toBlock": end,
+                "topics": [TRANSFER_TOPIC],
+                "address": [Web3.to_checksum_address(addr) for addr in known_tokens]  
+            })
+            all_logs.extend(logs)
+            time.sleep(1.0 + random.uniform(0, 0.5))  
+        except Exception as e:
+            logger.warning(f"Partial fetch failed for blocks {start}-{end}: {e}", exc_info=True)
+            continue
+    return all_logs
 
-def get_token_decimals(w3, token_address: str):
+def is_erc20(w3, address: str) -> bool:
+    SYMBOL_ABI = [{"constant": True, "name": "symbol", "outputs": [{"type": "string"}], "stateMutability": "view", "type": "function"}]
+    try:
+        token = w3.eth.contract(address=Web3.to_checksum_address(address), abi=SYMBOL_ABI)
+        token.functions.symbol().call()
+        return True
+    except Exception:
+        return False
+
+def get_token_decimals(w3, token_address: str) -> Optional[int]:
     if not hasattr(get_token_decimals, "_cache"):
         get_token_decimals._cache = {}
     
     if token_address in get_token_decimals._cache:
         return get_token_decimals._cache[token_address]
+
+    if not is_erc20(w3, token_address):
+        logger.warning(f"Skipping non-ERC20 token: {token_address}")
+        get_token_decimals._cache[token_address] = None
+        return None
 
     DECIMALS_ABI = [{"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "payable": False, "stateMutability": "view", "type": "function"}]
     
@@ -46,10 +125,11 @@ def get_token_decimals(w3, token_address: str):
         get_token_decimals._cache[token_address] = decimals
         return decimals
     except Exception as e:
-        logger.warning(f"Could not fetch decimals for {token_address}: {e}")
-        return 18  
+        logger.warning(f"Could not fetch decimals for {token_address}: {e}", exc_info=True)
+        get_token_decimals._cache[token_address] = None
+        return None
 
-def clean_hexbytes(obj: Any) -> Any:
+def clean_hexbytes(obj: Any):
     if isinstance(obj, dict):
         return {k: clean_hexbytes(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -58,127 +138,112 @@ def clean_hexbytes(obj: Any) -> Any:
         return obj.hex()
     return obj
 
-def calculate_metrics_from_logs(w3, logs: List, alerts: List[WhaleAlert], unique_addrs: set, total_logs: int, block_timestamp: int):
-    if not logs:
-        return []
-    
+def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd: float, block_timestamp: int) -> tuple[Optional[WhaleAlert], Set[str]]:
     try:
-        total_tx = len(set(log['transactionHash'].hex() for log in logs))  
-        total_logs = len(logs)
-        
-        latest_block = w3.eth.get_block('latest')
-        avg_gas_price = Decimal(latest_block.get('baseFeePerGas', 0) or 20000000000)  
-        active_addrs_total = len(unique_addrs) or 1000  
-        
-        time = datetime.fromtimestamp(block_timestamp, tz=timezone.utc)
-        
-        eth_net_flow = Decimal(0)
-        token_net_flows = {}
-        for alert in alerts:
-            if alert.asset and (alert.from_address and alert.from_address.lower() in settings.exchange_addrs or alert.to_address and alert.to_address.lower() in settings.exchange_addrs):
-                decimals = get_token_decimals(w3, alert.asset)
-                normalized_amount = alert.amount / Decimal(10**decimals)
-                
-                if alert.from_address and alert.from_address.lower() in settings.exchange_addrs:
-                    token_net_flows[alert.asset] = token_net_flows.get(alert.asset, Decimal(0)) - normalized_amount
-                if alert.to_address and alert.to_address.lower() in settings.exchange_addrs:
-                    token_net_flows[alert.asset] = token_net_flows.get(alert.asset, Decimal(0)) + normalized_amount
+        if len(log['topics']) < 3:
+            logger.warning(f"Skipping malformed log (short topics): {log.get('transactionHash', 'unknown').hex() if hasattr(log.get('transactionHash'), 'hex') else 'unknown'}")
+            return None, set()
 
-        metrics_list = [
-            OnchainMetric(time=time, chain='ethereum', metric='total_transactions', value=Decimal(total_tx)),
-            OnchainMetric(time=time, chain='ethereum', metric='avg_gas_price_wei', value=avg_gas_price),
-            OnchainMetric(time=time, chain='ethereum', metric='erc20_transfer_count', value=Decimal(total_logs)),
-            OnchainMetric(time=time, chain='ethereum', metric='active_addresses_total', value=Decimal(active_addrs_total)),
-            OnchainMetric(time=time, chain='ethereum', metric='exchange_net_flow_eth_wei', value=eth_net_flow),
-        ]
+        token_address = log['address'].lower()
+        from_addr = '0x' + log['topics'][1].hex()[-40:].lower()
+        to_addr = '0x' + log['topics'][2].hex()[-40:].lower()
+        amount_raw = int.from_bytes(log['data'], 'big')
+        
+        addresses = {from_addr, to_addr}
+        
+        if from_addr in ALL_EXCHANGE_ADDRS and to_addr in ALL_EXCHANGE_ADDRS:
+            logger.debug(f"Skipping internal exchange transfer: {from_addr} -> {to_addr}")
+            return None, addresses
 
-        for asset, flow in token_net_flows.items():
-            metrics_list.append(OnchainMetric(time=time, chain='ethereum', metric=f'exchange_net_flow_{asset.lower()}_total', value=flow))
+        if amount_raw < 10**15:  
+            return None, addresses
 
-        return metrics_list
+        decimals = get_token_decimals(w3, token_address)
+        if decimals is None:
+            decimals = 18 
+            logger.debug(f"Using fallback decimals=18 for {token_address}")
+        amount = Decimal(amount_raw) / Decimal(10**decimals)
+
+        price_usd = prices.get(token_address, 0.0)  
+        value_usd = float(amount) * price_usd
+        if value_usd < threshold_usd:
+            return None, addresses
+
+        raw_log = clean_hexbytes(dict(log))
+        
+        alert = WhaleAlert(
+            time=datetime.fromtimestamp(block_timestamp, tz=timezone.utc),
+            tx_hash=log['transactionHash'].hex(),
+            chain='ethereum',
+            from_address=from_addr,
+            to_address=to_addr,
+            amount=amount,  
+            asset=token_address,
+            raw=raw_log
+        )
+        logger.info(f"Whale alert: {amount} {token_address} ({value_usd:.2f} USD) from {from_addr} to {to_addr}")
+        return alert, addresses
+        
     except Exception as e:
-        logger.error(f"Error calculating metrics: {e}")
-        return []
-
-def process_transfer_log(log, threshold_wei: int, block_timestamp: int):
-    try:
-        token_address = log['address']
-        from_addr = '0x' + log['topics'][1].hex()[-40:]
-        to_addr = '0x' + log['topics'][2].hex()[-40:]
-        amount = int.from_bytes(log['data'], 'big')
-        
-        addresses = {from_addr.lower(), to_addr.lower()}
-        
-        if amount >= threshold_wei:
-            raw = clean_hexbytes(dict(log)) 
-            
-            alert = WhaleAlert(
-                time=datetime.fromtimestamp(block_timestamp, tz=timezone.utc),
-                tx_hash=log['transactionHash'].hex(),
-                chain='ethereum',
-                from_address=from_addr,
-                to_address=to_addr,
-                amount=Decimal(amount),
-                asset=token_address,
-                raw=raw
-            )
-            return alert, addresses
-        
-        return None, addresses
-    except Exception as e:
-        logger.error(f"Error processing transfer log: {e}")
+        logger.error(f"Error processing transfer log: {e}", exc_info=True)
         return None, set()
 
-def scan_eth_transfers(db: Session, batch_size: int = 500, threshold_eth: float = 500.0):
-    logger.info(f"Starting Ethereum scan with threshold: {threshold_eth} ETH")
+def scan_eth_transfers(db: Session, batch_size: int = 100, threshold_usd: float = 500000.0): 
+    logger.info(f"Starting Ethereum whale scan with USD threshold: {threshold_usd:,}")
     try:
         w3 = Web3(Web3.HTTPProvider(settings.INFURA_HTTPS))
         if not w3.is_connected():
             raise Exception("Failed to connect to Ethereum")
+
+        top_eth_tokens = get_top_eth_tokens(db, limit=20)
+        known_tokens = [t['contract_addr'] for t in top_eth_tokens]
+        coingecko_ids = [t['coingecko_id'] for t in top_eth_tokens]
+
+        prices_dict = fetch_prices_bulk(coingecko_ids)
+        prices = {t['contract_addr']: prices_dict.get(t['coingecko_id'], 0.0) for t in top_eth_tokens}
 
         last_block = get_last_chain_block(db, 'ethereum')  
         current_block = w3.eth.block_number
         if last_block is None:
             last_block = current_block - 100
         if last_block >= current_block:
-            return {'whale_alerts': 0, 'onchain_metrics': 0}
+            return {'whale_alerts': 0}
 
         start_block = last_block + 1
         end_block = min(current_block, last_block + batch_size)
 
-        logger.info(f"Processing blocks {start_block} to {end_block}")
+        logger.info(f"Processing blocks {start_block} to {end_block} for {len(known_tokens)} ETH tokens")
         
-        logs = _get_logs_with_retry(w3, start_block, end_block)
+        logs = _get_logs_with_retry(w3, start_block, end_block, known_tokens)
         logger.info(f"Fetched {len(logs)} transfer logs")
+
+        if not logs:
+            update_chain_state(db, ChainState(chain='ethereum', last_block=end_block, last_updated=datetime.now(timezone.utc)))
+            return {'whale_alerts': 0}
 
         end_block_data = w3.eth.get_block(end_block)
         block_timestamp = end_block_data['timestamp']
 
-        alerts = []
-        unique_addrs = set()
-        total_transfer_logs = len(logs)
+        alerts: List[WhaleAlert] = []
+        unique_addrs: Set[str] = set()
 
         for log in logs:
-            alert, addrs = process_transfer_log(log, int(threshold_eth * 10**18), block_timestamp)
+            alert, addrs = process_transfer_log(w3, prices, log, threshold_usd, block_timestamp)
             if alert:
-                decimals = get_token_decimals(w3, alert.asset)
-                alert.amount = alert.amount / Decimal(10**decimals)
                 alerts.append(alert)
             unique_addrs.update(addrs)
 
-        metrics = calculate_metrics_from_logs(w3, logs, alerts, unique_addrs, total_transfer_logs, block_timestamp)
-
         if alerts:
             upsert_whale_alerts(db, alerts)
-        if metrics:
-            upsert_onchain_metrics(db, metrics)
+            logger.info(f"Upserted {len(alerts)} whale alerts")
+
         update_chain_state(db, ChainState(chain='ethereum', last_block=end_block, last_updated=datetime.now(timezone.utc)))
 
-        logger.info(f"Scan complete: {len(alerts)} alerts, {len(metrics)} metrics")
-        return {'whale_alerts': len(alerts), 'onchain_metrics': len(metrics)}
+        logger.info(f"Scan complete: {len(alerts)} alerts from {len(unique_addrs)} unique addresses")
+        return {'whale_alerts': len(alerts)}
 
     except Exception as e:
-        logger.error(f"Ethereum scan failed: {e}")
+        logger.error(f"Ethereum scan failed: {e}", exc_info=True)
         if db.in_transaction():
             db.rollback()
-        return {'whale_alerts': 0, 'onchain_metrics': 0}
+        return {'whale_alerts': 0}

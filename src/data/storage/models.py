@@ -138,3 +138,27 @@ class OHLCVFeaturePanel(Base):
     interval = Column(String, primary_key=True)
     feature_name = Column(String, primary_key=True)
     feature_value = Column(Float(precision=53))
+
+class TASignal(Base):
+    __tablename__ = "ta_signals"
+
+    symbol = Column(String, primary_key=True)
+    exchange = Column(String, primary_key=True)
+    interval = Column(String, primary_key=True)
+    time = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    signal = Column(String)                   
+    rsi = Column(Float(precision=53))
+    macd_hist = Column(Float(precision=53))
+    pattern = Column(String)                   
+
+class TASignalHistory(Base):
+    __tablename__ = "ta_signals_history"
+
+    time = Column(DateTime(timezone=True), primary_key=True)
+    symbol = Column(String, primary_key=True)
+    exchange = Column(String, primary_key=True)
+    interval = Column(String, primary_key=True)
+    signal = Column(String)
+    rsi = Column(Float(precision=53))
+    macd_hist = Column(Float(precision=53))
+    pattern = Column(String)
