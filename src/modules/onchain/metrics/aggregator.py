@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
 from decimal import Decimal
 import numpy as np
 from sqlalchemy import select
@@ -92,10 +91,30 @@ def combine_metrics(
                 OHLCVModel.time >= corr_start
             ).order_by(OHLCVModel.time).limit(7)
             prices_7d = [row[0] for row in db.execute(corr_ohlcv_query).all()]
-            price_changes_7d = np.diff(prices_7d) / np.array(prices_7d[:-1]) * 100 if len(prices_7d) > 1 else [0]
-            price_whale_corr_7d = float(np.corrcoef(flows_7d[:-1], price_changes_7d)[0, 1]) if len(flows_7d) > 1 and len(price_changes_7d) > 0 else 0.0
 
-            flow_trend_7d = np.mean(np.diff(flows_7d) / np.array(flows_7d[:-1]) * 100) if len(flows_7d) > 1 else 0.0
+            if len(flows_7d) > 1 and len(prices_7d) > 1:
+                price_changes_7d = np.diff(prices_7d) / np.array(prices_7d[:-1]) * 100
+                if len(price_changes_7d) > 0 and not np.all(np.isnan(price_changes_7d)):
+                    price_whale_corr_7d = float(np.corrcoef(flows_7d[:-1], price_changes_7d)[0, 1])
+                else:
+                    price_whale_corr_7d = 0.0
+                    logger.debug("Defaulting corr to 0: insufficient valid price changes")
+            else:
+                price_whale_corr_7d = 0.0
+                logger.debug("Defaulting corr to 0: insufficient data points")
+
+            if len(flows_7d) > 1:
+                prev_values = np.array(flows_7d[:-1])
+                if np.all(prev_values != 0) and not np.any(np.isnan(prev_values)):
+                    diffs = np.diff(flows_7d)
+                    epsilon = 1e-10
+                    flow_trend_7d = float(np.mean(diffs / (prev_values + epsilon) * 100))
+                else:
+                    flow_trend_7d = 0.0
+                    logger.debug("Defaulting trend to 0: zero/NaN in prev values")
+            else:
+                flow_trend_7d = 0.0
+                logger.debug("Defaulting trend to 0: insufficient data points")
 
             bias_score = (ta_bias * 0.4) + (1 if net_flow > 0 else -1 if net_flow < 0 else 0) * 0.3 + (1 - whale_to_exchange_ratio) * 0.3
             market_bias = "bullish" if bias_score > 0.3 else "bearish" if bias_score < -0.3 else "neutral"
@@ -115,14 +134,20 @@ def combine_metrics(
             }
 
             raw_base = {"window": time_window}
+            def safe_decimal(val):
+                if abs(val) < float('inf') and not np.isnan(val):
+                    return Decimal(str(val))
+                return Decimal('0')
+
             metrics = [
-                OnchainMetric(time=end_time, chain=chain, metric="market_pressure_index", value=Decimal(str(market_pressure_index)), raw={**raw_base, "description": "weighted sum of whale inflow + exchange inflow – price change"}),
-                OnchainMetric(time=end_time, chain=chain, metric="whale_to_exchange_ratio", value=Decimal(str(whale_to_exchange_ratio)), raw={**raw_base, "description": "whales → exchanges / total whales"}),
-                OnchainMetric(time=end_time, chain=chain, metric="price_whale_corr_7d", value=Decimal(str(price_whale_corr_7d)), raw={**raw_base, "description": "correlation between whale volume and price"}),
-                OnchainMetric(time=end_time, chain=chain, metric="flow_trend_7d", value=Decimal(str(flow_trend_7d)), raw={**raw_base, "description": "mean % change in flows over 7d"})
+                OnchainMetric(time=end_time, chain=chain, metric="market_pressure_index", value=safe_decimal(market_pressure_index), raw={**raw_base, "description": "weighted sum of whale inflow + exchange inflow – price change"}),
+                OnchainMetric(time=end_time, chain=chain, metric="whale_to_exchange_ratio", value=safe_decimal(whale_to_exchange_ratio), raw={**raw_base, "description": "whales → exchanges / total whales"}),
+                OnchainMetric(time=end_time, chain=chain, metric="price_whale_corr_7d", value=safe_decimal(price_whale_corr_7d), raw={**raw_base, "description": "correlation between whale volume and price"}),
+                OnchainMetric(time=end_time, chain=chain, metric="flow_trend_7d", value=safe_decimal(flow_trend_7d), raw={**raw_base, "description": "mean % change in flows over 7d"})
             ]
             upsert_onchain_metrics(db, metrics)
 
+            result['time'] = result['time'].isoformat()
             redis_cache.set_json(cache_key, result)
             logger.info(f"Aggregated: pressure={market_pressure_index}, bias={market_bias}")
             return result

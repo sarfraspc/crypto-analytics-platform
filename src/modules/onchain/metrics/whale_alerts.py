@@ -37,7 +37,7 @@ def summarize_whale_alerts(
 
     window_delta = timedelta(hours=1) if time_window == '1h' else timedelta(days=1)
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - window_delta
+    start_time = end_time - window_delta - timedelta(minutes=10)
         
     with get_timescale_db() as db:
         try:
@@ -49,28 +49,35 @@ def summarize_whale_alerts(
             alerts = db.execute(query).scalars().all()
 
             if not alerts:
-                logger.warning(f"No whale alerts in {time_window} window")
-                return None
+                logger.info(f"No whale alerts in {time_window} window; using defaults")
+                whale_count = 0
+                total_volume = Decimal(0)
+                avg_size = Decimal(0)
+                unique_whale_addresses = 0
+                inflows = 0
+                outflows = 0
+                unique_addresses: Set[str] = set() 
+            else:
+                whale_count = len(alerts)
+                total_volume = sum((alert.amount or Decimal(0)) for alert in alerts)
+                avg_size = total_volume / whale_count if whale_count > 0 else Decimal(0)
+                unique_addresses: Set[str] = set()
+                inflows = 0
+                outflows = 0
 
-            whale_count = len(alerts)
-            total_volume = sum((alert.amount or Decimal(0)) for alert in alerts)
-            avg_size = total_volume / whale_count if whale_count > 0 else Decimal(0)
-            unique_addresses: Set[str] = set()
-            inflows = 0
-            outflows = 0
+                for alert in alerts:
+                    unique_addresses.add(alert.from_address or '')
+                    unique_addresses.add(alert.to_address or '')
+                    from_lower = alert.from_address.lower() if alert.from_address else None
+                    to_lower = alert.to_address.lower() if alert.to_address else None
 
-            for alert in alerts:
-                unique_addresses.add(alert.from_address or '')
-                unique_addresses.add(alert.to_address or '')
-                from_lower = alert.from_address.lower() if alert.from_address else None
-                to_lower = alert.to_address.lower() if alert.to_address else None
+                    if to_lower in EXCHANGE_ADDRS:
+                        inflows += 1
+                    if from_lower in EXCHANGE_ADDRS:
+                        outflows += 1
 
-                if to_lower in EXCHANGE_ADDRS:
-                    inflows += 1
-                if from_lower in EXCHANGE_ADDRS:
-                    outflows += 1
+                unique_whale_addresses = len(unique_addresses)
 
-            unique_whale_addresses = len(unique_addresses)
             total_exchange = inflows + outflows
             whale_exchange_ratio = Decimal(str((inflows / total_exchange * 100) if total_exchange > 0 else 0))
 
@@ -99,7 +106,8 @@ def summarize_whale_alerts(
             ]
             upsert_onchain_metrics(db, metrics)
 
-            redis_cache.set_json(cache_key, result)
+            result['time'] = result['time'].isoformat()
+            redis_cache.set_json(cache_key, result)  
             logger.info(f"Summarized whales: count={whale_count}, volume={total_volume}")
             return result
 

@@ -23,35 +23,35 @@ def run_onchain_metrics(
         "flows": None,
         "whales": None,
         "aggregated": None,
-        "errors": []
     }
 
     try:
+        errors = []
         flows = compute_exchange_flows(chain, time_window)
-        if flows:
-            status["flows"] = flows
-        else:
-            status["errors"].append("Exchange flows failed")
+        status["flows"] = flows
+        if not flows:
+            errors.append("Exchange flows failed")
 
         whales = summarize_whale_alerts(chain, time_window)
-        if whales:
-            status["whales"] = whales
-        else:
-            status["errors"].append("Whale summary failed")
+        status["whales"] = whales
+        if not whales:
+            errors.append("Whale summary failed")
 
         agg = combine_metrics(chain, time_window, symbol)
-        if agg:
-            status["aggregated"] = agg
-        else:
-            status["errors"].append("Aggregation failed")
+        status["aggregated"] = agg
+        if not agg:
+            errors.append("Aggregation failed")
 
-        logger.info(f"Pipeline complete: {len(status['errors'])} errors")
-        return status
+        if errors:
+            logger.warning(f"Metrics had partial failures: {errors}")
+        else:
+            logger.info("All metrics computed")
+        return {"flows": flows or {}, "whales": whales or {}, "errors": errors}
 
     except Exception as e:
         logger.error(f"Pipeline error: {e}")
-        status["errors"].append(str(e))
-        return status
+        errors.append(str(e))
+        return {"flows": None, "whales": None, "aggregated": None, "errors": errors}
 
 
 if __name__ == "__main__":
