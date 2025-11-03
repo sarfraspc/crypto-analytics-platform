@@ -36,7 +36,7 @@ def compute_exchange_flows(
 
     window_delta = timedelta(hours=1) if time_window == '1h' else timedelta(days=1)
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - window_delta
+    start_time = end_time - window_delta - timedelta(minutes=10)
     
     prev_start_time = start_time - window_delta  
 
@@ -50,42 +50,45 @@ def compute_exchange_flows(
             alerts = db.execute(query).scalars().all()
 
             if not alerts:
-                logger.warning(f"No alerts for flows in {time_window} window")
-                return None
+                logger.info(f"No alerts for flows in {time_window} window; using defaults")
+                inflows = Decimal(0)
+                outflows = Decimal(0)
+                prev_inflows = Decimal(0)
+                prev_outflows = Decimal(0)
+            else:
+                inflows = Decimal(0)
+                outflows = Decimal(0)
+                for alert in alerts:
+                    amount = alert.amount or Decimal(0)
+                    from_lower = alert.from_address.lower() if alert.from_address else None
+                    to_lower = alert.to_address.lower() if alert.to_address else None
 
-            inflows = Decimal(0)
-            outflows = Decimal(0)
-            for alert in alerts:
-                amount = alert.amount or Decimal(0)
-                from_lower = alert.from_address.lower() if alert.from_address else None
-                to_lower = alert.to_address.lower() if alert.to_address else None
+                    if from_lower in EXCHANGE_ADDRS and to_lower not in EXCHANGE_ADDRS:
+                        outflows += amount
+                    elif to_lower in EXCHANGE_ADDRS and from_lower not in EXCHANGE_ADDRS:
+                        inflows += amount
 
-                if from_lower in EXCHANGE_ADDRS and to_lower not in EXCHANGE_ADDRS:
-                    outflows += amount
-                elif to_lower in EXCHANGE_ADDRS and from_lower not in EXCHANGE_ADDRS:
-                    inflows += amount
+                prev_query = select(WhaleAlertModel).where(
+                    WhaleAlertModel.chain == chain,
+                    WhaleAlertModel.time >= prev_start_time,
+                    WhaleAlertModel.time < start_time
+                )
+                prev_alerts = db.execute(prev_query).scalars().all()
+                prev_inflows = Decimal(0)
+                prev_outflows = Decimal(0)
+                for alert in prev_alerts:
+                    amount = alert.amount or Decimal(0)
+                    from_lower = alert.from_address.lower() if alert.from_address else None
+                    to_lower = alert.to_address.lower() if alert.to_address else None
+
+                    if from_lower in EXCHANGE_ADDRS and to_lower not in EXCHANGE_ADDRS:
+                        prev_outflows += amount
+                    elif to_lower in EXCHANGE_ADDRS and from_lower not in EXCHANGE_ADDRS:
+                        prev_inflows += amount
 
             net_flow = outflows - inflows
             total_flow = inflows + outflows
             flow_ratio = (net_flow / total_flow * 100) if total_flow > 0 else Decimal(0)
-
-            prev_query = select(WhaleAlertModel).where(
-                WhaleAlertModel.chain == chain,
-                WhaleAlertModel.time >= prev_start_time,
-                WhaleAlertModel.time < start_time
-            )
-            prev_alerts = db.execute(prev_query).scalars().all()
-            prev_inflows = Decimal(0)
-            prev_outflows = Decimal(0)
-            for alert in prev_alerts:
-                amount = alert.amount or Decimal(0)
-                from_lower = alert.from_address.lower() if alert.from_address else None
-                to_lower = alert.to_address.lower() if alert.to_address else None
-
-                if from_lower in EXCHANGE_ADDRS and to_lower not in EXCHANGE_ADDRS:
-                    prev_outflows += amount
-                elif to_lower in EXCHANGE_ADDRS and from_lower not in EXCHANGE_ADDRS:
-                    prev_inflows += amount
 
             prev_net = prev_outflows - prev_inflows
             prev_total = prev_inflows + prev_outflows
@@ -113,6 +116,7 @@ def compute_exchange_flows(
             ]
             upsert_onchain_metrics(db, metrics)
 
+            result['time'] = result['time'].isoformat()
             redis_cache.set_json(cache_key, result)
             logger.info(f"Computed flows: inflow={inflows}, outflow={outflows}, net={net_flow}")
             return result
