@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import func, select, Integer
@@ -191,40 +191,48 @@ def log_ingestion_to_mlflow(experiment_name: str, pipeline: str, duration: float
         
         logger.info(f"Logged ingestion run for pipeline '{pipeline}' to MLflow experiment '{experiment_name}'.")
 
-async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipeline: str = 'full_cycle', symbols: List[Dict] = None):
+async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipeline: str = 'full_cycle', symbols: List[Dict] = None, delta_only: bool = True):
     start_time = datetime.now()
     symbols = symbols or get_symbols_from_tokens(db_metadata, limit=50)
     logger.info(f"Starting {pipeline} with %d symbols", len(symbols))
 
-    since_ts = int(get_last_success(db_timescale, pipeline).timestamp() * 1000)
+    if delta_only:
+        last_success = get_last_success(db_timescale, pipeline)
+        since_ts = int(last_success.timestamp() * 1000)
+        logger.info(f"Using last_success from ingestion_jobs: {last_success} (since_ts={since_ts} ms)")  
+    else:
+        since_ts = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
+    logger.info(f"Using since_ts: {datetime.fromtimestamp(since_ts / 1000)} (delta_only={delta_only})")
 
     loop = asyncio.get_running_loop()
     
-    market_tasks = []
-    for s in symbols:
-        task = loop.run_in_executor(
-            None,
-            backfill_and_ta,
-            db_timescale,
-            db_metadata,
-            s['exchange'],
-            s['use_ccxt_symbol'],
-            '1h',
-            since_ts
-        )
-        market_tasks.append(task)
-
-    logger.info("Starting alternative data ingestion: CryptoPanic, Reddit, FNG, Whale Alerts")
-    alt_data_tasks = [
-        loop.run_in_executor(None, ingest_cryptopanic, db_timescale),
-        loop.run_in_executor(None, ingest_reddit_praw, db_timescale, "cryptocurrency", 50),
-        loop.run_in_executor(None, ingest_fng, db_timescale)
-    ]
-
     try:
+        semaphore = asyncio.Semaphore(5) 
+        async def limited_backfill(s):
+            async with semaphore:
+                return await loop.run_in_executor(
+                    None,
+                    backfill_and_ta,
+                    db_timescale,
+                    db_metadata,
+                    s['exchange'],
+                    s['use_ccxt_symbol'],
+                    '1h',
+                    since_ts
+                )
+        
+        batch_size = 5
+        market_results = []
         market_start = datetime.now()
-        market_results = await asyncio.gather(*market_tasks, return_exceptions=True)
-        market_duration = (datetime.now() - market_start).total_seconds()
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            batch_tasks = [limited_backfill(s) for s in batch]
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            market_results.extend(batch_results)
+            if i + batch_size < len(symbols):  
+                await asyncio.sleep(5)  
+
+        market_duration = (datetime.now() - market_start).total_seconds()  
 
         total_ohlcv_inserted = 0
         for res in market_results:
@@ -240,6 +248,13 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
         }
         log_ingestion_to_mlflow("market_client", pipeline, market_duration, symbols, market_details)
         logger.info(f"Market Cycle summary: OHLCV Inserted: {total_ohlcv_inserted}")
+
+        logger.info("Starting alternative data ingestion: CryptoPanic, Reddit, FNG")
+        alt_data_tasks = [
+            loop.run_in_executor(None, ingest_cryptopanic, db_timescale),
+            loop.run_in_executor(None, ingest_reddit_praw, db_timescale, "cryptocurrency", 50),
+            loop.run_in_executor(None, ingest_fng, db_timescale)
+        ]
 
         alt_start = datetime.now()
         alt_data_results = await asyncio.gather(*alt_data_tasks, return_exceptions=True)
