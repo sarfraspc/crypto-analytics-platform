@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     REDDIT_CLIENT_ID: str | None = None
     REDDIT_CLIENT_SECRET: str | None = None
     REDDIT_USER_AGENT: str | None = None
+    GROQ_API_KEY: str | None = None
+    OPENROUTER_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
 
     # App
     APP_ENV: str = "development"
@@ -49,6 +52,9 @@ class Settings(BaseSettings):
     # MCP
     MCP_DISCOVERY: bool = True
     MCP_TIMEOUT: int = 30
+
+    # CORS
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # Infura 
     INFURA_HTTPS: str
@@ -91,7 +97,7 @@ class Settings(BaseSettings):
         "0x0bc529c00c6401aef6d220be8c6ea1667f6ad93e",  # YFI
         "0x9f8f72aa9304c8b593d555f12ef6589cc3db0f0a",  # MKR
     ]
-    
+
     class Config:
         env_file = ".env"
 
