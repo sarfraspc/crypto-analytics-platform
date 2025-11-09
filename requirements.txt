@@ -62,3 +62,7 @@ flake8
 mypy
 pytest
 pytest-asyncio
+
+# GenAI + HTTP
+httpx>=0.27.0
+google-generativeai>=0.3.2
