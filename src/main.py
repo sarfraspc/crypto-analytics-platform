@@ -39,9 +39,9 @@ app.include_router(dashboard_router)
 async def root():
     return {"message": "Crypto Analytics API is running", "env": settings.APP_ENV, "timestamp": datetime.now().isoformat()}
 
-@app.get("/healthz")
-async def healthz():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+@app.get("/health")
+async def health():
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 if __name__ == "__main__":
     logger.info(f"Starting FastAPI on port {settings.APP_PORT} in {settings.APP_ENV} mode")
