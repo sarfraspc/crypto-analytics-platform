@@ -44,10 +44,11 @@ def compute_exchange_flows(
         try:
             query = select(WhaleAlertModel).where(
                 WhaleAlertModel.chain == chain,
-                WhaleAlertModel.time >= start_time,
-                WhaleAlertModel.time < end_time
+                WhaleAlertModel.time >= start_time.replace(tzinfo=timezone.utc),
+                WhaleAlertModel.time <= end_time.replace(tzinfo=timezone.utc)
             )
             alerts = db.execute(query).scalars().all()
+            logger.info(f"UTC query: {start_time.isoformat()} to {end_time.isoformat()}, found {len(alerts)}")
 
             if not alerts:
                 logger.info(f"No alerts for flows in {time_window} window; using defaults")
@@ -59,32 +60,32 @@ def compute_exchange_flows(
                 inflows = Decimal(0)
                 outflows = Decimal(0)
                 for alert in alerts:
-                    amount = alert.amount or Decimal(0)
+                    usd_value = alert.usd_value or Decimal(0)
                     from_lower = alert.from_address.lower() if alert.from_address else None
                     to_lower = alert.to_address.lower() if alert.to_address else None
 
                     if from_lower in EXCHANGE_ADDRS and to_lower not in EXCHANGE_ADDRS:
-                        outflows += amount
+                        outflows += usd_value
                     elif to_lower in EXCHANGE_ADDRS and from_lower not in EXCHANGE_ADDRS:
-                        inflows += amount
+                        inflows += usd_value
 
                 prev_query = select(WhaleAlertModel).where(
                     WhaleAlertModel.chain == chain,
                     WhaleAlertModel.time >= prev_start_time,
-                    WhaleAlertModel.time < start_time
+                    WhaleAlertModel.time <= start_time.replace(tzinfo=timezone.utc)
                 )
                 prev_alerts = db.execute(prev_query).scalars().all()
                 prev_inflows = Decimal(0)
                 prev_outflows = Decimal(0)
                 for alert in prev_alerts:
-                    amount = alert.amount or Decimal(0)
+                    usd_value = alert.usd_value or Decimal(0)
                     from_lower = alert.from_address.lower() if alert.from_address else None
                     to_lower = alert.to_address.lower() if alert.to_address else None
 
                     if from_lower in EXCHANGE_ADDRS and to_lower not in EXCHANGE_ADDRS:
-                        prev_outflows += amount
+                        prev_outflows += usd_value
                     elif to_lower in EXCHANGE_ADDRS and from_lower not in EXCHANGE_ADDRS:
-                        prev_inflows += amount
+                        prev_inflows += usd_value
 
             net_flow = outflows - inflows
             total_flow = inflows + outflows
@@ -99,18 +100,18 @@ def compute_exchange_flows(
                 "time": end_time,
                 "chain": chain,
                 "window": time_window,
-                "exchange_inflow_eth": float(inflows),
-                "exchange_outflow_eth": float(outflows),
-                "net_flow_eth": float(net_flow),
+                "exchange_inflow_usd": float(inflows),
+                "exchange_outflow_usd": float(outflows),
+                "net_flow_usd": float(net_flow),
                 "exchange_flow_ratio": float(flow_ratio),
                 "flow_trend_24h": float(flow_trend_24h)
             }
 
             raw_base = {"window": time_window}
             metrics = [
-                OnchainMetric(time=end_time, chain=chain, metric="exchange_inflow_eth", value=inflows, raw={**raw_base, "description": "Total ETH sent to exchange wallets"}),
-                OnchainMetric(time=end_time, chain=chain, metric="exchange_outflow_eth", value=outflows, raw={**raw_base, "description": "Total ETH sent from exchange wallets"}),
-                OnchainMetric(time=end_time, chain=chain, metric="net_flow_eth", value=net_flow, raw={**raw_base, "description": "outflow − inflow"}),
+                OnchainMetric(time=end_time, chain=chain, metric="exchange_inflow_usd", value=inflows, raw={**raw_base, "description": "Total USD sent to exchange wallets"}),
+                OnchainMetric(time=end_time, chain=chain, metric="exchange_outflow_usd", value=outflows, raw={**raw_base, "description": "Total USD sent from exchange wallets"}),
+                OnchainMetric(time=end_time, chain=chain, metric="net_flow_usd", value=net_flow, raw={**raw_base, "description": "outflow − inflow"}),
                 OnchainMetric(time=end_time, chain=chain, metric="exchange_flow_ratio", value=flow_ratio, raw={**raw_base, "description": "(outflow − inflow) / (inflow + outflow)"}),
                 OnchainMetric(time=end_time, chain=chain, metric="flow_trend_24h", value=flow_trend_24h, raw={**raw_base, "description": "percent change vs previous day"})
             ]

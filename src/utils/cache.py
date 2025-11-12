@@ -55,6 +55,14 @@ class RedisCache:
         except Exception as e:
             logger.warning(f"[Redis] Failed to delete keys with pattern={pattern}: {e}")
 
+    def delete(self, key: str):
+        """Delete a cache key safely."""
+        try:
+            return self.client.delete(key)
+        except Exception as e:
+            logger.warning(f"Failed to delete cache key {key}: {e}")
+            return 0
+
     def get_stats(self, pattern: str = "*"):
         try:
             count = 0

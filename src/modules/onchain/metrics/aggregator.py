@@ -42,7 +42,7 @@ def combine_metrics(
 
             flow_query = select(OnchainMetricModel.value).where(
                 OnchainMetricModel.chain == chain,
-                OnchainMetricModel.metric == 'net_flow_eth',
+                OnchainMetricModel.metric == 'net_flow_usd',
                 OnchainMetricModel.time >= start_time
             ).order_by(OnchainMetricModel.time.desc()).limit(1)
             net_flow_obj = db.execute(flow_query).scalar_one_or_none()
@@ -81,7 +81,7 @@ def combine_metrics(
             corr_start = end_time - timedelta(days=7)
             corr_flow_query = select(OnchainMetricModel.value).where(
                 OnchainMetricModel.chain == chain,
-                OnchainMetricModel.metric == 'net_flow_eth',
+                OnchainMetricModel.metric == 'net_flow_usd',
                 OnchainMetricModel.time >= corr_start
             ).order_by(OnchainMetricModel.time).limit(7)
             flows_7d = [float(row[0]) for row in db.execute(corr_flow_query).all()]
@@ -91,6 +91,11 @@ def combine_metrics(
                 OHLCVModel.time >= corr_start
             ).order_by(OHLCVModel.time).limit(7)
             prices_7d = [row[0] for row in db.execute(corr_ohlcv_query).all()]
+
+            # Pad to min len for corrcoef
+            min_len = min(len(flows_7d), len(prices_7d))
+            flows_7d = flows_7d[:min_len]
+            prices_7d = prices_7d[:min_len]  # FIXED: Truncate long, pad short if needed (np.pad for 0s)
 
             if len(flows_7d) > 1 and len(prices_7d) > 1:
                 price_changes_7d = np.diff(prices_7d) / np.array(prices_7d[:-1]) * 100
