@@ -43,10 +43,11 @@ def summarize_whale_alerts(
         try:
             query = select(WhaleAlertModel).where(
                 WhaleAlertModel.chain == chain,
-                WhaleAlertModel.time >= start_time,
-                WhaleAlertModel.time < end_time
+                WhaleAlertModel.time >= start_time.replace(tzinfo=timezone.utc),
+                WhaleAlertModel.time <= end_time.replace(tzinfo=timezone.utc)
             )
             alerts = db.execute(query).scalars().all()
+            logger.info(f"UTC query: {start_time.isoformat()} to {end_time.isoformat()}, found {len(alerts)}")
 
             if not alerts:
                 logger.info(f"No whale alerts in {time_window} window; using defaults")
@@ -59,7 +60,7 @@ def summarize_whale_alerts(
                 unique_addresses: Set[str] = set() 
             else:
                 whale_count = len(alerts)
-                total_volume = sum((alert.amount or Decimal(0)) for alert in alerts)
+                total_volume = sum((alert.usd_value or Decimal(0)) for alert in alerts)
                 avg_size = total_volume / whale_count if whale_count > 0 else Decimal(0)
                 unique_addresses: Set[str] = set()
                 inflows = 0
@@ -86,8 +87,8 @@ def summarize_whale_alerts(
                 "chain": chain,
                 "window": time_window,
                 "whale_count": whale_count,
-                "total_whale_volume_eth": float(total_volume),
-                "avg_whale_tx_size_eth": float(avg_size),
+                "total_whale_volume_usd": float(total_volume),
+                "avg_whale_tx_size_usd": float(avg_size),
                 "whale_exchange_inflow": inflows,
                 "whale_exchange_outflow": outflows,
                 "whale_exchange_ratio": float(whale_exchange_ratio),
@@ -97,8 +98,8 @@ def summarize_whale_alerts(
             raw_base = {"window": time_window}
             metrics = [
                 OnchainMetric(time=end_time, chain=chain, metric="whale_count", value=Decimal(whale_count), raw={**raw_base, "description": "number of whale transactions"}),
-                OnchainMetric(time=end_time, chain=chain, metric="total_whale_volume_eth", value=total_volume, raw={**raw_base, "description": "sum of all whale transfer volumes"}),
-                OnchainMetric(time=end_time, chain=chain, metric="avg_whale_tx_size_eth", value=avg_size, raw={**raw_base, "description": "average size per whale tx"}),
+                OnchainMetric(time=end_time, chain=chain, metric="total_whale_volume_usd", value=total_volume, raw={**raw_base, "description": "sum of all whale transfer volumes"}),
+                OnchainMetric(time=end_time, chain=chain, metric="avg_whale_tx_size_usd", value=avg_size, raw={**raw_base, "description": "average size per whale tx"}),
                 OnchainMetric(time=end_time, chain=chain, metric="whale_exchange_inflow", value=Decimal(inflows), raw={**raw_base, "description": "# of whale transfers → exchange addresses"}),
                 OnchainMetric(time=end_time, chain=chain, metric="whale_exchange_outflow", value=Decimal(outflows), raw={**raw_base, "description": "# of whale transfers ← exchange addresses"}),
                 OnchainMetric(time=end_time, chain=chain, metric="whale_exchange_ratio", value=whale_exchange_ratio, raw={**raw_base, "description": "inflow / (outflow + inflow)"}),
