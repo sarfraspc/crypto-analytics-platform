@@ -6,13 +6,12 @@ import asyncio
 import hashlib
 import json
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 import io
 import pandas as pd
 import os  # Added by agent
 import sys  # Added by agent
-import re  # Added by agent
 import traceback
 from contextlib import AsyncExitStack
 
@@ -36,6 +35,49 @@ from modules.agent.constants import LLM_REGISTRY
 setup_logging()
 logger = logging.getLogger(__name__)
 cache = RedisCache(expire_seconds=1800)
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_arguments(args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    normalized = dict(args or {})
+    options = normalized.get("options")
+    if isinstance(options, str):
+        try:
+            normalized["options"] = json.loads(options)
+        except json.JSONDecodeError:
+            logger.debug("Failed to deserialize options string; leaving as-is")
+    elif options is None:
+        normalized["options"] = {}
+    return normalized
+
+
+def _build_cache_key(server: str, tool: str, args: Dict[str, Any]) -> str:
+    serialized = json.dumps(args, sort_keys=True, default=str)
+    digest = hashlib.sha256(serialized.encode()).hexdigest()
+    return f"mcp:{server}:{tool}:{digest}"
+
+
+def _parse_tool_output(text: str) -> Any:
+    stripped = text.strip()
+    try:
+        if "DataFrame" in text or stripped.startswith("timestamp"):
+            df = pd.read_csv(io.StringIO(text), sep=None, engine='python', on_bad_lines='skip')
+            if not df.empty:
+                return df.iloc[-1].to_dict()
+        if stripped.startswith('{') or stripped.startswith('['):
+            return json.loads(stripped)
+        if "Result:" in text:
+            json_str = text.split("Result:")[-1].strip()
+            return json.loads(json_str)
+    except Exception as exc:
+        logger.warning(f"Parsing MCP output failed: {exc}. Raw snippet: {text[:200]}")
+    return {"raw": text}
 
 
 def setup_environment_for_subprocesses():
@@ -70,11 +112,14 @@ def _log_exception_group(exc: BaseException) -> None:
             logger.error("ExceptionGroup sub-exception %s:\n%s", idx, "".join(traceback.format_exception(sub)))
 
 
-async def call_mcp(server: str, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    args = args or {}
-    key = f"mcp:{server}:{tool}:{hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()}"
-    if cached := cache.get_json(key):
+async def _call_mcp(server: str, tool: str, args: Optional[Dict[str, Any]] = None, *, use_cache: bool = True) -> Dict[str, Any]:
+    normalized_args = _normalize_arguments(args)
+    cache_key = _build_cache_key(server, tool, normalized_args)
+
+    if use_cache and (cached := cache.get_json(cache_key)):
         return cached
+    if not use_cache:
+        cache.delete(cache_key)
 
     server_scripts = {
         "crypto-sarimax-server": "src/mcp_servers/price_server.py",
@@ -93,38 +138,25 @@ async def call_mcp(server: str, tool: str, args: Dict[str, Any]) -> Dict[str, An
 
     try:
         async with AsyncExitStack() as stack:
-            read_transport, write_transport = await stack.enter_async_context(
-                stdio_client(server_params)
-            )
-            session = await stack.enter_async_context(
-                ClientSession(read_transport, write_transport)
-            )
+            read_transport, write_transport = await stack.enter_async_context(stdio_client(server_params))
+            session = await stack.enter_async_context(ClientSession(read_transport, write_transport))
 
             await session.initialize()
-            call_arguments = args if args is not None else {}
-            result = await session.call_tool(tool, arguments=call_arguments)
+            result = await session.call_tool(tool, arguments=normalized_args)
 
             if result.content and isinstance(result.content, list) and hasattr(result.content[0], 'text'):
                 text = result.content[0].text
             else:
                 text = str(result)
 
-            try:
-                if 'DataFrame' in text or text.startswith('timestamp'):
-                    df = pd.read_csv(io.StringIO(text), sep=None, engine='python', on_bad_lines='skip')
-                    parsed = df.iloc[-1].to_dict() if not df.empty else {"raw": text}
-                elif text.strip().startswith('{') or text.strip().startswith('['):
-                    parsed = json.loads(text)
-                elif "Result:" in text:
-                    json_str = text.split("Result:")[-1].strip()
-                    parsed = json.loads(json_str)
-                else:
-                    parsed = {"raw": text}
-            except Exception as e:
-                logger.warning(f"Parsing failed: {e}. Raw: {text[:200]}...")
-                parsed = {"raw": text}
+            parsed = _parse_tool_output(text)
+            if isinstance(parsed, dict):
+                parsed.setdefault("raw_text", text)
+            else:
+                parsed = {"raw_text": text, "value": parsed}
 
-            cache.set_json(key, parsed)
+            if use_cache:
+                cache.set_json(cache_key, parsed)
             return parsed
 
     except Exception as e:
@@ -133,41 +165,99 @@ async def call_mcp(server: str, tool: str, args: Dict[str, Any]) -> Dict[str, An
         logger.error(f"MCP {server}.{tool} failed: {e}", exc_info=True)
         return {"error": str(e)}
 
-async def route_tools(classify: Dict[str, List[str]], symbol: str = "BTC", df: pd.DataFrame = None, query: str = "") -> Dict[str, Any]:
+
+async def call_mcp_tool(
+    server: str,
+    tool: str,
+    args: Optional[Dict[str, Any]] = None,
+    *,
+    use_cache: bool = True
+) -> Dict[str, Any]:
+    """Public helper used by FastAPI services and the agent orchestrator."""
+    return await _call_mcp(server, tool, args, use_cache=use_cache)
+
+async def route_tools(
+    classify: Dict[str, List[str]],
+    symbol: str = "BTC",
+    df: Optional[pd.DataFrame] = None,
+    query: str = "",
+    options: Optional[Dict[str, Any]] = None,
+    no_cache: bool = False
+) -> Dict[str, Any]:
     tasks = {}
-    cats = classify["categories"]
-    
-    logger.info(f"Routing tools for categories: {cats}")
+    cats = classify.get("categories", [])
+    options = options or {}
+    query_lower = (query or "").lower()
+    use_cache = not no_cache
 
-    if "forecast" in cats:
-        tasks["forecast"] = call_mcp("crypto-sarimax-server", "forecast_sarimax", {"symbol": symbol, "horizon": 7})
+    horizon_days = max(1, _safe_int(options.get("horizon"), 7))
+    forecast_horizon = max(1, horizon_days * 24)
+    window = str(options.get("window") or "24h")
+    k_docs = max(1, _safe_int(options.get("k_docs"), 5))
+    ingest_days = max(1, _safe_int(options.get("ingest_days"), 7))
+    refresh_sentiment = bool(options.get("refresh_sentiment"))
+    explain_forecast = bool(options.get("explain_forecast"))
 
-    if "onchain" in cats:
-        # Determine which on-chain tools to call based on query
-        if any(word in query.lower() for word in ['pattern', 'rsi', 'macd', 'ta', 'technical']):
-            tasks["onchain"] = call_mcp("crypto-onchain-server", "run_patterns_only", {"symbol": symbol, "limit": 20})
+    logger.info(
+        "Routing tools for categories=%s horizon_days=%s window=%s k_docs=%s",
+        cats,
+        horizon_days,
+        window,
+        k_docs,
+    )
+
+    if any(cat in cats for cat in ("forecast", "combined")):
+        tasks["forecast"] = call_mcp_tool(
+            "crypto-sarimax-server",
+            "forecast_sarimax",
+            {"symbol": symbol, "horizon": forecast_horizon},
+            use_cache=use_cache,
+        )
+
+    if any(cat in cats for cat in ("onchain", "combined")):
+        onchain_args = {"symbol": symbol, "window": window}
+        if any(word in query_lower for word in ['pattern', 'rsi', 'macd', 'ta', 'technical']):
+            onchain_args.update({"limit": 20})
+            tasks["onchain"] = call_mcp_tool(
+                "crypto-onchain-server",
+                "run_patterns_only",
+                onchain_args,
+                use_cache=use_cache,
+            )
         else:
-            tasks["onchain"] = call_mcp("crypto-onchain-server", "run_onchain_pipeline", {"symbol": symbol, "run_steps": "all"})
+            onchain_args.update({"run_steps": "all"})
+            tasks["onchain"] = call_mcp_tool(
+                "crypto-onchain-server",
+                "run_onchain_pipeline",
+                onchain_args,
+                use_cache=use_cache,
+            )
 
-    if "sentiment" in cats or "combined" in cats:
-        # Smart ingest based on query type
-        ingest_needed = any(word in query.lower() for word in ['news', 'sentiment', 'reddit', 'article', 'media'])
-        if ingest_needed:
-            ingest_result = await call_mcp("crypto-pipeline-server", "ingest_documents", {"days_back": 7})
-            logger.info("Ingested documents for sentiment analysis")
-        
-        # Dynamic query formulation
+    if any(cat in cats for cat in ("sentiment", "combined")):
+        if refresh_sentiment:
+            await call_mcp_tool(
+                "crypto-pipeline-server",
+                "ingest_documents",
+                {"days_back": ingest_days},
+                use_cache=False,
+            )
+            logger.info("Sentiment refresh requested; ingestion triggered")
+
         sentiment_query = f"Current market sentiment and news about {symbol}"
-        if "pattern" in query.lower() or "technical" in query.lower():
-            sentiment_query += " including technical analysis patterns impact"
-        
-        tasks["sentiment"] = call_mcp("crypto-pipeline-server", "analyze_with_sources", {
-            "query": sentiment_query, 
-            "k": 5,
-            "include_sources": True
-        })
+        if any(token in query_lower for token in ['pattern', 'technical', 'ta']):
+            sentiment_query += " including technical impact"
 
-    # Execute all tools in parallel
+        tasks["sentiment"] = call_mcp_tool(
+            "crypto-pipeline-server",
+            "analyze_with_sources",
+            {
+                "query": sentiment_query,
+                "k": k_docs,
+                "include_sources": True,
+            },
+            use_cache=use_cache,
+        )
+
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
     
     # Process results
@@ -184,8 +274,7 @@ async def route_tools(classify: Dict[str, List[str]], symbol: str = "BTC", df: p
             else:
                 data[tool_name] = {"raw": result}
 
-    # Add SHAP explanations if forecast data available
-    if "forecast" in data and df is not None and "error" not in data["forecast"]:
+    if explain_forecast and "forecast" in data and df is not None and "error" not in data["forecast"]:
         try:
             from modules.forecasting.models.sarimax import SarimaxModel
             model = SarimaxModel(symbol)
@@ -198,6 +287,16 @@ async def route_tools(classify: Dict[str, List[str]], symbol: str = "BTC", df: p
         except Exception as e:
             logger.warning(f"SHAP explanation failed: {e}")
             data["forecast"]["shap"] = {"error": f"SHAP explanation unavailable: {str(e)}"}
+
+    if "sentiment" in data and isinstance(data["sentiment"], dict):
+        if "sources" in data["sentiment"] or "response" in data["sentiment"]:
+            data["rag"] = {
+                "sources": data["sentiment"].get("sources"),
+                "response": data["sentiment"].get("response"),
+                "aggregated": data["sentiment"].get("aggregated"),
+            }
+        else:
+            data["rag"] = data["sentiment"]
 
     return data
 
@@ -272,24 +371,59 @@ class CryptoAgentV2:
         self.backtester = PortfolioBacktester()
         self.current_date = pd.Timestamp.utcnow().strftime("%Y-%m-%d")
 
-    async def run(self, query: str, symbol: str = "BTC", days: int = 30) -> Dict[str, Any]:
+    async def run(
+        self,
+        query: str,
+        symbol: str = "BTC",
+        days: int = 30,
+        options: Optional[Dict[str, Any]] = None,
+        no_cache: bool = False,
+        force_query_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Main agent execution with dynamic LLM routing."""
-        cache_key = f"v2_agent:{symbol}:{hashlib.sha256(query.encode()).hexdigest()}:{days}"
-        
-        if cached := cache.get_json(cache_key):
+
+        options = options or {}
+        run_backtest_opt = bool(options.get("run_backtest"))
+        symbol = symbol.upper()
+        sanitized_query = (query or "").strip() or f"{symbol} market overview"
+        horizon_days = max(1, _safe_int(options.get("horizon"), days))
+        backtest_days = max(days, horizon_days)
+
+        cache_envelope = {
+            "symbol": symbol,
+            "query": sanitized_query,
+            "days": backtest_days,
+            "force_query_type": force_query_type,
+            "options": options,
+        }
+        cache_key = f"v2_agent:{hashlib.sha256(json.dumps(cache_envelope, sort_keys=True, default=str).encode()).hexdigest()}"
+
+        if not no_cache and (cached := cache.get_json(cache_key)):
             logger.info("Returning cached response")
             return cached
 
-        logger.info(f"Processing query: '{query}' for {symbol}")
+        logger.info("Processing query='%s' for %s (horizon_days=%s)", sanitized_query, symbol, horizon_days)
 
-        # 1. Classify query to determine optimal processing
-        classification = await self.classifier.classify(query)
-        qtype = classification["qtype"]
-        categories = classification["categories"]
-        
-        logger.info(f"Query classified as: {qtype}, categories: {categories}")
+        classification = await self.classifier.classify(sanitized_query)
+        qtype = classification.get("qtype", "combined")
+        categories = classification.get("categories", ["combined"])
+        if not categories:
+            categories = ["combined"]
 
-        # 2. Load data for analysis
+        if force_query_type and force_query_type in LLM_REGISTRY:
+            logger.info("Overriding classifier qtype %s -> %s", qtype, force_query_type)
+            qtype = force_query_type
+            classification["qtype"] = qtype
+
+        if qtype == "long_context" and "backtest" not in categories:
+            categories = [*categories, "backtest"]
+
+        # Ensure downstream routing sees the updated categories
+        categories = list(dict.fromkeys(categories))
+        classification["categories"] = categories
+
+        logger.info("Query classified as: %s, categories: %s", qtype, categories)
+
         preprocessor = CoinPreprocessor()
         df = await asyncio.to_thread(preprocessor.load_features_series, symbol)
         if df.index.tz is None:
@@ -297,61 +431,93 @@ class CryptoAgentV2:
         else:
             df.index = df.index.tz_convert('UTC')
 
-        # 3. Route to appropriate tools
-        data = await route_tools(classification, symbol, df, query)
+        data = await route_tools(classification, symbol, df, sanitized_query, options, no_cache)
 
-        # 4. Execute backtest if requested
+        run_backtest = run_backtest_opt or "backtest" in categories or qtype == "long_context"
         backtest = None
-        if "backtest" in categories or qtype == "long_context":
-            logger.info(f"Running backtest for {days} days")
-            backtest = await self.backtester.run_hybrid_backtest( 
-                symbol, days, categories
-            )
+        if run_backtest:
+            logger.info("Running backtest for %s days", backtest_days)
+            backtest = await self.backtester.run_hybrid_backtest(symbol, backtest_days, categories)
             data["backtest"] = backtest
 
-        # 5. Generate trading signals for relevant queries
         strategy = None
         if qtype in ["combined", "reasoning", "patterns"]:
-            query_hash = hashlib.sha256(query.encode()).hexdigest()
+            query_hash = hashlib.sha256(sanitized_query.encode()).hexdigest()
             strategy = hybrid_signal(
-                df, 
-                data.get("forecast", {}), 
-                data.get("sentiment", {}), 
-                data.get("onchain", {}), 
-                symbol, query_hash, days
+                df,
+                data.get("forecast", {}),
+                data.get("sentiment", {}),
+                data.get("onchain", {}),
+                symbol,
+                query_hash,
+                backtest_days,
             )
             data["strategy"] = strategy
 
-        # 6. Select optimal LLM based on query type
         provider, model, temperature = LLM_REGISTRY.get(qtype, LLM_REGISTRY["combined"])
-        logger.info(f"Using {provider}/{model} for {qtype} query (temp: {temperature})")
+        logger.info("Using %s/%s for %s query (temp=%s)", provider, model, qtype, temperature)
 
-        # 7. Construct prompt and synthesize response
-        prompt_text = construct_prompt(query, data, qtype, self.current_date)
+        prompt_text = construct_prompt(sanitized_query, data, qtype, self.current_date)
         response = await synthesize(provider, model, temperature, prompt_text)
 
-        # 8. Compile final result
         result = {
             "symbol": symbol,
             "query_type": qtype,
             "categories": categories,
             "llm_used": f"{provider}/{model}",
+            "final_answer": response,
+            "response": response,
+            "timestamp": pd.Timestamp.utcnow().isoformat(),
             "data_insights": {
                 "forecast_available": "forecast" in data,
-                "sentiment_available": "sentiment" in data, 
+                "sentiment_available": "sentiment" in data,
                 "onchain_available": "onchain" in data,
                 "backtest_available": "backtest" in data,
-                "strategy_available": "strategy" in data
+                "strategy_available": "strategy" in data,
             },
-            "response": response,
-            "timestamp": pd.Timestamp.utcnow().isoformat()
+            **data,
         }
 
-        # Cache the result
-        cache.set_json(cache_key, result)
-        logger.info(f"Successfully processed query and cached result")
-        
+        if not no_cache:
+            cache.set_json(cache_key, result)
+            logger.info("Cached agent response under %s", cache_key)
+
         return result
+
+
+_AGENT_SINGLETON: Optional[CryptoAgentV2] = None
+
+
+def _get_agent() -> CryptoAgentV2:
+    global _AGENT_SINGLETON
+    if _AGENT_SINGLETON is None:
+        _AGENT_SINGLETON = CryptoAgentV2()
+    return _AGENT_SINGLETON
+
+
+async def orchestrate_query(
+    symbol: str,
+    question: str,
+    options: Optional[Dict[str, Any]] = None,
+    no_cache: bool = False,
+    force_query_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Entry point used by the Agent MCP server."""
+
+    safe_symbol = (symbol or "BTC").upper()
+    safe_question = (question or "").strip() or f"{safe_symbol} market overview"
+    safe_options = options or {}
+
+    horizon_hint = _safe_int(safe_options.get("horizon"), 30)
+    days_hint = max(horizon_hint, _safe_int(safe_options.get("backtest_days"), horizon_hint or 30))
+    return await _get_agent().run(
+        query=safe_question,
+        symbol=safe_symbol,
+        days=days_hint,
+        options=safe_options,
+        no_cache=no_cache,
+        force_query_type=force_query_type,
+    )
 
 async def main():
     """CLI interface for testing the agent."""
@@ -375,11 +541,12 @@ async def main():
         print(f"QUERY TYPE: {result['query_type']}")
         print(f"LLM USED: {result['llm_used']}")
         print("="*80)
-        print(f"\nRESPONSE:\n{result['response']}")
+        final_answer = result.get('final_answer', result.get('response', ''))
+        print(f"\nRESPONSE:\n{final_answer}")
         print("\n" + "="*80)
         
-        if 'strategy' in result.get('data_insights', {}) and result['data_insights']['strategy_available']:
-            print(f"\nTRADING STRATEGY: {result.get('data', {}).get('strategy', {})}")
+        if result.get('strategy'):
+            print(f"\nTRADING STRATEGY: {result['strategy']}")
             
     except Exception as e:
         logger.error(f"Agent execution failed: {e}")
