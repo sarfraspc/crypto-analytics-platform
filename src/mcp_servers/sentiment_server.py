@@ -1,180 +1,419 @@
 import asyncio
 import logging
-import sys
-from typing import Dict, Any
+import hashlib
+from typing import Dict, Any, List
 
 from mcp.server import Server
-from mcp.types import CallToolRequest, CallToolResult, Tool, TextContent
-
-from modules.sentiment.models.sentiment_infer import (
-    get_sentiment_classifier, 
-    analyze_sentiment, 
-    analyze_sentiment_batch
+from mcp.server.stdio import stdio_server
+from mcp.server.lowlevel import NotificationOptions
+from mcp.server.models import InitializationOptions
+from mcp.types import (
+    CallToolRequest,
+    CallToolRequestParams,
+    CallToolResult,
+    Tool,
+    TextContent,
 )
+
+from modules.sentiment.rag.embedder import Embedder
+from modules.sentiment.rag.vector_store import QdrantVectorStore
+from modules.sentiment.rag.retriever import Retriever
+from modules.sentiment.rag.generator import Generator
+from modules.sentiment.models.sentiment_infer import (
+    get_sentiment_classifier,
+    analyze_sentiment_batch,
+    analyze_sentiment  # For single if needed
+)
+from utils.cache import RedisCache
 from core.logging_config import setup_logging
-from utils.mcp_utils import AsyncStdioWrapper
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
-class SentimentMCP:
+class PipelineMCP:
     def __init__(self):
+        self.embedder = Embedder()
+        self.vector_store = QdrantVectorStore()
+        self.retriever = Retriever(self.embedder, self.vector_store)
+        self.generator = Generator()
+        self.cache = RedisCache(expire_seconds=3600)
         self.classifier = None
         self.is_initialized = False
+
+    @staticmethod
+    def _error_result(message: str) -> CallToolResult:
+        return CallToolResult(
+            isError=True,
+            content=[TextContent(type="text", text=message)]
+        )
 
     async def initialize(self):
         try:
             self.classifier = await asyncio.to_thread(get_sentiment_classifier)
-            logger.info("Sentiment classifier initialized successfully")
+            logger.info("Pipeline MCP initialized successfully")
             self.is_initialized = True
         except Exception as e:
-            logger.exception("Sentiment classifier initialization failed")
+            logger.exception("Pipeline initialization failed")
             raise e
 
-    def _truncate_text(self, text: str, max_tokens: int = 512) -> str:
-        tokens = text.split() 
-        if len(tokens) > max_tokens:
-            truncated = ' '.join(tokens[:max_tokens]) + "... [truncated]"
-            logger.warning(f"Text truncated from {len(tokens)} to {max_tokens} tokens")
-            return truncated
-        return text
-
-    async def analyze_single(self, request: CallToolRequest):
+    async def ingest_documents(self, request: CallToolRequest) -> CallToolResult:
         if not self.is_initialized:
             raise Exception("Server not initialized")
+        params = request.params if hasattr(request, "params") else None
+        input_data = (params.arguments if params and params.arguments is not None else {})
+        days_back = input_data.get('days_back', 30)
+        try:
+            await asyncio.to_thread(self.vector_store.delete_all)
+            docs = await asyncio.to_thread(self.embedder.fetch_docs, days_back)
+            chunks, embeddings, metadatas = await asyncio.to_thread(
+                lambda: self.embedder.process_docs(docs, chunk_method='sentence')
+            )
+            await asyncio.to_thread(self.vector_store.add, chunks, embeddings, metadatas)
+            await asyncio.to_thread(self.retriever.index_for_hybrid)
+            await self._clear_cache("rag_query:*", "combined:*")
+            logger.info(f"Ingested {len(docs)} docs with {len(chunks)} chunks")
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"Successfully ingested {len(docs)} documents ({len(chunks)} chunks) from the last {days_back} days."
+                )]
+            )
+        except Exception as e:
+            err = f"Document ingestion failed: {type(e).__name__} - {e}"
+            logger.error(err, exc_info=True)
+            return self._error_result(err)
 
-        input_data = request.arguments or {}
+    async def query_rag(self, request: CallToolRequest) -> CallToolResult:
+        if not self.is_initialized:
+            raise Exception("Server not initialized")
+        params = request.params if hasattr(request, "params") else None
+        input_data = (params.arguments if params and params.arguments is not None else {})
+        query = input_data.get('query', '')
+        k = input_data.get('k', 5)
+        if not query:
+            return self._error_result("Query parameter is required")
+        if await asyncio.to_thread(self._get_vector_count) == 0:
+            return self._error_result("No documents ingested; run 'ingest_documents' first")
+        cache_key = f"rag_query:{hashlib.sha256(query.encode()).hexdigest()}:{k}"
+        cached = await asyncio.to_thread(self.cache.get_json, cache_key)
+        if cached:
+            logger.info(f"Returning cached RAG response for: {query[:50]}...")
+            return self._format_rag_response(cached, query)
+        try:
+            contexts = await asyncio.to_thread(lambda: self.retriever.retrieve(query, k=k))
+            response = await asyncio.to_thread(self.generator.generate, query, contexts)
+            await asyncio.to_thread(
+                self.cache.set_json,
+                cache_key,
+                {'response': response, 'contexts': contexts}
+            )
+            return self._format_rag_response({'response': response, 'contexts': contexts}, query)
+        except Exception as e:
+            err = f"RAG query failed: {type(e).__name__} - {e}"
+            logger.error(err, exc_info=True)
+            return self._error_result(err)
+
+    def _format_rag_response(self, data: Dict, query: str) -> CallToolResult:
+        response_text = f"Query: {query}\n\nGenerated Answer: {data['response']}\n\nRetrieved Contexts:\n"
+        for i, context in enumerate(data['contexts']):
+            response_text += (
+                f"  Context {i+1} (Score: {context['score']:.3f}):\n"
+                f"    Source: {context['metadata'].get('source', 'unknown')}\n"
+                f"    Content: {context['content'][:200]}...\n"
+            )
+        return CallToolResult(content=[TextContent(type="text", text=response_text)])
+
+    async def analyze_sentiment(self, request: CallToolRequest) -> CallToolResult:
+        if not self.is_initialized:
+            raise Exception("Server not initialized")
+        params = request.params if hasattr(request, "params") else None
+        input_data = (params.arguments if params and params.arguments is not None else {})
         text = input_data.get('text', '')
-        
         if not text:
-            raise ValueError("Text parameter is required")
-        
-        processed_text = self._truncate_text(text)
-        
-        result = await asyncio.to_thread(analyze_sentiment, processed_text)
-        
-        return CallToolResult(
-            content=[TextContent(
-                text=f"Sentiment Analysis Result:\n"
-                     f"Text: {text[:200]}{'...' if len(text) > 200 else ''}\n"
-                     f"Sentiment: {result['sentiment']}\n"
-                     f"Confidence: {result['confidence']:.3f}\n"
-                     f"Scores - Bearish: {result['bearish_score']:.3f}, "
-                     f"Bullish: {result['bullish_score']:.3f}, "
-                     f"Neutral: {result['neutral_score']:.3f}"
-            )]
-        )
+            return self._error_result("Text parameter is required")
+        try:
+            result = await asyncio.to_thread(analyze_sentiment, self._truncate_text(text))
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"Sentiment Analysis:\nText: {text[:200]}{'...' if len(text) > 200 else ''}\n"
+                         f"Sentiment: {result['sentiment']} (Conf: {result['confidence']:.3f})\n"
+                         f"Scores - Bearish: {result['bearish_score']:.3f}, Bullish: {result['bullish_score']:.3f}, Neutral: {result['neutral_score']:.3f}"
+                )]
+            )
+        except Exception as e:
+            err = f"Sentiment analysis failed: {type(e).__name__} - {e}"
+            logger.error(err, exc_info=True)
+            return self._error_result(err)
 
-    async def analyze_batch(self, request: CallToolRequest):
+    async def analyze_sentiment_batch(self, request: CallToolRequest) -> CallToolResult:
         if not self.is_initialized:
             raise Exception("Server not initialized")
-
-        input_data = request.arguments or {}
+        params = request.params if hasattr(request, "params") else None
+        input_data = (params.arguments if params and params.arguments is not None else {})
         texts = input_data.get('texts', [])
         max_batch_size = 32
-        
         if not texts or not isinstance(texts, list):
-            raise Exception("Texts parameter must be a non-empty list")
-        
-        all_results = []
-        for i in range(0, len(texts), max_batch_size):
-            batch_texts = texts[i:i + max_batch_size]
-            processed_texts = [self._truncate_text(text) for text in batch_texts]
-            
-            results = await asyncio.to_thread(analyze_sentiment_batch, processed_texts)
-            all_results.extend(results)
-        
-        if not all_results:
-            return CallToolResult(
-                content=[TextContent(text="No text was analyzed.")]
-            )
+            return self._error_result("Texts must be a non-empty list")
+        try:
+            all_results = []
+            for i in range(0, len(texts), max_batch_size):
+                batch = texts[i:i + max_batch_size]
+                processed = [self._truncate_text(t) for t in batch]
+                results = await asyncio.to_thread(analyze_sentiment_batch, processed)
+                all_results.extend(results)
+            response_text = "Batch Sentiment Results:\n\n"
+            for i, (text, result) in enumerate(zip(texts, all_results)):
+                response_text += (
+                    f"Text {i+1}: {text[:100]}...\n"
+                    f"  Sentiment: {result.get('top_sentiment', result['sentiment'])} (Conf: {result.get('top_confidence', result['confidence']):.3f})\n"
+                    f"  Scores - Bearish: {result.get('bearish_score', 0):.3f}, Bullish: {result.get('bullish_score', 0):.3f}, Neutral: {result.get('neutral_score', 0):.3f}\n\n"
+                )
+            return CallToolResult(content=[TextContent(type="text", text=response_text)])
+        except Exception as e:
+            err = f"Batch sentiment failed: {type(e).__name__} - {e}"
+            logger.error(err, exc_info=True)
+            return self._error_result(err)
 
-        response_text = "Batch Sentiment Analysis Results:\n\n"
-        for i, (text, result) in enumerate(zip(texts, all_results)):
-            bearish_score = result.get('BEARISH', result.get('bearish_score', 0))
-            bullish_score = result.get('BULLISH', result.get('bullish_score', 0))
-            neutral_score = result.get('NEUTRAL', result.get('neutral_score', 0))
-            top_sentiment = result.get('top_sentiment', 'UNKNOWN')
-            top_confidence = result.get('top_confidence', 0)
-            
+    async def analyze_with_sources(self, request: CallToolRequest) -> CallToolResult:
+        if not self.is_initialized:
+            raise Exception("Server not initialized")
+        params = request.params if hasattr(request, "params") else None
+        input_data = (params.arguments if params and params.arguments is not None else {})
+        query = input_data.get('query', '')
+        k = input_data.get('k', 5)
+        include_sources = input_data.get('include_sources', True)
+        request_sources = "sources" in query.lower() or "source" in query.lower()
+        if not query:
+            return self._error_result("Query parameter is required")
+        if await asyncio.to_thread(self._get_vector_count) == 0:
+            return self._error_result("No documents ingested; run ingestion first")
+        cache_key = f"combined:{hashlib.sha256(query.encode()).hexdigest()}:{k}"
+        cached = await asyncio.to_thread(self.cache.get_json, cache_key)
+        if cached:
+            logger.info(f"Returning cached combined response for: {query[:50]}...")
+            return self._format_combined_response(cached, query, include_sources or request_sources)
+        try:
+            contexts = await asyncio.to_thread(lambda: self.retriever.retrieve(query, k=k))
+            if not contexts:
+                raise Exception("No relevant sources found")
+            response = await asyncio.to_thread(self.generator.generate, query, contexts)
+            source_texts = [c['content'] for c in contexts]
+            sentiment_results = await asyncio.to_thread(analyze_sentiment_batch, source_texts)
+            aggregated = self._aggregate_sentiment(sentiment_results)
+            cache_data = {
+                'query': query, 'response': response, 'sources': contexts,
+                'sentiments': sentiment_results, 'aggregated': aggregated
+            }
+            await asyncio.to_thread(self.cache.set_json, cache_key, cache_data)
+            return self._format_combined_response(cache_data, query, include_sources or request_sources)
+        except Exception as e:
+            err = f"Combined pipeline failed: {type(e).__name__} - {e}"
+            logger.error(err, exc_info=True)
+            return self._error_result(err)
+
+    def _format_combined_response(self, data: Dict, query: str, show_sources: bool) -> CallToolResult:
+        response_text = f"Query: {query}\n\nGenerated Answer: {data['response']}\n\n"
+        if show_sources:
+            response_text += "Sources with Sentiment:\n"
+            for i, (context, sentiment) in enumerate(zip(data['sources'], data['sentiments'])):
+                response_text += (
+                    f"\n  Source {i+1} (Relevance: {context['score']:.3f}):\n"
+                    f"    From: {context['metadata'].get('source', 'unknown')} | Date: {context['metadata'].get('date', 'N/A')}\n"
+                    f"    Content: {context['content'][:150]}...\n"
+                    f"    Sentiment: {sentiment.get('top_sentiment', sentiment['sentiment'])} (Conf: {sentiment.get('top_confidence', sentiment['confidence']):.3f})\n"
+                    f"      Bearish: {sentiment.get('bearish_score', 0):.3f}, Bullish: {sentiment.get('bullish_score', 0):.3f}, Neutral: {sentiment.get('neutral_score', 0):.3f}\n"
+                )
             response_text += (
-                f"Text {i+1}: {text[:100]}...\n"
-                f"  Sentiment: {top_sentiment}\n"
-                f"  Confidence: {top_confidence:.3f}\n"
-                f"  Bearish: {bearish_score:.3f}, "
-                f"Bullish: {bullish_score:.3f}, "
-                f"Neutral: {neutral_score:.3f}\n\n"
+                f"\nAggregated Sentiment: {data['aggregated']['top_sentiment']} "
+                f"(Avg Conf: {data['aggregated']['top_confidence']:.3f})"
             )
-        
-        return CallToolResult(
-            content=[TextContent(text=response_text)]
+        return CallToolResult(content=[TextContent(type="text", text=response_text)])
+
+    def _aggregate_sentiment(self, sentiments: List[Dict]) -> Dict:
+        if not sentiments:
+            return {'top_sentiment': 'NEUTRAL', 'top_confidence': 0.0, 'bearish_score': 0, 'bullish_score': 0, 'neutral_score': 0}
+        avg_bearish = sum(s.get('bearish_score', s.get('BEARISH', 0)) for s in sentiments) / len(sentiments)
+        avg_bullish = sum(s.get('bullish_score', s.get('BULLISH', 0)) for s in sentiments) / len(sentiments)
+        avg_neutral = sum(s.get('neutral_score', s.get('NEUTRAL', 0)) for s in sentiments) / len(sentiments)
+        scores = {'BEARISH': avg_bearish, 'BULLISH': avg_bullish, 'NEUTRAL': avg_neutral}
+        top_label = max(scores, key=scores.get)
+        return {
+            'top_sentiment': top_label, 'top_confidence': scores[top_label],
+            'bearish_score': avg_bearish, 'bullish_score': avg_bullish, 'neutral_score': avg_neutral
+        }
+
+    async def get_stats(self, request: CallToolRequest) -> CallToolResult:
+        if not self.is_initialized:
+            raise Exception("Server not initialized")
+        try:
+            count = await asyncio.to_thread(self._get_vector_count)
+            all_data = await asyncio.to_thread(self.vector_store.get_all)
+            sources = {}
+            for metadata in all_data.get("metadatas", []):
+                source = metadata.get('source', 'unknown')
+                sources[source] = sources.get(source, 0) + 1
+            stats_text = f"Vector Store Stats:\nTotal chunks: {count}\nSources:\n"
+            for source, cnt in sources.items():
+                stats_text += f"  {source}: {cnt}\n"
+            cache_info = await asyncio.to_thread(self.cache.get_stats, "rag_query:*")
+            if cache_info:
+                stats_text += f"\nCache: {cache_info}"
+            return CallToolResult(content=[TextContent(type="text", text=stats_text)])
+        except Exception as e:
+            err = f"Failed to get stats: {type(e).__name__} - {e}"
+            logger.error(err, exc_info=True)
+            return self._error_result(err)
+
+    def _get_vector_count(self):
+        count_result = self.vector_store.count()
+        return count_result if isinstance(count_result, int) else count_result.get("count", 0)
+
+    def _truncate_text(self, text: str, max_tokens: int = 512) -> str:
+        tokens = text.split()
+        if len(tokens) > max_tokens:
+            return ' '.join(tokens[:max_tokens]) + "... [truncated]"
+        return text
+
+    async def _clear_cache(self, *patterns):
+        for pattern in patterns:
+            try:
+                await asyncio.to_thread(self.cache.delete_by_pattern, pattern)
+            except Exception as e:
+                logger.warning(f"Cache clear failed for {pattern}: {e}")
+
+server = Server("crypto-pipeline-server")
+mcp = PipelineMCP()
+
+@server.list_tools()
+async def list_tools():
+    return [
+        Tool(
+            name="ingest_documents",
+            description="Ingest recent crypto news/Reddit (prereq for queries)",
+            inputSchema={
+                "type": "object",
+                "properties": {"days_back": {"type": "integer", "default": 30}},
+                "required": []
+            }
+        ),
+        Tool(
+            name="query_rag",
+            description="Query RAG for insights (without sentiment)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Query text"},
+                    "k": {"type": "integer", "default": 5}
+                },
+                "required": ["query"]
+            }
+        ),
+        Tool(
+            name="analyze_sentiment",
+            description="Analyze single text sentiment",
+            inputSchema={
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"]
+            }
+        ),
+        Tool(
+            name="analyze_sentiment_batch",
+            description="Analyze batch of texts",
+            inputSchema={
+                "type": "object",
+                "properties": {"texts": {"type": "array", "items": {"type": "string"}}},
+                "required": ["texts"]
+            }
+        ),
+        Tool(
+            name="analyze_with_sources",
+            description="Full pipeline: RAG sources + sentiment + insights",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "k": {"type": "integer", "default": 5},
+                    "include_sources": {"type": "boolean", "default": True}
+                },
+                "required": ["query"]
+            }
+        ),
+        Tool(
+            name="get_stats",
+            description="Get vector store and cache stats",
+            inputSchema={"type": "object", "properties": {}}
         )
+    ]
+
+@server.call_tool()
+async def call_tool(name: str, arguments: Dict[str, Any]):
+    if name == "ingest_documents":
+        return await mcp.ingest_documents(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+    elif name == "query_rag":
+        return await mcp.query_rag(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+    elif name == "analyze_sentiment":
+        return await mcp.analyze_sentiment(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+    elif name == "analyze_sentiment_batch":
+        return await mcp.analyze_sentiment_batch(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+    elif name == "analyze_with_sources":
+        return await mcp.analyze_with_sources(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+    elif name == "get_stats":
+        return await mcp.get_stats(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+    else:
+        raise Exception(f"Unknown tool: {name}")
+
+@server.list_resources()
+async def list_resources():
+    return []
+
+@server.read_resource()
+async def read_resource(name: str):
+    raise Exception(f"Unknown resource: {name}")
+
 
 async def main():
-    server = Server("crypto-sentiment-server")
-    mcp = SentimentMCP()
     await mcp.initialize()
-
-    @server.list_tools()
-    async def list_tools():
-        return [
-            Tool(
-                name="analyze_sentiment",
-                description="Analyze sentiment of a single text for crypto market sentiment",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string", "description": "Text to analyze for sentiment"}
-                    },
-                    "required": ["text"]
-                }
-            ),
-            Tool(
-                name="analyze_sentiment_batch",
-                description="Analyze sentiment of multiple texts in batch",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "texts": {
-                            "type": "array", 
-                            "items": {"type": "string"},
-                            "description": "List of texts to analyze"
-                        }
-                    },
-                    "required": ["texts"]
-                }
-            )
-        ]
-
-    @server.call_tool()
-    async def call_tool(name: str, arguments: Dict[str, Any]):
-        if name == "analyze_sentiment":
-            return await mcp.analyze_single(CallToolRequest(name=name, arguments=arguments))
-        elif name == "analyze_sentiment_batch":
-            return await mcp.analyze_batch(CallToolRequest(name=name, arguments=arguments))
-        else:
-            raise Exception(f"Unknown tool: {name}")
-
-    @server.list_resources()
-    async def list_resources():
-        return []
-
-    @server.read_resource()
-    async def read_resource(name: str):
-        raise Exception(f"Unknown resource: {name}")
-
-    read_stream = AsyncStdioWrapper(sys.stdin.buffer, mode='r')
-    write_stream = AsyncStdioWrapper(sys.stdout.buffer, mode='w')
-    init_options = {"name": "crypto-sentiment-server"}
-
-    try:
+    logger.info(f"Starting {server.name}...")
+    init_options = InitializationOptions(
+        server_name=server.name,
+        server_version="1.0.0",
+        capabilities=server.get_capabilities(
+            notification_options=NotificationOptions(),
+            experimental_capabilities={},
+        ),
+    )
+    logger.info(f"Init options: {init_options}")
+    async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, init_options)
-    except Exception:
-        logger.exception("Server.run failed")
-        raise
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Sentiment server stopped by user")
+        logger.info("Pipeline server stopped by user")

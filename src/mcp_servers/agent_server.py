@@ -12,7 +12,6 @@ from mcp.types import CallToolRequest, CallToolResult, Tool, TextContent
 
 from core.logging_config import setup_logging
 from utils.cache import RedisCache
-from utils.mcp_utils import AsyncStdioWrapper
 from core.exceptions import CryptoAnalyticsError, APIError
 from modules.agent.agent_client import orchestrate_query  
 
@@ -143,11 +142,13 @@ class AgentMCP:
             logger.error(f"[{request_id}] Unexpected error: {e}", exc_info=True)
             raise CryptoAnalyticsError(err_msg)  # Maps to 500 or 204 if no data
 
-async def main():
+from mcp.server.stdio import stdio_server
+
+if __name__ == "__main__":
     server = Server("crypto-agent-server")
     mcp = AgentMCP()
-    await mcp.initialize()
-
+    init_options = {"name": "crypto-agent-server"}
+    
     @server.list_tools()
     async def list_tools():
         return [
@@ -182,10 +183,6 @@ async def main():
                     "required": ["symbol"]
                 }
             ),
-            # Optional future tools
-            # Tool(name="get_backtest_report", ...),
-            # Tool(name="explain_decision", ...),
-            # Tool(name="agent_health", ...),
         ]
 
     @server.call_tool()
@@ -203,17 +200,11 @@ async def main():
     async def read_resource(name: str):
         raise Exception(f"Unknown resource: {name}")
 
-    read_stream = AsyncStdioWrapper(sys.stdin.buffer, mode='r')
-    write_stream = AsyncStdioWrapper(sys.stdout.buffer, mode='w')
-    init_options = {"name": "crypto-agent-server"}
+    async def main():
+        await mcp.initialize()
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, init_options)
 
-    try:
-        await server.run(read_stream, write_stream, init_options)
-    except Exception:
-        logger.exception("Server.run failed")
-        raise
-
-if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
