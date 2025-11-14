@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import hashlib
 from typing import Dict, Any, List
@@ -45,6 +46,12 @@ class PipelineMCP:
         return CallToolResult(
             isError=True,
             content=[TextContent(type="text", text=message)]
+        )
+
+    @staticmethod
+    def _json_result(payload: Dict[str, Any]) -> CallToolResult:
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(payload, default=str, indent=2))]
         )
 
     async def initialize(self):
@@ -114,14 +121,12 @@ class PipelineMCP:
             return self._error_result(err)
 
     def _format_rag_response(self, data: Dict, query: str) -> CallToolResult:
-        response_text = f"Query: {query}\n\nGenerated Answer: {data['response']}\n\nRetrieved Contexts:\n"
-        for i, context in enumerate(data['contexts']):
-            response_text += (
-                f"  Context {i+1} (Score: {context['score']:.3f}):\n"
-                f"    Source: {context['metadata'].get('source', 'unknown')}\n"
-                f"    Content: {context['content'][:200]}...\n"
-            )
-        return CallToolResult(content=[TextContent(type="text", text=response_text)])
+        payload = {
+            "query": query,
+            "response": data.get("response"),
+            "contexts": data.get("contexts", []),
+        }
+        return self._json_result(payload)
 
     async def analyze_sentiment(self, request: CallToolRequest) -> CallToolResult:
         if not self.is_initialized:
@@ -133,14 +138,17 @@ class PipelineMCP:
             return self._error_result("Text parameter is required")
         try:
             result = await asyncio.to_thread(analyze_sentiment, self._truncate_text(text))
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Sentiment Analysis:\nText: {text[:200]}{'...' if len(text) > 200 else ''}\n"
-                         f"Sentiment: {result['sentiment']} (Conf: {result['confidence']:.3f})\n"
-                         f"Scores - Bearish: {result['bearish_score']:.3f}, Bullish: {result['bullish_score']:.3f}, Neutral: {result['neutral_score']:.3f}"
-                )]
-            )
+            payload = {
+                "text_preview": f"{text[:200]}{'...' if len(text) > 200 else ''}",
+                "sentiment": result.get("sentiment"),
+                "confidence": result.get("confidence"),
+                "scores": {
+                    "bearish": result.get("bearish_score"),
+                    "bullish": result.get("bullish_score"),
+                    "neutral": result.get("neutral_score"),
+                },
+            }
+            return self._json_result(payload)
         except Exception as e:
             err = f"Sentiment analysis failed: {type(e).__name__} - {e}"
             logger.error(err, exc_info=True)
@@ -162,14 +170,24 @@ class PipelineMCP:
                 processed = [self._truncate_text(t) for t in batch]
                 results = await asyncio.to_thread(analyze_sentiment_batch, processed)
                 all_results.extend(results)
-            response_text = "Batch Sentiment Results:\n\n"
-            for i, (text, result) in enumerate(zip(texts, all_results)):
-                response_text += (
-                    f"Text {i+1}: {text[:100]}...\n"
-                    f"  Sentiment: {result.get('top_sentiment', result['sentiment'])} (Conf: {result.get('top_confidence', result['confidence']):.3f})\n"
-                    f"  Scores - Bearish: {result.get('bearish_score', 0):.3f}, Bullish: {result.get('bullish_score', 0):.3f}, Neutral: {result.get('neutral_score', 0):.3f}\n\n"
-                )
-            return CallToolResult(content=[TextContent(type="text", text=response_text)])
+            structured = []
+            for text, result in zip(texts, all_results):
+                structured.append({
+                    "text_preview": f"{text[:100]}{'...' if len(text) > 100 else ''}",
+                    "sentiment": result.get('top_sentiment', result.get('sentiment')),
+                    "confidence": result.get('top_confidence', result.get('confidence')),
+                    "scores": {
+                        "bearish": result.get('bearish_score', result.get('BEARISH')),
+                        "bullish": result.get('bullish_score', result.get('BULLISH')),
+                        "neutral": result.get('neutral_score', result.get('NEUTRAL')),
+                    }
+                })
+            payload = {
+                "count": len(structured),
+                "results": structured,
+                "aggregated": self._aggregate_sentiment(all_results),
+            }
+            return self._json_result(payload)
         except Exception as e:
             err = f"Batch sentiment failed: {type(e).__name__} - {e}"
             logger.error(err, exc_info=True)
@@ -213,22 +231,15 @@ class PipelineMCP:
             return self._error_result(err)
 
     def _format_combined_response(self, data: Dict, query: str, show_sources: bool) -> CallToolResult:
-        response_text = f"Query: {query}\n\nGenerated Answer: {data['response']}\n\n"
+        payload = {
+            "query": query,
+            "response": data.get("response"),
+            "aggregated": data.get("aggregated"),
+        }
         if show_sources:
-            response_text += "Sources with Sentiment:\n"
-            for i, (context, sentiment) in enumerate(zip(data['sources'], data['sentiments'])):
-                response_text += (
-                    f"\n  Source {i+1} (Relevance: {context['score']:.3f}):\n"
-                    f"    From: {context['metadata'].get('source', 'unknown')} | Date: {context['metadata'].get('date', 'N/A')}\n"
-                    f"    Content: {context['content'][:150]}...\n"
-                    f"    Sentiment: {sentiment.get('top_sentiment', sentiment['sentiment'])} (Conf: {sentiment.get('top_confidence', sentiment['confidence']):.3f})\n"
-                    f"      Bearish: {sentiment.get('bearish_score', 0):.3f}, Bullish: {sentiment.get('bullish_score', 0):.3f}, Neutral: {sentiment.get('neutral_score', 0):.3f}\n"
-                )
-            response_text += (
-                f"\nAggregated Sentiment: {data['aggregated']['top_sentiment']} "
-                f"(Avg Conf: {data['aggregated']['top_confidence']:.3f})"
-            )
-        return CallToolResult(content=[TextContent(type="text", text=response_text)])
+            payload["sources"] = data.get("sources")
+            payload["sentiments"] = data.get("sentiments")
+        return self._json_result(payload)
 
     def _aggregate_sentiment(self, sentiments: List[Dict]) -> Dict:
         if not sentiments:
@@ -282,7 +293,7 @@ class PipelineMCP:
             except Exception as e:
                 logger.warning(f"Cache clear failed for {pattern}: {e}")
 
-server = Server("crypto-pipeline-server")
+server = Server("crypto-sentiment-server")
 mcp = PipelineMCP()
 
 @server.list_tools()

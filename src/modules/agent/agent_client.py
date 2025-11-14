@@ -124,7 +124,10 @@ async def _call_mcp(server: str, tool: str, args: Optional[Dict[str, Any]] = Non
     server_scripts = {
         "crypto-sarimax-server": "src/mcp_servers/price_server.py",
         "crypto-onchain-server": "src/mcp_servers/chain_server.py",
-        "crypto-pipeline-server": "src/mcp_servers/sentiment_server.py"
+        "crypto-sentiment-server": "src/mcp_servers/sentiment_server.py",
+        # Legacy alias for older callers that still use the previous name
+        "crypto-pipeline-server": "src/mcp_servers/sentiment_server.py",
+        "crypto-agent-server": "src/mcp_servers/agent_server.py",
     }
     script_path = server_scripts.get(server)
     if not script_path or not os.path.exists(script_path):
@@ -236,7 +239,7 @@ async def route_tools(
     if any(cat in cats for cat in ("sentiment", "combined")):
         if refresh_sentiment:
             await call_mcp_tool(
-                "crypto-pipeline-server",
+                "crypto-sentiment-server",
                 "ingest_documents",
                 {"days_back": ingest_days},
                 use_cache=False,
@@ -248,7 +251,7 @@ async def route_tools(
             sentiment_query += " including technical impact"
 
         tasks["sentiment"] = call_mcp_tool(
-            "crypto-pipeline-server",
+            "crypto-sentiment-server",
             "analyze_with_sources",
             {
                 "query": sentiment_query,

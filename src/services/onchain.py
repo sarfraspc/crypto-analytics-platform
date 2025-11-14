@@ -1,72 +1,132 @@
-from fastapi import APIRouter, HTTPException, Query
-from typing import Optional
 import logging
+import uuid
 from datetime import datetime
-import json
-import re
+from typing import Any, Dict, List
 
-from modules.agent.agent_client import call_mcp_tool
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
 from core.logging_config import setup_logging
+from modules.agent.agent_client import call_mcp_tool
 
 setup_logging()
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/onchain", tags=["Onchain"])
+router = APIRouter(tags=["Onchain"])
 
-# Thresholds from config or hardcoded for now
-MARKET_PRESSURE_BUY = 0.6
-MARKET_PRESSURE_SELL = 0.4
+ALLOWED_WINDOWS = {"1h", "24h", "7d"}
+
+
+def _validate_symbol(symbol: str) -> str:
+    if not symbol or not symbol.isalnum():
+        raise HTTPException(status_code=400, detail="Symbol must be alphanumeric.")
+    return symbol.upper()
+
+
+def _validate_window(window: str) -> str:
+    if window not in ALLOWED_WINDOWS:
+        raise HTTPException(status_code=400, detail=f"window must be one of {sorted(ALLOWED_WINDOWS)}")
+    return window
+
+
+def _shape_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize MCP metrics payload into stable fields for the frontend."""
+    if not isinstance(payload, dict):
+        return {"raw": payload}
+
+    flows = payload.get("flows") or {}
+    whales = payload.get("whales") or {}
+    aggregated = payload.get("aggregated") or payload.get("aggregated_metrics") or {}
+
+    return {
+        "whale_transactions": whales.get("whale_count"),
+        "total_whale_volume_usd": whales.get("total_whale_volume_usd"),
+        "avg_whale_tx_size_usd": whales.get("avg_whale_tx_size_usd"),
+        "whale_exchange_inflow": whales.get("whale_exchange_inflow"),
+        "whale_exchange_outflow": whales.get("whale_exchange_outflow"),
+        "whale_exchange_ratio": whales.get("whale_exchange_ratio"),
+        "unique_whale_addresses": whales.get("unique_whale_addresses"),
+        "exchange_inflow_usd": flows.get("exchange_inflow_usd") or flows.get("inflow_usd"),
+        "exchange_outflow_usd": flows.get("exchange_outflow_usd") or flows.get("outflow_usd"),
+        "net_flow_usd": flows.get("net_flow_usd") or flows.get("netflow"),
+        "exchange_flow_ratio": flows.get("exchange_flow_ratio"),
+        "flow_trend_24h": flows.get("flow_trend_24h"),
+        "market_pressure_index": aggregated.get("market_pressure_index"),
+        "market_bias": aggregated.get("market_bias"),
+        "price_change_pct": aggregated.get("price_change_pct"),
+        "flow_trend_7d": aggregated.get("flow_trend_7d"),
+        "price_whale_corr_7d": aggregated.get("price_whale_corr_7d"),
+        "errors": payload.get("errors"),
+    }
+
 
 @router.get("/metrics/{symbol}")
 async def get_onchain_metrics(
     symbol: str,
-    window: Optional[str] = Query("24h", description="Lookback window")
+    window: str = Query("24h", description="Lookback window (1h, 24h, 7d)."),
 ):
-    start_time = datetime.now()
-    request_id = f"onchain_metrics_{hash(str(start_time)) % 1000000}"
-    logger.info(f"[{request_id}] Request: symbol={symbol}, window={window}")
+    sanitized_symbol = _validate_symbol(symbol)
+    window = _validate_window(window)
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+    logger.info("[%s] Metrics request: symbol=%s window=%s", request_id, sanitized_symbol, window)
 
     try:
-        raw_result = await call_mcp_tool("crypto-onchain-server", "run_metrics_only", {"symbol": symbol, "window": window})
+        payload = await call_mcp_tool(
+            "crypto-onchain-server",
+            "run_metrics_only",
+            {"symbol": sanitized_symbol, "window": window},
+        )
+    except Exception as exc:
+        logger.error("[%s] Metrics tool failed: %s", request_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="On-chain metrics unavailable.") from exc
 
-        # Parse the result
-        result_text = raw_result.get("raw_text", raw_result) if isinstance(raw_result, dict) and "raw_text" in raw_result else str(raw_result)
-        if "Metrics Result:" in result_text:
-            # Extract JSON block
-            json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group())
-            else:
-                # Fallback split
-                json_str = result_text.split("\n\n", 1)[1] if "\n\n" in result_text else result_text
-                parsed = json.loads(json_str)
+    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    response = {
+        "request_id": request_id,
+        "symbol": sanitized_symbol,
+        "window": window,
+        "duration_ms": duration_ms,
+        "metrics": _shape_metrics(payload),
+    }
+    return response
 
-            # Standardize output with config thresholds
-            pressure_index = parsed.get("market_pressure_index", 0.5)
-            market_pressure = "buy" if pressure_index > MARKET_PRESSURE_BUY else "sell" if pressure_index < MARKET_PRESSURE_SELL else "neutral"
-            dominant_flow = parsed.get("dominant_flow", "none")
 
-            result = {
-                "symbol": symbol.upper(),
-                "total_whale_txs": parsed.get("whale_transactions", 0),
-                "exchange_inflow": parsed.get("inflow_usd", 0),
-                "exchange_outflow": parsed.get("outflow_usd", 0),
-                "market_pressure": market_pressure,
-                "dominant_activity": dominant_flow,
-                "timestamp": datetime.now().isoformat()
-            }
-        else:
-            result = {"error": "No metrics data in response"}
+@router.get("/patterns")
+async def get_ta_patterns(
+    exchange: str = Query("binance", description="Exchange for TA data."),
+    interval: str = Query("1d", description="Candlestick interval."),
+    limit: int = Query(20, ge=5, le=100, description="Maximum symbols to scan."),
+):
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+    logger.info(
+        "[%s] TA patterns: exchange=%s interval=%s limit=%s",
+        request_id,
+        exchange,
+        interval,
+        limit,
+    )
 
-        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-        logger.info(f"[{request_id}] Completed in {duration_ms}ms")
+    try:
+        payload = await call_mcp_tool(
+            "crypto-onchain-server",
+            "run_patterns_only",
+            {"exchange": exchange, "interval": interval, "limit": limit},
+        )
+    except Exception as exc:
+        logger.error("[%s] Patterns tool failed: %s", request_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="On-chain patterns unavailable.") from exc
 
-        return result
-
-    except json.JSONDecodeError as e:
-        logger.warning(f"[{request_id}] Invalid JSON from Onchain MCP: {e}")
-        raise HTTPException(status_code=500, detail="Invalid response format from upstream service")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[{request_id}] Error calling Onchain MCP: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Upstream Onchain server error; please retry.")
+    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    patterns: Dict[str, Any] = payload.get("patterns", {}) if isinstance(payload, dict) else {}
+    formatted: List[Dict[str, Any]] = [
+        {"symbol": symbol, **details} for symbol, details in patterns.items()
+    ]
+    return {
+        "request_id": request_id,
+        "duration_ms": duration_ms,
+        "exchange": exchange,
+        "interval": interval,
+        "patterns": formatted,
+        "raw_text": payload.get("raw_text") if isinstance(payload, dict) else None,
+    }
