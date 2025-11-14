@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Dict, List
 from sqlalchemy.orm import Session
 from data.storage.models import Token as TokenModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, literal_column
 import mlflow
 
 from core.database import get_metadata_db, get_timescale_db
@@ -55,7 +55,8 @@ def log_pipeline_to_mlflow(
         if metrics:
             agg = metrics.get("metrics", {})
             mlflow.log_metric("metrics_market_pressure", agg.get("market_pressure_index", 0))
-            mlflow.log_metric("metrics_whale_count", agg.get("whale_count", 0) if "whales" in agg else 0)
+            # FIXED: Correct nesting for whales
+            mlflow.log_metric("metrics_whale_count", agg.get("whales", {}).get("whale_count", 0))
             mlflow.log_param("metrics_status", metrics.get("status", "unknown"))
 
         patterns = status.get("patterns", {})
@@ -67,33 +68,63 @@ def log_pipeline_to_mlflow(
 
 def get_top_symbols(db: Session, limit: int = 50):
     try:
+        # FIXED: Raw column name (no "TokenModel.")
+        rank_expr = literal_column(
+            "CAST(jsonb_extract_path_text(metadata, 'market_cap_rank') AS INTEGER)"
+        )
+        
         result = db.execute(
             select(TokenModel.symbol)
             .where(
                 func.jsonb_extract_path_text(TokenModel.token_metadata, 'market_cap_rank').isnot(None),
                 func.jsonb_extract_path_text(TokenModel.token_metadata, 'market_cap_rank') != ''
             )
-            .order_by(func.cast(func.jsonb_extract_path_text(TokenModel.token_metadata, 'market_cap_rank'), func.Integer))
+            .order_by(rank_expr.asc())  # ASC for low ranks first (BTC=1)
             .limit(limit)
         ).scalars().all()
-        symbols = [row for row in result]
+        
+        symbols = [row for row in result if row]  # Filter Nones
         logger.info(f"Loaded {len(symbols)} top symbols for patterns")
-        return symbols
+        return symbols[:limit]  # Enforce limit
     except Exception as e:
         logger.error(f"Error fetching top symbols: {e}")
-        return ['BTC', 'ETH']  
+        # Robust fallback: Top 50 by market cap rank (Nov 2025 snapshot)
+        fallback = [
+            'BTC', 'ETH', 'USDT', 'BNB', 'SOL', 'XRP', 'USDC', 'DOGE', 'TON', 'ADA',
+            'TRX', 'AVAX', 'SHIB', 'WBTC', 'LINK', 'BCH', 'DOT', 'NEAR', 'LTC', 'MATIC',
+            'UNI', 'ICP', 'PEPE', 'KAS', 'ETC', 'APT', 'XMR', 'STX', 'HBAR', 'IMX',
+            'VET', 'FIL', 'CRO', 'ATOM', 'MKR', 'FDUSD', 'ARB', 'OP', 'INJ', 'GRT',
+            'LDO', 'TIA', 'RUNE', 'THETA', 'FTM', 'SEI', 'JUP', 'ALGO', 'CORE', 'BGB'
+        ]
+        logger.warning(f"Using fallback {len(fallback)} symbols")
+        return fallback
 
 def run_whale_ingestion(
     db: Session,
     chain: str = 'ethereum',
     batch_size: int = 100,
-    threshold_usd: float = 500000.0
+    threshold_usd: float = 500000.0,
+    time_window: str = '24h',  # NEW: For dynamic cache keys
+    symbol: str = 'BTC'        # NEW: For dynamic cache keys
 ):
     try:
         logger.info(f"Starting whale ingestion for {chain} (batch_size={batch_size})")
         result = chain_client.scan_eth_transfers(db, batch_size=batch_size, threshold_usd=threshold_usd)
         if result and result.get('whale_alerts', 0) > 0:
             logger.info(f"Ingested {result['whale_alerts']} whale alerts")
+            
+            # FIXED: Dynamic keys + safe multi-delete (chain calls; add multi to RedisCache if needed)
+            try:
+                keys = [
+                    f"onchain:whale_alerts:{chain}:{time_window}",
+                    f"onchain:exchange_flows:{chain}:{time_window}",
+                    f"onchain:aggregated_metrics:{chain}:{time_window}:{symbol}"
+                ]
+                deleted = sum(redis_cache.delete(key) for key in keys)  # Chain single deletes
+                logger.info(f"Invalidated {deleted} caches post-ingestion")
+            except Exception as cache_err:
+                logger.warning(f"Cache invalidation failed: {cache_err} (metrics may stale)")
+            
             return {"ingestion": result, "status": "success"}
         else:
             logger.warning("No new whale alerts ingested")
@@ -109,6 +140,18 @@ def run_metrics_update(
 ):
     try:
         logger.info(f"Starting metrics update for {chain}, {time_window}")
+        # NEW: Backup clear before compute (ensures fresh even if no ingest)
+        try:
+            keys = [
+                f"onchain:exchange_flows:{chain}:{time_window}",
+                f"onchain:whale_alerts:{chain}:{time_window}",
+                f"onchain:aggregated_metrics:{chain}:{time_window}:{symbol}"
+            ]
+            deleted = sum(redis_cache.delete(key) for key in keys)
+            logger.info(f"Pre-metrics: Invalidated {deleted} caches")
+        except Exception as clear_err:
+            logger.warning(f"Pre-clear failed: {clear_err}")
+        
         status = run_onchain_metrics(chain, time_window, symbol)
         if not status.get('errors'):
             logger.info("Metrics updated successfully")
@@ -170,7 +213,8 @@ def run_onchain_pipeline(
     }
 
     if 'ingestion' in run_steps:
-        ingestion = run_whale_ingestion(db, chain, batch_size, threshold_usd)
+        # FIXED: Pass time_window/symbol for dynamic deletes
+        ingestion = run_whale_ingestion(db, chain, batch_size, threshold_usd, time_window, symbol)
         status["ingestion"] = ingestion
         if ingestion and ingestion.get("status") == "error":
             status["errors"].append("Ingestion failed")
@@ -204,9 +248,19 @@ if __name__ == "__main__":
     parser.add_argument("--window", default="24h", choices=["1h", "24h"], help="Time window")
     parser.add_argument("--symbol", default="BTC", help="Symbol for metrics")
     parser.add_argument("--run", default="all", help="Steps to run: 'all' or comma-separated e.g., 'ingestion,metrics'")
+    # NEW: For manual flush
+    parser.add_argument("--clear-cache", action="store_true", help="Flush all onchain Redis caches")
     args = parser.parse_args()
 
     steps = args.run.split(',') if args.run != "all" else None
+
+    # NEW: Manual clear if flagged
+    if args.clear_cache:
+        try:
+            deleted = redis_cache.delete_by_pattern("onchain:*")
+            logger.info(f"Manual cache flush: Deleted {deleted} keys")
+        except Exception as e:
+            logger.error(f"Cache flush failed: {e}")
 
     with get_timescale_db() as db:
         result = run_onchain_pipeline(

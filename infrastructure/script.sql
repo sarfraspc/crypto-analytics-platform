@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS whale_alerts (
     from_address TEXT,
     to_address TEXT,
     amount NUMERIC,
+    usd_value NUMERIC,
     asset TEXT NOT NULL,
     raw JSONB,
     PRIMARY KEY (time, tx_hash, asset)

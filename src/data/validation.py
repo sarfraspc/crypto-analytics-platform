@@ -39,6 +39,7 @@ class WhaleAlert(BaseModel):
     from_address: Optional[str] = None
     to_address: Optional[str] = None
     amount: Optional[Decimal] = None
+    usd_value: Optional[Decimal] = None
     asset: Optional[str] = None
     raw: Optional[Dict[str, Any]] = None
 

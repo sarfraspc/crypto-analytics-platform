@@ -27,10 +27,12 @@ def get_token(db: Session, symbol: str):
         logger.error(f"Error fetching token {symbol}: {e}")
         return None
 
+
 def upsert_ohlcv(db: Session, rows: List[OHLCV]):
     if not rows:
         return
     try:
+        inserted_count = 0
         for row in rows:
             exists = db.execute(
                 select(OHLCVModel).where(
@@ -47,16 +49,20 @@ def upsert_ohlcv(db: Session, rows: List[OHLCV]):
                     raw=row.raw or {}
                 )
                 db.add(ohlcv)
-        logger.info(f"Inserted {len(rows)} OHLCV rows")
+                inserted_count += 1
+        db.commit()
+        logger.info(f"Committed {inserted_count} OHLCV rows (attempted {len(rows)})")
     except Exception as e:
         db.rollback()
         logger.error(f"Error upserting OHLCV: {e}")
         raise
 
+
 def upsert_trades(db: Session, rows: List[Trade]):
     if not rows:
         return
     try:
+        inserted_count = 0
         for row in rows:
             exists = db.execute(
                 select(TradeModel).where(
@@ -72,64 +78,69 @@ def upsert_trades(db: Session, rows: List[Trade]):
                     price=row.price, amount=row.amount, side=row.side, raw=row.raw or {}
                 )
                 db.add(trade)
-        logger.info(f"Inserted {len(rows)} trades")
+                inserted_count += 1
+        db.commit()
+        logger.info(f"Committed {inserted_count} trades (attempted {len(rows)})")
     except Exception as e:
         db.rollback()
         logger.error(f"Error upserting trades: {e}")
         raise
 
+
 def upsert_news(db: Session, articles: List[NewsArticle]):
     if not articles:
         return
     
-    inserted_count = 0
-    for article in articles:
-        exists = db.execute(select(NewsArticleModel).where(NewsArticleModel.id == article.id)).scalar_one_or_none()
-        if not exists:
-            db.add(NewsArticleModel(
-                id=article.id, title=article.title, source=article.source, url=article.url,
-                published=article.published, text=article.text,
-                raw=article.raw or {}
-            ))
-            inserted_count += 1
-    
     try:
+        inserted_count = 0
+        for article in articles:
+            exists = db.execute(select(NewsArticleModel).where(NewsArticleModel.id == article.id)).scalar_one_or_none()
+            if not exists:
+                db.add(NewsArticleModel(
+                    id=article.id, title=article.title, source=article.source, url=article.url,
+                    published=article.published, text=article.text,
+                    raw=article.raw or {}
+                ))
+                inserted_count += 1
+        
         db.commit()
-        logger.info(f"Actually inserted {inserted_count} news articles (attempted {len(articles)})")
+        logger.info(f"Committed {inserted_count} news articles (attempted {len(articles)})")
     except Exception as e:
-        logger.error(f"Upsert failed for news articles: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         db.rollback()
+        logger.error(f"Upsert failed for news articles: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         raise
+
 
 def upsert_reddit(db: Session, posts: List[RedditPost]):
     if not posts:
         return
     
-    inserted_count = 0
-    for post in posts:
-        exists = db.execute(select(RedditPostModel).where(RedditPostModel.id == post.id)).scalar_one_or_none()
-        if not exists:
-            db.add(RedditPostModel(
-                id=post.id, subreddit=post.subreddit, author=post.author, title=post.title,
-                body=post.body, score=post.upvote_score, created=post.created,
-                raw=post.raw or {}
-            ))
-            inserted_count += 1
-    
     try:
+        inserted_count = 0
+        for post in posts:
+            exists = db.execute(select(RedditPostModel).where(RedditPostModel.id == post.id)).scalar_one_or_none()
+            if not exists:
+                db.add(RedditPostModel(
+                    id=post.id, subreddit=post.subreddit, author=post.author, title=post.title,
+                    body=post.body, score=post.score, created=post.created,
+                    raw=post.raw or {}
+                ))
+                inserted_count += 1
+        
         db.commit()
-        logger.info(f"Actually inserted {inserted_count} Reddit posts (attempted {len(posts)})")
+        logger.info(f"Committed {inserted_count} Reddit posts (attempted {len(posts)})")
     except Exception as e:
-        logger.error(f"Upsert failed for Reddit posts: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         db.rollback()
+        logger.error(f"Upsert failed for Reddit posts: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         raise
+
 
 def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert], chunk_size: int = 500):
     if not alerts:
         return
 
     try:
-        total = 0
+        total_inserted = 0
         for i in range(0, len(alerts), chunk_size):
             batch = alerts[i:i + chunk_size]
 
@@ -141,6 +152,7 @@ def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert], chunk_size: int =
                     'from_address': a.from_address,
                     'to_address': a.to_address,
                     'amount': a.amount,
+                    'usd_value': a.usd_value,  # Explicitly include usd_value
                     'asset': a.asset,
                     'raw': a.raw or {}
                 }
@@ -149,15 +161,16 @@ def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert], chunk_size: int =
 
             stmt = insert(WhaleAlertModel).values(values)
             stmt = stmt.on_conflict_do_nothing(index_elements=['time', 'tx_hash', 'asset'])
-            db.execute(stmt)
-            db.flush()
-            total += len(batch)
+            result = db.execute(stmt)
+            total_inserted += result.rowcount  # Accurate count from DB
 
-        logger.info(f"Upserted {total} whale alerts in chunks")
+        db.commit()  # Commit after all chunks
+        logger.info(f"Committed {total_inserted} whale alerts (attempted {len(alerts)} in chunks)")
     except Exception as e:
         db.rollback()
         logger.error(f"Error upserting whale alerts: {e}")
         raise
+
 
 def upsert_onchain_metrics(db: Session, metrics: List[OnchainMetric]):
     if not metrics:
@@ -181,12 +194,13 @@ def upsert_onchain_metrics(db: Session, metrics: List[OnchainMetric]):
     
     try:
         result = db.execute(stmt)
-        db.flush()
-        logger.info(f"Upserted {result.rowcount} onchain metrics")
+        db.commit()  # Commit
+        logger.info(f"Committed {result.rowcount} onchain metrics")
     except Exception as e:
-        logger.error(f"Upsert failed for onchain metrics: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         db.rollback()
+        logger.error(f"Upsert failed for onchain metrics: {str(e)} | Type: {type(e).__name__} | Full: {repr(e)}")
         raise
+
 
 def get_last_success(db: Session, pipeline: str):
     try:
@@ -196,9 +210,9 @@ def get_last_success(db: Session, pipeline: str):
         ).scalar_one_or_none()
         return job.last_success if job else (datetime.now(timezone.utc) - timedelta(hours=1))
     except Exception as e:
-        db.rollback()  
         logger.error(f"Error fetching last success for {pipeline}: {e}")
         return datetime.now(timezone.utc) - timedelta(hours=1)
+
 
 def update_ingestion_job(db: Session, job: IngestionJob):
     try:
@@ -207,11 +221,13 @@ def update_ingestion_job(db: Session, job: IngestionJob):
             details=job.details or {}
         )
         db.merge(job_model)
-        logger.info(f"Updated ingestion job for pipeline {job.pipeline}")
+        db.commit()  # Commit
+        logger.info(f"Committed ingestion job for pipeline {job.pipeline}")
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating ingestion job: {e}")
         raise
+
 
 def update_chain_state(db: Session, state: ChainState):
     try:
@@ -219,10 +235,12 @@ def update_chain_state(db: Session, state: ChainState):
             chain=state.chain, last_block=state.last_block, last_updated=state.last_updated
         )
         db.merge(chain_state)
-        logger.info(f"Updated chain state for {state.chain}")
+        db.commit()  # Commit
+        logger.info(f"Committed chain state for {state.chain}")
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating chain state: {e}")
+
 
 def upsert_ta_signals(db: Session, signals: List[TASignal]):
     if not signals:
@@ -253,12 +271,13 @@ def upsert_ta_signals(db: Session, signals: List[TASignal]):
             }
         )
         result = db.execute(stmt)
-        db.flush()
-        logger.info(f"Upserted {result.rowcount} TA snapshot rows")
+        db.commit()  # Commit
+        logger.info(f"Committed {result.rowcount} TA snapshot rows")
     except Exception as e:
         db.rollback()
         logger.error(f"Error upserting ta_signals: {e}")
         raise
+
 
 def insert_ta_signals_history(db: Session, signals: List[TASignalHistory]):
     if not signals:
@@ -288,8 +307,8 @@ def insert_ta_signals_history(db: Session, signals: List[TASignalHistory]):
             }
         )
         result = db.execute(stmt)
-        db.flush()
-        logger.info(f"Upserted {result.rowcount} TA history rows")
+        db.commit()  # Commit
+        logger.info(f"Committed {result.rowcount} TA history rows")
     except Exception as e:
         db.rollback()
         logger.error(f"Error inserting ta_signals_history: {e}")
