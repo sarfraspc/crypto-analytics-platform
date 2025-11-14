@@ -1,80 +1,215 @@
-from fastapi import APIRouter, HTTPException
-import logging
-from datetime import datetime
-import json
-
-from modules.agent.agent_client import call_mcp_tool
-from core.logging_config import setup_logging
 import asyncio
+import logging
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List
 
-from modules.dashboard.serializers import format_overview, format_portfolio
+from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import desc, select
+
+from core.database import get_timescale_db
+from core.logging_config import setup_logging
+from data.storage.models import WhaleAlert as WhaleAlertModel
+from modules.agent.agent_client import call_mcp_tool
+from modules.agent.backtester import PortfolioBacktester
 
 setup_logging()
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+router = APIRouter(tags=["Dashboard"])
 
-@router.get("/overview")
-async def get_dashboard_overview():
-    start_time = datetime.now()
-    request_id = f"dashboard_overview_{hash(str(start_time)) % 1000000}"
-    logger.info(f"[{request_id}] Request: overview")
+ALLOWED_WINDOWS = {"1h", "24h", "7d"}
+BACKTESTER = PortfolioBacktester()
+
+
+def _validate_symbol(symbol: str) -> str:
+    if not symbol or not symbol.isalnum():
+        raise HTTPException(status_code=400, detail="Symbol must be alphanumeric.")
+    return symbol.upper()
+
+
+def _shape_forecast(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"raw_text": payload}
+    return {
+        "model_used": payload.get("model_used", "sarimax_v3"),
+        "predicted_close": payload.get("predicted_close"),
+        "raw_text": payload.get("raw_text"),
+    }
+
+
+def _shape_sentiment(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"raw": payload}
+    aggregated = payload.get("aggregated", {})
+    return {
+        "top_sentiment": aggregated.get("top_sentiment") or aggregated.get("sentiment"),
+        "top_confidence": aggregated.get("top_confidence") or aggregated.get("confidence"),
+        "scores": aggregated.get("scores") or {
+            "bearish": aggregated.get("bearish_score"),
+            "bullish": aggregated.get("bullish_score"),
+            "neutral": aggregated.get("neutral_score"),
+        },
+        "sources": payload.get("sources"),
+    }
+
+
+def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"raw": payload}
+    return {
+        "whale_transactions": payload.get("whale_transactions"),
+        "inflow_usd": payload.get("inflow_usd"),
+        "outflow_usd": payload.get("outflow_usd"),
+        "market_pressure_index": payload.get("market_pressure_index"),
+        "dominant_flow": payload.get("dominant_flow"),
+    }
+
+
+async def _gather_overview(symbol: str, horizon_hours: int, window: str, k_docs: int):
+    tasks = {
+        "forecast": call_mcp_tool(
+            "crypto-sarimax-server",
+            "forecast_sarimax",
+            {"symbol": symbol, "horizon": horizon_hours},
+        ),
+        "sentiment": call_mcp_tool(
+            "crypto-sentiment-server",
+            "analyze_with_sources",
+            {
+                "query": f"Market sentiment for {symbol} from news, Reddit, and on-chain context",
+                "k": k_docs,
+                "include_sources": True,
+            },
+        ),
+        "onchain": call_mcp_tool(
+            "crypto-onchain-server",
+            "run_metrics_only",
+            {"symbol": symbol, "window": window},
+        ),
+    }
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    shaped = {}
+    for key, result in zip(tasks.keys(), results):
+        if isinstance(result, Exception):
+            logger.error("Dashboard %s task failed: %s", key, result)
+            shaped[key] = {"error": str(result)}
+        else:
+            shaped[key] = result
+    return shaped
+
+
+@router.get("/overview/{symbol}")
+async def get_dashboard_overview(
+    symbol: str,
+    horizon_days: int = Query(3, ge=1, le=30),
+    window: str = Query("24h", description="Lookback window for on-chain metrics."),
+    k_docs: int = Query(5, ge=1, le=20),
+):
+    sanitized_symbol = _validate_symbol(symbol)
+    if window not in ALLOWED_WINDOWS:
+        raise HTTPException(status_code=400, detail=f"window must be one of {sorted(ALLOWED_WINDOWS)}")
+
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+    horizon_hours = horizon_days * 24
+    logger.info(
+        "[%s] Dashboard overview: symbol=%s horizon_days=%s window=%s",
+        request_id,
+        sanitized_symbol,
+        horizon_days,
+        window,
+    )
+
+    shaped = await _gather_overview(sanitized_symbol, horizon_hours, window, k_docs)
+    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+    response = {
+        "request_id": request_id,
+        "symbol": sanitized_symbol,
+        "duration_ms": duration_ms,
+        "forecast": _shape_forecast(shaped.get("forecast", {})),
+        "sentiment": _shape_sentiment(shaped.get("sentiment", {})),
+        "onchain": _shape_onchain_metrics(shaped.get("onchain", {})),
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    return response
+
+
+@router.get("/backtest/{symbol}")
+async def get_backtest_summary(
+    symbol: str,
+    days: int = Query(30, ge=7, le=180, description="Backtest window in days."),
+):
+    sanitized_symbol = _validate_symbol(symbol)
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+    logger.info("[%s] Dashboard backtest: symbol=%s days=%s", request_id, sanitized_symbol, days)
 
     try:
-        # Aggregate from multiple MCPs in parallel
-        tasks = {
-            "agent": call_mcp_tool("crypto-agent-server", "get_agent_insight", {"symbol": "BTC", "question": "Quick overview"}),
-            "market_sentiment": call_mcp_tool("crypto-sentiment-server", "analyze_sentiment_batch", {"texts": ["global crypto market sentiment", "bitcoin ethereum trends"]}),
-            "whale_metrics": call_mcp_tool("crypto-onchain-server", "run_metrics_only", {"symbol": "BTC", "window": "24h"}),
-        }
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        backtest_result = await asyncio.to_thread(
+            BACKTESTER.run_hybrid_backtest,
+            sanitized_symbol,
+            days,
+            ["combined"],
+        )
+    except Exception as exc:
+        logger.error("[%s] Backtest failed: %s", request_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Backtest service unavailable.") from exc
 
-        # Handle partial failures
-        agent_result = results[0] if not isinstance(results[0], Exception) else {}
-        sent_result = results[1] if not isinstance(results[1], Exception) else {}
-        whale_result = results[2] if not isinstance(results[2], Exception) else {}
+    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    response = {
+        "request_id": request_id,
+        "symbol": sanitized_symbol,
+        "duration_ms": duration_ms,
+        "metrics": backtest_result.get("metrics") if isinstance(backtest_result, dict) else backtest_result,
+        "equity_curve": backtest_result.get("equity_curve") if isinstance(backtest_result, dict) else None,
+        "trades": backtest_result.get("trades") if isinstance(backtest_result, dict) else None,
+    }
+    return response
 
-        result = format_overview(agent_result, sent_result, whale_result)
 
-        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-        logger.info(f"[{request_id}] Completed in {duration_ms}ms")
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[{request_id}] Error aggregating dashboard: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Dashboard aggregation error; please retry.")
-
-@router.get("/portfolio")
-async def get_portfolio():
-    start_time = datetime.now()
-    request_id = f"dashboard_portfolio_{hash(str(start_time)) % 1000000}"
-    logger.info(f"[{request_id}] Request: portfolio")
-
-    semaphore = asyncio.Semaphore(3)  # Concurrency limit
-
-    async def limited_call(sym):
-        async with semaphore:
-            return await call_mcp_tool("crypto-agent-server", "get_agent_insight", {
-                "symbol": sym,
-                "question": "30-day report with backtest",
-                "options": json.dumps({"horizon": 30})
-            })
+@router.get("/whales/{symbol}")
+async def get_recent_whale_activity(
+    symbol: str,
+    limit: int = Query(20, ge=5, le=50, description="Number of recent whale alerts to return."),
+):
+    sanitized_symbol = _validate_symbol(symbol)
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+    logger.info("[%s] Whale feed: symbol=%s limit=%s", request_id, sanitized_symbol, limit)
 
     try:
-        symbols = ["BTC", "ETH"]
-        backtests = await asyncio.gather(*[limited_call(sym) for sym in symbols], return_exceptions=True)
+        with get_timescale_db() as session:
+            stmt = (
+                select(WhaleAlertModel)
+                .where(WhaleAlertModel.asset == sanitized_symbol)
+                .order_by(desc(WhaleAlertModel.time))
+                .limit(limit)
+            )
+            results = session.execute(stmt).scalars().all()
+    except Exception as exc:
+        logger.error("[%s] Whale fetch failed: %s", request_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to load whale alerts.") from exc
 
-        result = format_portfolio(backtests)
+    alerts: List[Dict[str, Any]] = []
+    for row in results:
+        alerts.append(
+            {
+                "time": row.time.isoformat() if row.time else None,
+                "tx_hash": row.tx_hash,
+                "chain": row.chain,
+                "from_address": row.from_address,
+                "to_address": row.to_address,
+                "asset": row.asset,
+                "amount": float(row.amount) if row.amount is not None else None,
+                "usd_value": float(row.usd_value) if row.usd_value is not None else None,
+            }
+        )
 
-        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-        logger.info(f"[{request_id}] Completed in {duration_ms}ms")
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[{request_id}] Error aggregating portfolio: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Portfolio aggregation error; please retry.")
+    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    return {
+        "request_id": request_id,
+        "symbol": sanitized_symbol,
+        "duration_ms": duration_ms,
+        "alerts": alerts,
+    }

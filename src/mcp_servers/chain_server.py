@@ -92,6 +92,7 @@ class OnchainMCP:
         chain = input_data.get('chain', 'ethereum')
         batch_size = input_data.get('batch_size', 100)
         threshold_usd = input_data.get('threshold_usd', 500000.0)
+        symbol = input_data.get('symbol', 'BTC')
 
         try:
             def execute_ingestion():
@@ -104,6 +105,12 @@ class OnchainMCP:
                         run_steps=['ingestion']
                     )
             result = await asyncio.to_thread(execute_ingestion)
+            # Ensure downstream caches are cleared even for manual ingestions
+            logger.info("Invalidating cache after ingestion for chain=%s symbol=%s", chain, symbol)
+            await asyncio.to_thread(self.cache.delete_by_pattern, f"{symbol}:*")
+            await asyncio.to_thread(self.cache.delete_by_pattern, "ohlcv_features:*")
+            await asyncio.to_thread(self.cache.delete_by_pattern, "strategy:*")
+
             result_str = json.dumps(result, default=str, indent=2)
             return CallToolResult(
                 content=[TextContent(
