@@ -138,7 +138,7 @@ def clean_hexbytes(obj: Any):
         return obj.hex()
     return obj
 
-def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd: float, block_timestamp: int) -> tuple[Optional[WhaleAlert], Set[str]]:
+def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd: float) -> tuple[Optional[WhaleAlert], Set[str]]:
     try:
         if len(log['topics']) < 3:
             logger.warning(f"Skipping malformed log (short topics): {log.get('transactionHash', 'unknown').hex() if hasattr(log.get('transactionHash'), 'hex') else 'unknown'}")
@@ -169,8 +169,14 @@ def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd:
         if value_usd < threshold_usd:
             return None, addresses
 
+        block_number = log['blockNumber']
+        block_data = w3.eth.get_block(block_number)
+        block_timestamp = block_data['timestamp']
+
         raw_log = clean_hexbytes(dict(log))
         
+        usd_value = Decimal(str(value_usd))
+
         alert = WhaleAlert(
             time=datetime.fromtimestamp(block_timestamp, tz=timezone.utc),
             tx_hash=log['transactionHash'].hex(),
@@ -178,6 +184,7 @@ def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd:
             from_address=from_addr,
             to_address=to_addr,
             amount=amount,  
+            usd_value=usd_value,
             asset=token_address,
             raw=raw_log
         )
@@ -204,6 +211,10 @@ def scan_eth_transfers(db: Session, batch_size: int = 100, threshold_usd: float 
 
         last_block = get_last_chain_block(db, 'ethereum')  
         current_block = w3.eth.block_number
+        lag = current_block - (last_block or 0)
+        if lag > 10000:  # >2 hours lag
+            batch_size = min(5000, lag // 10)  # Scale to 5k max, or 10% lag
+            logger.info(f"Lag {lag} blocks; scaling batch to {batch_size}")
         if last_block is None:
             last_block = current_block - 100
         if last_block >= current_block:
@@ -221,14 +232,11 @@ def scan_eth_transfers(db: Session, batch_size: int = 100, threshold_usd: float 
             update_chain_state(db, ChainState(chain='ethereum', last_block=end_block, last_updated=datetime.now(timezone.utc)))
             return {'whale_alerts': 0}
 
-        end_block_data = w3.eth.get_block(end_block)
-        block_timestamp = end_block_data['timestamp']
-
         alerts: List[WhaleAlert] = []
         unique_addrs: Set[str] = set()
 
         for log in logs:
-            alert, addrs = process_transfer_log(w3, prices, log, threshold_usd, block_timestamp)
+            alert, addrs = process_transfer_log(w3, prices, log, threshold_usd)
             if alert:
                 alerts.append(alert)
             unique_addrs.update(addrs)

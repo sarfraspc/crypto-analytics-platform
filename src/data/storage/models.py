@@ -50,6 +50,7 @@ class WhaleAlert(Base):
     from_address = Column(String)
     to_address = Column(String)
     amount = Column(Numeric)
+    usd_value = Column(Numeric)
     asset = Column(String, primary_key=True)
     raw = Column(JSON)
 

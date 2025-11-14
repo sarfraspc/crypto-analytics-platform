@@ -3,7 +3,7 @@ from typing import List
 from datetime import datetime, timedelta
 import nltk
 from sqlalchemy.orm import sessionmaker
-from src.data.storage.models import NewsArticle, RedditPost
+from data.storage.models import NewsArticle, RedditPost
 from sentence_transformers import SentenceTransformer
 from core.database import get_timescale_engine
 

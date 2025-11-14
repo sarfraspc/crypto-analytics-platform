@@ -1,6 +1,7 @@
+from io import StringIO
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 import redis
@@ -13,10 +14,11 @@ class RedisCache:
         self.client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
         self.expire_seconds = expire_seconds
 
-    def set_json(self, key: str, value: Any) -> None:
+    def set_json(self, key: str, value: Any, expire_seconds: Optional[int] = None) -> None:
         try:
-            self.client.set(key, json.dumps(value), ex=self.expire_seconds)
-            logger.debug(f"[Redis] Cached key={key} (expire={self.expire_seconds}s)")
+            ttl = expire_seconds if expire_seconds is not None else self.expire_seconds
+            self.client.set(key, json.dumps(value), ex=ttl)
+            logger.debug(f"[Redis] Cached key={key} (expire={ttl}s)")
         except Exception as e:
             logger.warning(f"[Redis] Failed to cache key={key}: {e}")
 
@@ -28,11 +30,12 @@ class RedisCache:
             logger.warning(f"[Redis] Failed to fetch key={key}: {e}")
             return None
 
-    def set_dataframe(self, key: str, df: pd.DataFrame):
+    def set_dataframe(self, key: str, df: pd.DataFrame, expire_seconds: Optional[int] = None):
         try:
+            ttl = expire_seconds if expire_seconds is not None else self.expire_seconds
             payload = df.to_json(orient="split", date_format="iso")
-            self.client.set(key, payload, ex=self.expire_seconds)
-            logger.debug(f"[Redis] Cached DataFrame key={key}")
+            self.client.set(key, payload, ex=ttl)
+            logger.debug(f"[Redis] Cached DataFrame key={key} (expire={ttl}s)")
         except Exception as e:
             logger.warning(f"[Redis] Failed to cache DataFrame key={key}: {e}")
 
@@ -41,6 +44,8 @@ class RedisCache:
             data = self.client.get(key)
             if not data:
                 return None
+            if isinstance(data, str):
+                data = StringIO(data)
             return pd.read_json(data, orient="split")
         except Exception as e:
             logger.warning(f"[Redis] Failed to fetch DataFrame key={key}: {e}")
@@ -54,6 +59,14 @@ class RedisCache:
                 logger.debug(f"[Redis] Deleted {len(keys_to_delete)} keys matching pattern={pattern}")
         except Exception as e:
             logger.warning(f"[Redis] Failed to delete keys with pattern={pattern}: {e}")
+
+    def delete(self, key: str):
+        """Delete a cache key safely."""
+        try:
+            return self.client.delete(key)
+        except Exception as e:
+            logger.warning(f"Failed to delete cache key {key}: {e}")
+            return 0
 
     def get_stats(self, pattern: str = "*"):
         try:

@@ -5,7 +5,7 @@ from typing import Dict, Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 from sqlalchemy import types as satypes
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from core.database import get_timescale_engine
@@ -39,14 +39,16 @@ class CoinPreprocessor:
         global_scaler_name: str = "scaler_global.pkl",
         default_target_freq: str = "D",
         use_cache: bool = True,
-        cache_expire: int = 600,
+        cache_expire: int = 3600,  # Default for less volatile data
     ):
         self.table = table
         self.engine = engine or get_timescale_engine()
+        logger.info(f"[PREPROCESSOR] Engine created with URL: {self.engine.url}")  # NEW: Log URL at init
         self.scaler_dir = Path(scaler_dir)
         self.global_scaler_name = global_scaler_name
         self.default_target_freq = default_target_freq
         self.cache = RedisCache(expire_seconds=cache_expire) if use_cache else None
+        self.volatile_ttl = 300  # 5 minutes for volatile data
 
     def get_coin_start(self, symbol: str, exchange: str = "binance", interval: str = "1h"):
         Session = sessionmaker(bind=self.engine)
@@ -125,7 +127,7 @@ class CoinPreprocessor:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
         if self.cache:
-            self.cache.set_dataframe(cache_key, df)
+            self.cache.set_dataframe(cache_key, df, expire_seconds=self.volatile_ttl)
         return df
 
     def preprocess(
@@ -189,9 +191,10 @@ class CoinPreprocessor:
                         interval: str = "1h", target_freq: str = "D",
                         refit_scaler: bool = False):
         if self.cache:
-            logger.info("Invalidating cache for symbol %s", symbol.upper())
+            logger.info("Invalidating cache for symbol %s and global keys", symbol.upper())
             self.cache.delete_by_pattern(f"ohlcv:{symbol.upper()}:*")
             self.cache.delete_by_pattern(f"ohlcv_features:{symbol.upper()}:*")
+            self.cache.delete_by_pattern("strategy:*")
 
         freq_type = "D" if str(target_freq).upper().startswith("D") else "H"
         windows = DEFAULT_FEATURE_WINDOWS[freq_type]
@@ -298,20 +301,35 @@ class CoinPreprocessor:
 
         Session = sessionmaker(bind=self.engine)
         with Session() as session:
+            # NEW LOGS
+            logger.info(f"[PREPROCESSOR] Engine URL in load: {self.engine.url}")  # Full URL (redact in prod)
+            logger.info(f"[PREPROCESSOR] Query filters: symbol={symbol.upper()}, exchange={exchange}, interval={interval}")
+            
             query = session.query(OHLCVFeature).filter(
                 OHLCVFeature.symbol == symbol.upper(),
                 OHLCVFeature.exchange == exchange,
                 OHLCVFeature.interval == interval
             )
-
             if start is not None:
                 query = query.filter(OHLCVFeature.time >= pd.to_datetime(start))
             if end is not None:
                 query = query.filter(OHLCVFeature.time <= pd.to_datetime(end))
-            
             query = query.order_by(OHLCVFeature.time.asc())
 
+            # Compiled SQL log
+            compiled_sql = str(query.statement.compile(dialect=self.engine.dialect, compile_kwargs={"literal_binds": True}))
+            logger.info(f"[PREPROCESSOR] Compiled SQL: {compiled_sql[:200]}...")
+
+            # Raw count
+            raw_count = session.execute(select(func.count()).select_from(query.subquery())).scalar()
+            logger.info(f"[PREPROCESSOR] Raw row count: {raw_count}")
+
             df = pd.read_sql(query.statement, self.engine, parse_dates=['time'])
+            logger.info(f"[PREPROCESSOR] pd.read_sql rows: {len(df)}")
+
+            if df.empty:
+                logger.error(f"[PREPROCESSOR] Empty DF - check engine connect or filters. Raw count was {raw_count}")
+                raise ValueError(f"No features found for {symbol}/{exchange}/{interval} (raw_count: {raw_count})")
 
         if df.empty:
             raise ValueError(f"No features found for {symbol}/{exchange}/{interval}")
@@ -321,6 +339,6 @@ class CoinPreprocessor:
         df = df.set_index(pd.DatetimeIndex(df['time'])).drop(columns=['time']).sort_index()
 
         if self.cache:
-            self.cache.set_dataframe(cache_key, df)
+            self.cache.set_dataframe(cache_key, df, expire_seconds=self.volatile_ttl)
 
         return df
