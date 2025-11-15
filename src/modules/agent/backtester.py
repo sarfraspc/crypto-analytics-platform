@@ -2,19 +2,27 @@
 Merged backtester: Agent 1 simulation/MLflow + Agent 2 hybrid signals/metrics (Sharpe/Sortino).
 """
 
-import logging
-import mlflow
-import pandas as pd
-import numpy as np
 import asyncio
+import logging
+import os
 from typing import Dict, Any, List
+
+import numpy as np
+import pandas as pd
+import requests
 from sqlalchemy import select, func
+
+try:
+    import mlflow
+except Exception:  # pragma: no cover - MLflow optional dependency
+    mlflow = None
+
 from core.database import get_timescale_db
-from modules.sentiment.rag.embedder import Embedder  # For historical sentiment
 from data.storage.models import TASignalHistory  # Historical TA
 from data.validation import OnchainMetric  # For corr
-from modules.sentiment.models.sentiment_infer import analyze_sentiment_batch  # Threaded
 from modules.agent.strategy_utils import hybrid_signal  # For historical mock
+from modules.sentiment.models.sentiment_infer import analyze_sentiment_batch  # Threaded
+from modules.sentiment.rag.embedder import Embedder  # For historical sentiment
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +45,44 @@ def calculate_metrics(returns: pd.Series) -> Dict[str, float]:
         "trades_count": int((returns.diff() != 0).sum())
     }
 
+def _mlflow_server_available() -> bool:
+    if mlflow is None:
+        return False
+    try:
+        tracking_uri = mlflow.get_tracking_uri() or ""
+        if tracking_uri.startswith("file:"):
+            return True
+        requests.get(f"{tracking_uri.rstrip('/')}/api/2.0/mlflow/experiments/list", timeout=1)
+        return True
+    except Exception:
+        return False
+
+
 class PortfolioBacktester:
-    def __init__(self, initial_capital: float = 10000, experiment: str = "crypto_backtest_v2"):
+    def __init__(
+        self,
+        initial_capital: float = 10000,
+        experiment: str = "crypto_backtest_v2",
+        enable_mlflow: bool | None = None,
+    ):
         self.initial_capital = initial_capital
-        mlflow.set_experiment(experiment)
+        env_toggle = os.getenv("ENABLE_MLFLOW", "").lower()
+        disable_toggle = os.getenv("DISABLE_MLFLOW", "").lower() in {"1", "true", "yes"}
+
+        if enable_mlflow is None:
+            enable_mlflow = (mlflow is not None) and env_toggle not in {"0", "false"} and not disable_toggle
+
+        if enable_mlflow and _mlflow_server_available() and os.getenv("CI") != "true":
+            self.enable_mlflow = True
+            try:
+                mlflow.set_experiment(experiment)
+                logger.info("MLflow enabled for backtester.")
+            except Exception as exc:  # pragma: no cover - server issues
+                self.enable_mlflow = False
+                logger.warning("Disabling MLflow logging; failed to set experiment: %s", exc)
+        else:
+            self.enable_mlflow = False
+            logger.info("MLflow disabled (server not running or env disabled).")
 
     async def _historical_mock(self, symbol: str, df: pd.DataFrame, cats: List[str] = None) -> tuple:
         """
@@ -126,19 +168,22 @@ class PortfolioBacktester:
         returns = pos_df["portfolio_value"].pct_change().dropna()
         metrics = calculate_metrics(returns)
 
-        # Log to MLflow
-        with mlflow.start_run(run_name=f"v2_walk_forward_backtest_{symbol}_{days}d"):
-            mlflow.log_params({
-                "symbol": symbol, 
-                "days": days, 
-                "initial_capital": self.initial_capital,
-                "rolling_window": rolling_window
-            })
-            mlflow.log_metrics(metrics)
-            
-            # Log positions as artifact
-            pos_df.to_csv("positions.csv")
-            mlflow.log_artifact("positions.csv", "positions_log")
+        if self.enable_mlflow:
+            try:
+                with mlflow.start_run(run_name=f"v2_walk_forward_backtest_{symbol}_{days}d"):
+                    mlflow.log_params({
+                        "symbol": symbol,
+                        "days": days,
+                        "initial_capital": self.initial_capital,
+                        "rolling_window": rolling_window,
+                    })
+                    mlflow.log_metrics(metrics)
+
+                    # Log positions as artifact
+                    pos_df.to_csv("positions.csv")
+                    mlflow.log_artifact("positions.csv", "positions_log")
+            except Exception as exc:
+                logger.warning("MLflow logging skipped due to error: %s", exc)
 
         logger.info(f"Walk-forward backtest complete for {symbol}. Return: {metrics.get('total_return_pct', 0):.2f}%, Sharpe: {metrics.get('sharpe_ratio', 0):.2f}")
         return {"metrics": metrics, "positions": pos_df, "signals": signals_over_time}
