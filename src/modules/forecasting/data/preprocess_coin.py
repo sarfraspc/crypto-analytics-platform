@@ -19,8 +19,6 @@ from modules.forecasting.data.preprocess_utils import (
     load_scaler_with_meta,
     _scaler_path_for,
 )
-from utils.cache import RedisCache
-
 logger = logging.getLogger(__name__)
 
 
@@ -38,8 +36,6 @@ class CoinPreprocessor:
         scaler_dir: Union[str, Path] = "src/modules/forecasting/models/scalers",
         global_scaler_name: str = "scaler_global.pkl",
         default_target_freq: str = "D",
-        use_cache: bool = True,
-        cache_expire: int = 3600,  # Default for less volatile data
     ):
         self.table = table
         self.engine = engine or get_timescale_engine()
@@ -47,8 +43,6 @@ class CoinPreprocessor:
         self.scaler_dir = Path(scaler_dir)
         self.global_scaler_name = global_scaler_name
         self.default_target_freq = default_target_freq
-        self.cache = RedisCache(expire_seconds=cache_expire) if use_cache else None
-        self.volatile_ttl = 300  # 5 minutes for volatile data
 
     def get_coin_start(self, symbol: str, exchange: str = "binance", interval: str = "1h"):
         Session = sessionmaker(bind=self.engine)
@@ -91,13 +85,6 @@ class CoinPreprocessor:
                     interval,
                 )
 
-            cache_key = f"ohlcv:{base_symbol}:{exchange}:{interval}:{lookback_days}"
-            if self.cache:
-                cached_df = self.cache.get_dataframe(cache_key)
-                if cached_df is not None:
-                    logger.info("Loaded %s from Redis cache", cache_key)
-                    return cached_df
-
             start_ts = pd.Timestamp.utcnow() - pd.Timedelta(days=lookback_days)
             
             query = session.query(OHLCV.time, OHLCV.open, OHLCV.high, OHLCV.low, OHLCV.close, OHLCV.volume).filter(
@@ -125,9 +112,6 @@ class CoinPreprocessor:
 
         for c in ["open", "high", "low", "close", "volume"]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-
-        if self.cache:
-            self.cache.set_dataframe(cache_key, df, expire_seconds=self.volatile_ttl)
         return df
 
     def preprocess(
@@ -190,12 +174,6 @@ class CoinPreprocessor:
     def update_features(self, symbol: str, exchange: str = "binance",
                         interval: str = "1h", target_freq: str = "D",
                         refit_scaler: bool = False):
-        if self.cache:
-            logger.info("Invalidating cache for symbol %s and global keys", symbol.upper())
-            self.cache.delete_by_pattern(f"ohlcv:{symbol.upper()}:*")
-            self.cache.delete_by_pattern(f"ohlcv_features:{symbol.upper()}:*")
-            self.cache.delete_by_pattern("strategy:*")
-
         freq_type = "D" if str(target_freq).upper().startswith("D") else "H"
         windows = DEFAULT_FEATURE_WINDOWS[freq_type]
         all_windows = windows['sma'] + windows['ema'] + windows['vol'] + (windows.get('z_score', 30),)
@@ -291,14 +269,6 @@ class CoinPreprocessor:
             return df_proc
     
     def load_features_series(self, symbol: str, exchange: str = 'binance', interval: str = '1h', start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
-        params = {"symbol": symbol.upper(), "exchange": exchange, "interval": interval}
-        cache_key = f"ohlcv_features:{symbol.upper()}:{exchange}:{interval}:{start.isoformat() if start else 'None'}:{end.isoformat() if end else 'None'}"
-        if self.cache:
-            cached_df = self.cache.get_dataframe(cache_key)
-            if cached_df is not None:
-                logger.info("Loaded %s from Redis cache", cache_key)
-                return cached_df
-
         Session = sessionmaker(bind=self.engine)
         with Session() as session:
             # NEW LOGS
@@ -337,8 +307,4 @@ class CoinPreprocessor:
         df = normalize_time(df, col="time")
 
         df = df.set_index(pd.DatetimeIndex(df['time'])).drop(columns=['time']).sort_index()
-
-        if self.cache:
-            self.cache.set_dataframe(cache_key, df, expire_seconds=self.volatile_ttl)
-
         return df
