@@ -1,0 +1,150 @@
+import { useEffect, useState } from 'react'
+import { Info, Target } from 'lucide-react'
+import { useTheme } from '../hooks/useTheme'
+import { getTechnicalPatterns } from '../services/api'
+import Loader from './Loader'
+import ErrorBox from './ErrorBox'
+
+const confidenceWidth = (value) => {
+  if (value === null || value === undefined) return 0
+  return Math.min(Math.max(value, 0), 1) * 100
+}
+
+const PatternsTable = () => {
+  const { isDark } = useTheme()
+  const [patterns, setPatterns] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let isMounted = true
+    const fetchData = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await getTechnicalPatterns()
+        if (isMounted) {
+          const rawPatterns = result.patterns
+          let safePatterns = []
+          if (Array.isArray(rawPatterns)) {
+            safePatterns = rawPatterns
+          } else if (rawPatterns && typeof rawPatterns === 'object') {
+            safePatterns = Object.entries(rawPatterns).map(([symbol, details]) => ({
+              symbol,
+              ...(typeof details === 'object' ? details : { pattern: String(details) }),
+            }))
+          }
+
+          console.log('Patterns from API:', rawPatterns)
+          console.log('Safe patterns:', safePatterns)
+          setPatterns(safePatterns)
+        }
+      } catch (err) {
+        if (isMounted) setError(err.message ?? 'Unable to load patterns')
+      } finally {
+        if (isMounted) setLoading(false)
+      }
+    }
+
+    fetchData()
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  return (
+    <div
+      className={`rounded-xl p-6 shadow-lg ${
+        isDark
+          ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700'
+          : 'bg-white border border-gray-200'
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-6">
+        <Target className="text-indigo-500" size={24} />
+        <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+          Technical Patterns
+        </h3>
+      </div>
+
+      {loading && <Loader label="Scanning market patterns" />}
+      {!loading && error && <ErrorBox message={error} />}
+      {!loading && !error && (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+                {['Symbol', 'Pattern', 'Confidence', 'Details'].map((heading) => (
+                  <th
+                    key={heading}
+                    className={`text-left py-3 px-4 text-xs font-semibold ${
+                      isDark ? 'text-gray-400' : 'text-gray-600'
+                    }`}
+                  >
+                    {heading}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {patterns.map((pattern, index) => (
+                <tr
+                  key={`${pattern.symbol}-${pattern.pattern}-${index}`}
+                  className={`border-b ${isDark ? 'border-slate-700' : 'border-gray-200'} ${
+                    isDark ? 'hover:bg-slate-700/30' : 'hover:bg-gray-50'
+                  } transition-colors`}
+                >
+                  <td className={`py-3 px-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    <span className="font-medium">{pattern.symbol}</span>
+                  </td>
+                  <td className={`py-3 px-4 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    {pattern.pattern || pattern.name}
+                  </td>
+                  <td className="py-3 px-4">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full"
+                        style={{
+                          width: `${confidenceWidth(
+                            pattern.confidence ?? (pattern.rsi ? pattern.rsi / 100 : 0.5),
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <span className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                      {Math.round(
+                        (pattern.confidence ?? (pattern.rsi ? pattern.rsi / 100 : 0.5)) * 100,
+                      )}
+                      %
+                    </span>
+                  </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="group relative">
+                      <Info size={16} className={`${isDark ? 'text-gray-400' : 'text-gray-500'} cursor-help`} />
+                      <div
+                        className={`absolute bottom-full right-0 mb-2 w-64 p-3 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 ${
+                          isDark
+                            ? 'bg-slate-900 border border-slate-700 text-gray-300'
+                            : 'bg-white border border-gray-200 text-gray-700'
+                        }`}
+                      >
+                        <p className="text-xs">{pattern.explanation || pattern.details || 'Pattern detected'}</p>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {patterns.length === 0 && (
+            <p className="text-sm text-center text-gray-500 py-6">No patterns detected at the moment.</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default PatternsTable
