@@ -13,6 +13,7 @@ const SentimentGauge = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [expanded, setExpanded] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState(null)
 
   useEffect(() => {
     let isMounted = true
@@ -23,6 +24,7 @@ const SentimentGauge = () => {
         const result = await getSentimentAnalysis(symbol)
         if (isMounted) {
           setData(result)
+          setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
         }
       } catch (err) {
         if (isMounted) setError(err.message ?? 'Unable to load sentiment data')
@@ -48,6 +50,10 @@ const SentimentGauge = () => {
   const score = topScore
   const confidence = aggregated.top_confidence ?? score ?? 0.5
   const sources = Array.isArray(data?.sources) ? data.sources : []
+  const formattedUpdated =
+    lastUpdated && !Number.isNaN(new Date(lastUpdated).getTime())
+      ? new Date(lastUpdated).toLocaleString()
+      : null
 
   const gaugeColor = useMemo(() => {
     if (score > 0.6) return 'text-green-500'
@@ -63,22 +69,29 @@ const SentimentGauge = () => {
           : 'bg-white border border-gray-200'
       }`}
     >
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-3">
         <div className="flex items-center gap-2">
           <Activity className="text-indigo-500" size={24} />
           <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
             Market Sentiment
           </h3>
         </div>
-        <button
-          type="button"
-          onClick={() => setExpanded((prev) => !prev)}
-          className={`p-2 rounded-lg transition-all ${
-            isDark ? 'hover:bg-slate-700' : 'hover:bg-gray-100'
-          }`}
-        >
-          {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-        </button>
+        <div className="flex items-center gap-3">
+          {formattedUpdated && (
+            <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              Last updated {formattedUpdated}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            className={`p-2 rounded-lg transition-all ${
+              isDark ? 'hover:bg-slate-700' : 'hover:bg-gray-100'
+            }`}
+          >
+            {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+        </div>
       </div>
 
       {loading && <Loader label="Analyzing sentiment" />}

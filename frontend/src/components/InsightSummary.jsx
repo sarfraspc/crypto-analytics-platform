@@ -13,6 +13,7 @@ const InsightSummary = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const isMountedRef = useRef(true)
+  const [lastUpdated, setLastUpdated] = useState(null)
 
   const fetchSummary = useCallback(async () => {
     setLoading(true)
@@ -21,6 +22,7 @@ const InsightSummary = () => {
       const result = await getInsightSummary(symbol)
       if (isMountedRef.current) {
         setData(result)
+        setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -81,6 +83,11 @@ const InsightSummary = () => {
     return result
   }, [data])
 
+  const formattedUpdated =
+    lastUpdated && !Number.isNaN(new Date(lastUpdated).getTime())
+      ? new Date(lastUpdated).toLocaleString()
+      : null
+
   return (
     <div
       className={`rounded-xl p-6 shadow-lg ${
@@ -124,6 +131,12 @@ const InsightSummary = () => {
             </span>
           ))}
         </div>
+      )}
+
+      {formattedUpdated && (
+        <p className={`mt-4 text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+          Last updated {formattedUpdated}
+        </p>
       )}
     </div>
   )
