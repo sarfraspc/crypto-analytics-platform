@@ -188,6 +188,19 @@ def generate_ta_signal(symbol: str, exchange: str = "binance", interval: str = "
 
         signal, explanation = _generate_signal(rsi, macd_hist, pattern, pattern_direction)
 
+        confidence = 0.5
+        if macd_hist is not None:
+            abs_macd = abs(macd_hist)
+            if abs_macd > 1:
+                confidence += 0.3
+            elif abs_macd > 0.01:
+                confidence += 0.15
+        if rsi is not None and (rsi < 30 or rsi > 70):
+            confidence += 0.2
+        if pattern and pattern != "none":
+            confidence += 0.25
+        confidence = min(1.0, confidence)
+
         result = {
             "symbol": symbol,
             "exchange": exchange,
@@ -197,7 +210,8 @@ def generate_ta_signal(symbol: str, exchange: str = "binance", interval: str = "
             "macd_hist": float(macd_hist) if not pd.isna(macd_hist) else None,
             "pattern": pattern,
             "signal": signal,
-            "explanation": explanation
+            "explanation": explanation,
+            "confidence": confidence,
         }
 
         ta_signal = TASignal(
