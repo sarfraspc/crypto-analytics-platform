@@ -1,17 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { TrendingUp } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
 import { useSymbol } from '../hooks/useSymbol'
 import { getPriceForecast } from '../services/api'
 import Loader from './Loader'
 import ErrorBox from './ErrorBox'
-
-const formatDate = (value) => {
-  if (!value) return ''
-  const date = new Date(value)
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
 
 const ForecastChart = () => {
   const { isDark } = useTheme()
@@ -30,7 +24,7 @@ const ForecastChart = () => {
       try {
         const result = await getPriceForecast(symbol, { horizonDays: HORIZON_DAYS })
         if (!isMounted) return
-        const normalizedPoints = (result.forecast_points || []).filter((point, idx) => {
+        const normalizedPoints = (result.forecast_points || []).filter((point) => {
           const value = Number(point.predicted_close)
           const isHorizonFlag = result.horizon_hours && value === result.horizon_hours
           return Number.isFinite(value) && !isHorizonFlag
@@ -57,22 +51,182 @@ const ForecastChart = () => {
     }
   }, [symbol])
 
-  const chartData = useMemo(
-    () =>
-      points.map((point, index) => ({
-        id: index,
-        date: formatDate(point.timestamp) || `T+${index + 1}h`,
-        predicted: Number(point.predicted_close) || null,
-      })),
-    [points],
-  )
+  const chartData = useMemo(() => {
+    if (points.length === 0) return []
+
+    // Group hourly points into 6-hour candles for better visualization
+    const candleInterval = 6 // hours per candle
+    const candles = []
+    
+    for (let i = 0; i < points.length; i += candleInterval) {
+      const candlePoints = points.slice(i, i + candleInterval)
+      if (candlePoints.length === 0) continue
+
+      const prices = candlePoints.map(p => Number(p.predicted_close))
+      const open = prices[0]
+      const close = prices[prices.length - 1]
+      const high = Math.max(...prices)
+      const low = Math.min(...prices)
+      
+      const timestamp = new Date(candlePoints[0].timestamp)
+      const label = timestamp.toLocaleDateString(undefined, { 
+        month: 'short', 
+        day: 'numeric',
+        hour: '2-digit'
+      })
+
+      candles.push({
+        timestamp: candlePoints[0].timestamp,
+        label,
+        open,
+        close,
+        high,
+        low,
+        isPositive: close >= open,
+        lowHigh: [low, high]
+      })
+    }
+
+    return candles
+  }, [points])
+
+  // Calculate dynamic Y-axis domain to zoom into price range
+  const yAxisDomain = useMemo(() => {
+    if (chartData.length === 0) return ['auto', 'auto']
+    
+    const allPrices = chartData.flatMap(d => [d.high, d.low])
+    const min = Math.min(...allPrices)
+    const max = Math.max(...allPrices)
+    const range = max - min
+    
+    // Zoom in based on the price range
+    let paddingPercent
+    if (range < 1) {
+      paddingPercent = 5 // Very small movements: 5x zoom
+    } else if (range < 10) {
+      paddingPercent = 2 // Small movements: 2x zoom
+    } else if (range < 100) {
+      paddingPercent = 0.5 // Medium movements
+    } else {
+      paddingPercent = 0.2 // Large movements
+    }
+    
+    const padding = Math.max(range * paddingPercent, max * 0.0001)
+    
+    return [
+      Number((min - padding).toFixed(2)),
+      Number((max + padding).toFixed(2))
+    ]
+  }, [chartData])
 
   const headline = useMemo(() => {
     if (!meta?.lastPoint) return null
     const value = Number(meta.lastPoint.predicted_close)
     if (Number.isNaN(value)) return null
-    return value.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+    return value.toLocaleString(undefined, { 
+      style: 'currency', 
+      currency: 'USD', 
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2 
+    })
   }, [meta])
+
+  // Custom candlestick renderer
+  const Candlestick = (props) => {
+    const { x, y, width, height, payload } = props
+    if (!payload) return null
+
+    const { high, low, open, close } = payload
+    const isPositive = close >= open
+    const color = isPositive ? '#10b981' : '#ef4444'
+    
+    // Calculate Y positions
+    const priceRange = high - low || 0.01
+    const yHigh = y
+    const yLow = y + height
+    const yOpen = y + ((high - open) / priceRange) * height
+    const yClose = y + ((high - close) / priceRange) * height
+    
+    const wickX = x + width / 2
+    const bodyTop = Math.min(yOpen, yClose)
+    const bodyBottom = Math.max(yOpen, yClose)
+    const bodyHeight = Math.max(bodyBottom - bodyTop, 1)
+
+    return (
+      <g>
+        {/* Wick line */}
+        <line
+          x1={wickX}
+          y1={yHigh}
+          x2={wickX}
+          y2={yLow}
+          stroke={color}
+          strokeWidth={1}
+        />
+        {/* Candle body */}
+        <rect
+          x={x + width * 0.2}
+          y={bodyTop}
+          width={width * 0.6}
+          height={bodyHeight}
+          fill={color}
+          stroke={color}
+        />
+      </g>
+    )
+  }
+
+  const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload?.[0]) return null
+    
+    const data = payload[0].payload
+    const change = data.close - data.open
+    const changePercent = ((change / data.open) * 100).toFixed(2)
+    
+    return (
+      <div
+        className={`rounded-lg border px-3 py-2 shadow-xl ${
+          isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'
+        }`}
+      >
+        <p className={`text-xs font-semibold mb-2 ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
+          {data.label}
+        </p>
+        <div className="space-y-1 text-xs">
+          <div className="flex justify-between gap-4">
+            <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Open:</span>
+            <span className={`font-mono ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
+              ${data.open.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>High:</span>
+            <span className={`font-mono ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
+              ${data.high.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Low:</span>
+            <span className={`font-mono ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
+              ${data.low.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Close:</span>
+            <span className={`font-mono ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
+              ${data.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+          <div className={`flex justify-between gap-4 pt-1 mt-1 border-t ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+            <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Change:</span>
+            <span className={`font-mono font-semibold ${data.isPositive ? 'text-green-500' : 'text-red-500'}`}>
+              {data.isPositive ? '+' : ''}{change.toFixed(2)} ({changePercent}%)
+            </span>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -95,11 +249,13 @@ const ForecastChart = () => {
               Model: {meta.model || 'SARIMAX'}
             </p>
             {headline && (
-              <p className={`text-lg font-bold ${isDark ? 'text-green-400' : 'text-green-600'}`}>{headline}</p>
+              <p className={`text-lg font-bold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                {headline}
+              </p>
             )}
             {meta.generatedAt && (
               <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                Updated {new Date(meta.generatedAt).toLocaleString()}
+                Last updated {new Date(meta.generatedAt).toLocaleString()}
               </p>
             )}
           </div>
@@ -109,30 +265,61 @@ const ForecastChart = () => {
       {loading && <Loader label="Loading forecast" />}
       {!loading && error && <ErrorBox message={error} />}
       {!loading && !error && chartData.length > 0 && (
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={chartData}>
+        <ResponsiveContainer width="100%" height={400}>
+          <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 40, left: 10 }}>
             <defs>
-              <linearGradient id="colorPredicted" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3} />
+              <linearGradient id="volumeGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.2} />
                 <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e5e7eb'} />
-            <XAxis dataKey="date" stroke={isDark ? '#94a3b8' : '#6b7280'} />
-            <YAxis stroke={isDark ? '#94a3b8' : '#6b7280'} />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: isDark ? '#1e293b' : '#ffffff',
-                border: `1px solid ${isDark ? '#334155' : '#e5e7eb'}`,
-                borderRadius: '8px',
-              }}
+            <CartesianGrid 
+              strokeDasharray="3 3" 
+              stroke={isDark ? '#334155' : '#e5e7eb'} 
+              vertical={false}
             />
-            <Area type="monotone" dataKey="predicted" stroke="#8b5cf6" fill="url(#colorPredicted)" strokeWidth={2} />
-          </AreaChart>
+            <XAxis 
+              dataKey="label"
+              stroke={isDark ? '#94a3b8' : '#6b7280'}
+              style={{ fontSize: '11px' }}
+              angle={-45}
+              textAnchor="end"
+              height={80}
+              interval="preserveStartEnd"
+            />
+            <YAxis 
+              domain={yAxisDomain}
+              stroke={isDark ? '#94a3b8' : '#6b7280'}
+              style={{ fontSize: '11px' }}
+              width={85}
+              tickFormatter={(value) => 
+                `$${Number(value).toLocaleString(undefined, { 
+                  minimumFractionDigits: 2, 
+                  maximumFractionDigits: 2 
+                })}`
+              }
+            />
+            <Tooltip content={<CustomTooltip />} />
+            <Bar 
+              dataKey="close" 
+              shape={<Candlestick />}
+            />
+            <Line 
+              type="monotone" 
+              dataKey="close"
+              stroke="#8b5cf6"
+              strokeWidth={1.5}
+              dot={false}
+              strokeDasharray="3 3"
+              strokeOpacity={0.4}
+            />
+          </ComposedChart>
         </ResponsiveContainer>
       )}
       {!loading && !error && chartData.length === 0 && (
-        <div className={`rounded-lg border px-4 py-3 text-sm ${isDark ? 'border-slate-700 text-gray-300' : 'border-gray-200 text-gray-600'}`}>
+        <div className={`rounded-lg border px-4 py-3 text-sm ${
+          isDark ? 'border-slate-700 text-gray-300' : 'border-gray-200 text-gray-600'
+        }`}>
           <p className="font-medium mb-2">No valid forecast data available.</p>
           <p className="text-xs">
             The forecast service is currently returning data that doesn't meet display criteria.

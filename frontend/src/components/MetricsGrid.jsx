@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowDownRight, ArrowUpRight, BarChart3, Minus } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
-import { useSymbol } from '../hooks/useSymbol'
 import { getOnChainMetrics } from '../services/api'
 import Loader from './Loader'
 import ErrorBox from './ErrorBox'
@@ -24,11 +23,12 @@ const MetricCard = ({ title, value, trend, isDark }) => {
   const isNA = value === 'N/A'
   return (
     <div
-      className={`rounded-xl p-4 shadow-lg ${
+      className={`rounded-xl p-4 shadow-lg flex flex-col h-full ${
         isDark ? 'bg-slate-900/40 border border-slate-700' : 'bg-white border border-gray-200'
       }`}
     >
       <p className={`text-xs font-medium mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{title}</p>
+      <div className="flex-grow" />
       <div className="flex items-end justify-between">
         <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
           {isNA ? <span className="text-sm text-gray-400 dark:text-gray-500">N/A</span> : value}
@@ -44,7 +44,6 @@ const MetricCard = ({ title, value, trend, isDark }) => {
 
 const MetricsGrid = () => {
   const { isDark } = useTheme()
-  const { symbol } = useSymbol()
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -54,7 +53,7 @@ const MetricsGrid = () => {
     setLoading(true)
     setError(null)
     try {
-      const result = await getOnChainMetrics(symbol)
+      const result = await getOnChainMetrics()
       setMetrics(result.metrics || {})
       setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
     } catch (err) {
@@ -62,7 +61,7 @@ const MetricsGrid = () => {
     } finally {
       setLoading(false)
     }
-  }, [symbol])
+  }, [])
 
   useEffect(() => {
     fetchMetrics()
@@ -143,7 +142,7 @@ const MetricsGrid = () => {
 
   return (
     <div
-      className={`rounded-xl p-6 shadow-lg ${
+      className={`rounded-xl p-6 shadow-lg flex flex-col flex-grow ${
         isDark
           ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700'
           : 'bg-white border border-gray-200'
@@ -166,7 +165,7 @@ const MetricsGrid = () => {
       {loading && <Loader label="Fetching on-chain data" />}
       {!loading && error && <ErrorBox message={error} onRetry={handleRetry} />}
       {!loading && !error && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 grid-rows-3 gap-4 flex-grow">
           {cards.map((card) => (
             <MetricCard key={card.title} {...card} isDark={isDark} />
           ))}
