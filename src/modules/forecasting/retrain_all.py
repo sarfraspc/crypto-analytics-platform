@@ -1,17 +1,30 @@
+import asyncio
 import logging
 import argparse
 from typing import List
 from pathlib import Path
 
+import importlib.util
 import pandas as pd
 
-from core.database import get_timescale_engine
+from sqlalchemy import func
+from sqlalchemy.orm import sessionmaker
+
+from core.database import get_timescale_engine, get_metadata_db, get_timescale_db
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
 from modules.forecasting.models.sarimax import train_and_forecast as sarimax_train_and_forecast
 from modules.forecasting.models.prophet import train_and_forecast as prophet_train_and_forecast
 from modules.forecasting.models.cnn_lstm import train_and_forecast_cnn_lstm
 from modules.forecasting.models.tft import train_and_forecast_tft
+from data.storage.models import OHLCVFeature
+
+_INGESTION_MODULE_PATH = Path(__file__).resolve().parents[2] / "data" / "ingestion.py"
+_INGESTION_SPEC = importlib.util.spec_from_file_location("data.ingestion_pipeline", _INGESTION_MODULE_PATH)
+_INGESTION_MODULE = importlib.util.module_from_spec(_INGESTION_SPEC)
+_INGESTION_SPEC.loader.exec_module(_INGESTION_MODULE)
+setup_mlflow = _INGESTION_MODULE.setup_mlflow
+run_ingestion_cycle = _INGESTION_MODULE.run_ingestion_cycle
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +71,121 @@ def ensure_features(
     
     return successful_symbols
 
+def refresh_coin_features(
+    symbols: List[str],
+    exchange: str = "binance",
+    interval: str = "1h",
+    target_freq: str = "h",
+    refit_scaler: bool = False,
+):
+    if not symbols:
+        logger.warning("No symbols provided for coin feature generation")
+        return []
+
+    coin_pre = CoinPreprocessor()
+    updated_symbols = []
+    deduped_symbols = list(dict.fromkeys(symbols))
+    logger.info(
+        "Generating OHLCV features for %d symbols (target_freq=%s, refit_scaler=%s)",
+        len(deduped_symbols),
+        target_freq,
+        refit_scaler,
+    )
+
+    for symbol in deduped_symbols:
+        try:
+            coin_pre.update_features(
+                symbol,
+                exchange=exchange,
+                interval=interval,
+                target_freq=target_freq,
+                refit_scaler=refit_scaler,
+            )
+            Session = sessionmaker(bind=coin_pre.engine)
+            with Session() as session:
+                max_date = (
+                    session.query(func.max(OHLCVFeature.time))
+                    .filter(
+                        OHLCVFeature.symbol == symbol.upper(),
+                        OHLCVFeature.exchange == exchange,
+                        OHLCVFeature.interval == interval,
+                    )
+                    .scalar()
+                )
+                logger.info(
+                    "[FEATURE CHECK] Latest ohlcv_feature timestamp for %s: %s",
+                    symbol,
+                    max_date,
+                )
+            updated_symbols.append(symbol)
+        except Exception as e:
+            logger.error("Failed to update features for %s: %s", symbol, e)
+
+    logger.info(
+        "Finished coin feature generation for %d/%d symbols",
+        len(updated_symbols),
+        len(deduped_symbols),
+    )
+    return updated_symbols
+
+def refresh_panel_features(
+    symbols: List[str],
+    exchange: str = "binance",
+    interval: str = "1h",
+):
+    if not symbols:
+        logger.warning("No symbols provided for panel feature generation")
+        return None
+
+    panel_pre = PanelPreprocessor()
+    try:
+        panel, _ = panel_pre.update_panel(symbols, exchange=exchange, interval=interval)
+        if panel is not None and not panel.empty:
+            logger.info(
+                "Panel features refreshed for %d symbols (rows=%d)",
+                len(symbols),
+                len(panel),
+            )
+        else:
+            logger.warning("Panel feature refresh returned empty data")
+        return panel
+    except Exception as e:
+        logger.error("Failed to refresh panel features: %s", e)
+        return None
+
+def ingest_before_retraining(
+    symbols: List[str],
+    exchange: str = "binance",
+    pipeline_name: str = "forecasting_retrain",
+):
+    if not symbols:
+        logger.warning("No symbols provided for ingestion; skipping ingestion step.")
+        return
+    
+    ingestion_symbols = [
+        {
+            "label": symbol,
+            "use_ccxt_symbol": f"{symbol}/USDT",
+            "exchange": exchange
+        }
+        for symbol in symbols
+    ]
+    
+    logger.info("Running ingestion cycle for %d symbols before retraining...", len(ingestion_symbols))
+    setup_mlflow()
+    
+    with get_metadata_db() as db_metadata, get_timescale_db() as db_timescale:
+        asyncio.run(
+            run_ingestion_cycle(
+                db_metadata,
+                db_timescale,
+                pipeline=pipeline_name,
+                symbols=ingestion_symbols,
+                delta_only=True
+            )
+        )
+    logger.info("Ingestion step completed.")
+
 def retrain_individual_models(
     symbols: List[str],
     exchange: str = "binance",
@@ -91,8 +219,7 @@ def retrain_individual_models(
                             exchange=exchange,
                             interval=interval,
                             forecast_steps=forecast_steps,
-                            retrain_if_exists=retrain_if_exists,
-                            ensure_features=False
+                            retrain_if_exists=retrain_if_exists
                         )
                     elif model_name == "prophet":
                         result = prophet_train_and_forecast(
@@ -100,8 +227,7 @@ def retrain_individual_models(
                             exchange=exchange,
                             interval=interval,
                             forecast_steps=forecast_steps,
-                            retrain_if_exists=retrain_if_exists,
-                            ensure_features=False
+                            retrain_if_exists=retrain_if_exists
                         )
                     else:
                         continue
@@ -146,8 +272,7 @@ def retrain_panel_models(
                     exchange=exchange,
                     interval=interval,
                     forecast_steps=forecast_steps,
-                    retrain_if_exists=retrain_if_exists,
-                    ensure_features=False  
+                    retrain_if_exists=retrain_if_exists
                 )
             elif model_name == "tft":
                 result = train_and_forecast_tft(
@@ -155,8 +280,7 @@ def retrain_panel_models(
                     exchange=exchange,
                     interval=interval,
                     forecast_steps=forecast_steps,
-                    retrain_if_exists=retrain_if_exists,
-                    ensure_features=False  
+                    retrain_if_exists=retrain_if_exists
                 )
             else:
                 continue
@@ -179,7 +303,9 @@ def retrain_all_models(
     min_data_points: int = 100,
     force_feature_update: bool = True,
     individual_batch_size: int = 50,  
-    max_panel_symbols: int = 50  
+    max_panel_symbols: int = 50,
+    ingest_before_training: bool = True,
+    ingestion_pipeline_name: str = "forecasting_retrain"
 ):
     logger.info("Starting comprehensive model retraining for ALL symbols...")
     
@@ -192,8 +318,34 @@ def retrain_all_models(
         logger.error("No symbols found for training")
         return {}
     
+    if ingest_before_training:
+        ingest_before_retraining(
+            symbols=all_symbols,
+            exchange=exchange,
+            pipeline_name=ingestion_pipeline_name
+        )
+    
     logger.info(f"Processing {len(all_symbols)} total symbols")
     
+    need_coin_features = any(m in ["sarimax", "prophet"] for m in models)
+    need_panel_features = any(m in ["cnn_lstm", "tft"] for m in models)
+    feature_target_freq = "h" if "h" in interval.lower() else "d"
+    feature_symbols: List[str] = []
+
+    if need_coin_features:
+        feature_symbols.extend(all_symbols)
+    if need_panel_features:
+        feature_symbols.extend(all_symbols[:max_panel_symbols])
+
+    if feature_symbols:
+        refresh_coin_features(
+            feature_symbols,
+            exchange=exchange,
+            interval=interval,
+            target_freq=feature_target_freq,
+            refit_scaler=force_feature_update,
+        )
+
     successful_symbols = all_symbols
     if force_feature_update:
         successful_symbols = ensure_features(all_symbols, exchange, interval)
@@ -231,6 +383,7 @@ def retrain_all_models(
     if panel_models and successful_symbols:
         panel_symbols = successful_symbols[:max_panel_symbols]
         logger.info(f"Training panel models with {len(panel_symbols)} symbols...")
+        refresh_panel_features(panel_symbols, exchange, interval)
         results["panel_models"] = retrain_panel_models(
             symbols=panel_symbols,
             exchange=exchange,
@@ -289,6 +442,8 @@ def main():
                        help='Retrain even if model exists')
     parser.add_argument('--skip-feature-update', action='store_true', 
                        help='Skip feature update')
+    parser.add_argument('--skip-ingestion', action='store_true',
+                       help='Skip ingestion step before retraining')
     
     args = parser.parse_args()
     
@@ -319,7 +474,8 @@ def main():
             min_data_points=args.min_data_points,
             force_feature_update=not args.skip_feature_update,
             individual_batch_size=args.individual_batch_size,
-            max_panel_symbols=args.max_panel_symbols
+            max_panel_symbols=args.max_panel_symbols,
+            ingest_before_training=not args.skip_ingestion
         )
         
         print("\n" + "="*60)
@@ -361,7 +517,8 @@ if __name__ == "__main__":
             retrain_if_exists=False,
             min_data_points=100,
             individual_batch_size=50,
-            max_panel_symbols=15
+            max_panel_symbols=15,
+            ingest_before_training=True
         )
         
         if results:

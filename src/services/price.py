@@ -4,16 +4,20 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 
 from core.logging_config import setup_logging
 from modules.agent.agent_client import call_mcp_tool
+from modules.forecasting.data.preprocess_coin import CoinPreprocessor
+from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
 
 setup_logging()
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Price"])
 
 MAX_HORIZON_DAYS = 30
+_PREPROCESSOR: Optional[CoinPreprocessor] = None
 
 
 def _validate_symbol(symbol: str) -> str:
@@ -38,20 +42,72 @@ def _normalize_forecast_points(payload: Dict[str, Any], horizon_hours: int) -> L
                 timestamp = timestamps[idx]
             points.append({"timestamp": timestamp, "predicted_close": price})
         if points:
-            return points
+            return points[:horizon_hours]
 
     raw_text = payload.get("raw_text") or ""
     if raw_text:
+        row_regex = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2})\s+(-?\d+\.?\d*)$')
         for line in raw_text.splitlines():
-            numbers = re.findall(r"-?\d+\.\d+|-?\d+", line)
-            if numbers:
+            line = line.strip()
+            if not line or "timestamp predicted_close" in line:
+                continue
+            match = row_regex.match(line)
+            if match:
+                ts, price_str = match.groups()
                 try:
-                    price = float(numbers[-1])
+                    price = float(price_str)
                 except ValueError:
                     continue
-                points.append({"timestamp": None, "predicted_close": price})
-            if len(points) >= horizon_hours:
-                break
+                points.append({"timestamp": ts, "predicted_close": price})
+                if len(points) >= horizon_hours:
+                    break
+    return points
+
+
+def _get_preprocessor() -> CoinPreprocessor:
+    global _PREPROCESSOR
+    if _PREPROCESSOR is None:
+        _PREPROCESSOR = CoinPreprocessor()
+    return _PREPROCESSOR
+
+
+def _denormalize_forecast_points(symbol: str, points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not points:
+        return points
+
+    preprocessor = _get_preprocessor()
+    scaler_path = _scaler_path_for(preprocessor.scaler_dir, symbol.upper(), None)
+    scaler, cols = load_scaler_with_meta(scaler_path)
+    if not scaler or not cols or "close" not in cols:
+        return points
+
+    close_idx = cols.index("close")
+    valid_points: List[Dict[str, Any]] = []
+    values: List[float] = []
+    for point in points:
+        value = point.get("predicted_close")
+        if value is None:
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        valid_points.append(point)
+        values.append(numeric)
+
+    if not values:
+        return points
+
+    template = np.zeros((len(values), len(cols)))
+    template[:, close_idx] = np.array(values)
+    try:
+        denorm = scaler.inverse_transform(template)[:, close_idx]
+    except Exception as exc:
+        logger.warning("Denormalizing forecast failed for %s: %s", symbol, exc)
+        return points
+
+    for point, denorm_value in zip(valid_points, denorm):
+        point["predicted_close"] = float(denorm_value)
     return points
 
 
@@ -88,6 +144,7 @@ async def get_price_forecast(
         raise HTTPException(status_code=502, detail="Forecast service unavailable.") from exc
 
     points = _normalize_forecast_points(forecast_payload or {}, horizon_hours)
+    points = _denormalize_forecast_points(sanitized_symbol, points)
     raw_text = forecast_payload.get("raw_text") if isinstance(forecast_payload, dict) else None
     model_used = forecast_payload.get("model_used", "sarimax_v3") if isinstance(forecast_payload, dict) else "sarimax_v3"
 

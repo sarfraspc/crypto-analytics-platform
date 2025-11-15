@@ -131,11 +131,20 @@ def build_forecast_ctx(forecast: Dict[str, Any]) -> str:
 
 def build_sentiment_ctx(sentiment: Dict[str, Any]) -> str:
     sentiment = _robust_parse(sentiment)
-    if not sentiment: return "SENTIMENT: N/A"
-    top = sentiment.get('top_sentiment', 'NEUTRAL')
-    conf = sentiment.get('top_confidence', 0)
-    bull = sentiment.get('bullish_score', 0)
-    bear = sentiment.get('bearish_score', 0)
+    if not sentiment:
+        return "SENTIMENT: N/A"
+
+    # Sentiment server nests headline numbers under `aggregated`; surface them for the prompt.
+    flattened = dict(sentiment)
+    aggregated = sentiment.get('aggregated')
+    if isinstance(aggregated, dict):
+        for key, value in aggregated.items():
+            flattened.setdefault(key, value)
+
+    top = flattened.get('top_sentiment', 'NEUTRAL')
+    conf = flattened.get('top_confidence', 0)
+    bull = flattened.get('bullish_score', 0)
+    bear = flattened.get('bearish_score', 0)
     return f"SENTIMENT: {top} (Conf: {conf:.1%}, Bull: {bull:.2f}, Bear: {bear:.2f})"
 
 def build_onchain_ctx(onchain: Dict[str, Any]) -> str:
