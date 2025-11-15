@@ -6,8 +6,12 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import Integer, cast, func, select
 
+from core.database import get_metadata_db, get_timescale_db
 from core.logging_config import setup_logging
+from data.storage.models import OHLCV as OHLCVModel
+from data.storage.models import Token as TokenModel
 from modules.agent.agent_client import call_mcp_tool
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
@@ -18,6 +22,19 @@ router = APIRouter(tags=["Price"])
 
 MAX_HORIZON_DAYS = 30
 _PREPROCESSOR: Optional[CoinPreprocessor] = None
+PRIORITY_SYMBOLS = [
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "ADA",
+    "AVAX",
+    "DOGE",
+    "MATIC",
+    "LTC",
+    "DOT",
+]
 
 
 def _validate_symbol(symbol: str) -> str:
@@ -109,6 +126,74 @@ def _denormalize_forecast_points(symbol: str, points: List[Dict[str, Any]]) -> L
     for point, denorm_value in zip(valid_points, denorm):
         point["predicted_close"] = float(denorm_value)
     return points
+
+
+@router.get("/symbols")
+async def list_available_symbols(
+    exchange: Optional[str] = Query(None, description="Optional exchange filter (e.g., binance)."),
+    interval: Optional[str] = Query(None, description="Optional timeframe filter (e.g., 1h)."),
+    limit: int = Query(200, ge=1, le=1000, description="Maximum number of symbols to return."),
+):
+    request_id = str(uuid.uuid4())
+    logger.info("[%s] Listing symbols exchange=%s interval=%s limit=%s", request_id, exchange, interval, limit)
+
+    try:
+        with get_timescale_db() as session:
+            stmt = select(OHLCVModel.symbol).distinct()
+            if exchange:
+                stmt = stmt.where(OHLCVModel.exchange == exchange)
+            if interval:
+                stmt = stmt.where(OHLCVModel.interval == interval)
+            stmt = stmt.order_by(OHLCVModel.symbol).limit(limit)
+            rows = session.execute(stmt).scalars().all()
+    except Exception as exc:
+        logger.error("[%s] Failed to list symbols: %s", request_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Unable to load available symbols.") from exc
+
+    priority_map = {sym.upper(): idx for idx, sym in enumerate(PRIORITY_SYMBOLS)}
+    ordered_symbols = rows
+    rank_map: Dict[str, int] = {}
+    if rows:
+        upper_rows = [sym.upper() for sym in rows if isinstance(sym, str)]
+        try:
+            with get_metadata_db() as meta_session:
+                if upper_rows:
+                    rank_stmt = (
+                        select(
+                            TokenModel.symbol,
+                            cast(
+                                func.nullif(
+                                    func.jsonb_extract_path_text(TokenModel.token_metadata, "market_cap_rank"),
+                                    "",
+                                ),
+                                Integer,
+                            ).label("rank"),
+                        ).where(func.upper(TokenModel.symbol).in_(upper_rows))
+                    )
+                    rank_rows = meta_session.execute(rank_stmt).all()
+                    rank_map = {
+                        (symbol or "").upper(): rank for symbol, rank in rank_rows if symbol and rank is not None
+                    }
+        except Exception as exc:
+            logger.warning("[%s] Unable to apply market-cap ordering: %s", request_id, exc)
+
+        def sort_key(sym: str):
+            sym_upper = sym.upper()
+            if sym_upper in priority_map:
+                return (0, priority_map[sym_upper])
+            if sym_upper in rank_map:
+                return (1, rank_map[sym_upper])
+            return (2, sym)
+
+        ordered_symbols = sorted(rows, key=sort_key)
+
+    return {
+        "request_id": request_id,
+        "exchange": exchange,
+        "interval": interval,
+        "count": len(ordered_symbols),
+        "symbols": ordered_symbols,
+    }
 
 
 @router.get("/forecast/{symbol}")

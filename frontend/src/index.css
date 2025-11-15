@@ -27,12 +27,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4b5563;
+  background: #6366F1; /* indigo-500 */
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #6b7280;
+  background: #4f46e5; /* indigo-600 */
 }
 
 /* Dark mode scrollbar */
