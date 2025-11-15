@@ -1,5 +1,4 @@
 const API_BASE_URL = (import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'http://localhost:8000').replace(/\/$/, '')
-console.log('API_BASE_URL', API_BASE_URL)
 
 const handleResponse = async (response) => {
   const contentType = response.headers.get('content-type')
@@ -45,8 +44,6 @@ const parseRawForecastTable = (rawText = '') => {
 }
 
 const normalizeForecastPayload = (payload = {}) => {
-  console.log('Normalizing forecast payload:', payload)
-
   let points = []
 
   if (Array.isArray(payload.forecast_points) && payload.forecast_points.length) {
@@ -127,9 +124,7 @@ export const getPriceForecast = async (symbol, { horizonDays = 3, startDate } = 
   const response = await request(
     `/price/forecast/${symbol}${buildQuery({ horizon_days: horizonDays, start_date: startDate })}`,
   )
-  console.log('Price forecast raw response:', response)
   const normalized = normalizeForecastPayload(response)
-  console.log('Price forecast normalized points:', normalized.points)
   return {
     ...response,
     model_used: normalized.model,
@@ -163,9 +158,7 @@ export const getInsightSummary = async (symbol, { horizonDays = 3, window = '24h
   const overview = await request(
     `/dashboard/overview/${symbol}${buildQuery({ horizon_days: horizonDays, window, k_docs: kDocs })}`,
   )
-  console.log('Dashboard overview raw response:', overview)
   const normalized = overview.forecast ? normalizeForecastPayload(overview.forecast) : null
-  normalized && console.log('Dashboard overview normalized points:', normalized.points)
   return {
     ...overview,
     forecast: normalized
@@ -181,14 +174,16 @@ export const getInsightSummary = async (symbol, { horizonDays = 3, window = '24h
   }
 }
 
-export const sendChatMessage = (symbol, question, history = []) => {
+export const sendChatMessage = (symbol, question, history = [], options = {}) => {
   const payload = {
     question,
     options: {
       horizon: 7,
+      ...options,
     },
     history,
   }
+
   return request(`/agent/insight/${symbol}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

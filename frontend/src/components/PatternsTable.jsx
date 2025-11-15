@@ -15,6 +15,7 @@ const PatternsTable = () => {
   const [patterns, setPatterns] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [lastUpdated, setLastUpdated] = useState(null)
 
   useEffect(() => {
     let isMounted = true
@@ -34,10 +35,8 @@ const PatternsTable = () => {
               ...(typeof details === 'object' ? details : { pattern: String(details) }),
             }))
           }
-
-          console.log('Patterns from API:', rawPatterns)
-          console.log('Safe patterns:', safePatterns)
           setPatterns(safePatterns)
+          setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
         }
       } catch (err) {
         if (isMounted) setError(err.message ?? 'Unable to load patterns')
@@ -52,6 +51,11 @@ const PatternsTable = () => {
     }
   }, [])
 
+  const formattedUpdated =
+    lastUpdated && !Number.isNaN(new Date(lastUpdated).getTime())
+      ? new Date(lastUpdated).toLocaleString()
+      : null
+
   return (
     <div
       className={`rounded-xl p-6 shadow-lg ${
@@ -60,11 +64,18 @@ const PatternsTable = () => {
           : 'bg-white border border-gray-200'
       }`}
     >
-      <div className="flex items-center gap-2 mb-6">
-        <Target className="text-indigo-500" size={24} />
-        <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Technical Patterns
-        </h3>
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-2">
+          <Target className="text-indigo-500" size={24} />
+          <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            Technical Patterns
+          </h3>
+        </div>
+        {formattedUpdated && (
+          <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            Last updated {formattedUpdated}
+          </span>
+        )}
       </div>
 
       {loading && <Loader label="Scanning market patterns" />}

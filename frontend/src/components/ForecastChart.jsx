@@ -30,13 +30,11 @@ const ForecastChart = () => {
       try {
         const result = await getPriceForecast(symbol, { horizonDays: HORIZON_DAYS })
         if (!isMounted) return
-        console.log('ForecastChart fetched data:', result)
         const normalizedPoints = (result.forecast_points || []).filter((point, idx) => {
           const value = Number(point.predicted_close)
           const isHorizonFlag = result.horizon_hours && value === result.horizon_hours
           return Number.isFinite(value) && !isHorizonFlag
         })
-        console.log('ForecastChart processed points:', normalizedPoints)
         setPoints(normalizedPoints)
         setMeta({
           model: result.model_used,

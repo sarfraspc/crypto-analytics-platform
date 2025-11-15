@@ -48,6 +48,7 @@ const MetricsGrid = () => {
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [lastUpdated, setLastUpdated] = useState(null)
 
   const fetchMetrics = useCallback(async () => {
     setLoading(true)
@@ -55,6 +56,7 @@ const MetricsGrid = () => {
     try {
       const result = await getOnChainMetrics(symbol)
       setMetrics(result.metrics || {})
+      setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
     } catch (err) {
       setError(err.message ?? 'Unable to load metrics')
     } finally {
@@ -78,7 +80,6 @@ const MetricsGrid = () => {
     }),
     [metrics],
   )
-  console.log('MetricsGrid normalized metrics:', normalizedMetrics)
   const safeTrend = (value, threshold = 0) => {
     if (typeof value !== 'number') return 'flat'
     if (value > threshold) return 'up'
@@ -129,6 +130,11 @@ const MetricsGrid = () => {
     },
   ]
 
+  const formattedUpdated =
+    lastUpdated && !Number.isNaN(new Date(lastUpdated).getTime())
+      ? new Date(lastUpdated).toLocaleString()
+      : null
+
   const handleRetry = () => {
     if (!loading) {
       fetchMetrics()
@@ -143,11 +149,18 @@ const MetricsGrid = () => {
           : 'bg-white border border-gray-200'
       }`}
     >
-      <div className="flex items-center gap-2 mb-6">
-        <BarChart3 className="text-indigo-500" size={24} />
-        <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          On-Chain Metrics
-        </h3>
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="text-indigo-500" size={24} />
+          <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            On-Chain Metrics
+          </h3>
+        </div>
+        {formattedUpdated && (
+          <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            Last updated {formattedUpdated}
+          </span>
+        )}
       </div>
 
       {loading && <Loader label="Fetching on-chain data" />}
