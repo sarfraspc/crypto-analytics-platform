@@ -143,6 +143,12 @@ export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, re
     sources: Array.isArray(result.sources) ? result.sources : [],
   }))
 
+export const getFngCurrent = () =>
+  request('/sentiment/fng/current').then((result) => ({
+    ...result,
+    fng: result.fng || {},
+  }))
+
 export const getOnChainMetrics = (symbol = GENERIC_MARKET_SYMBOL, window = '24h') =>
   request(`/onchain/metrics/${symbol}${buildQuery({ window })}`).then((result) => ({
     ...result,

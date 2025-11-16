@@ -191,3 +191,33 @@ async def query_sentiment_rag(request: RagQueryRequest):
         "contexts": rag_payload.get("contexts") if isinstance(rag_payload, dict) else [],
     }
     return response
+
+
+@router.get("/fng/current")
+async def get_fng_current():
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+    logger.info("[%s] FNG current request", request_id)
+
+    try:
+        payload = await call_mcp_tool(
+            "crypto-sentiment-server",
+            "get_fng_current",
+        )
+    except Exception as exc:
+        logger.error("[%s] FNG fetch failed: %s", request_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Fear & Greed service unavailable.") from exc
+
+    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    data = payload if isinstance(payload, dict) else {"raw": payload}
+
+    response = {
+        "request_id": request_id,
+        "duration_ms": duration_ms,
+        "fng": data,
+        "value": data.get("current_value"),
+        "sentiment": data.get("sentiment") or data.get("classification"),
+        "market_bias": data.get("market_bias"),
+        "last_updated": data.get("last_updated") or data.get("timestamp"),
+    }
+    return response

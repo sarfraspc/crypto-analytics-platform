@@ -3,6 +3,7 @@ import json
 import logging
 import hashlib
 from typing import Dict, Any, List
+from datetime import datetime, timedelta, timezone
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -26,6 +27,8 @@ from modules.sentiment.models.sentiment_infer import (
     analyze_sentiment  # For single if needed
 )
 from utils.cache import RedisCache
+from core.database import get_timescale_db
+from data.storage.models import IngestionJob as IngestionJobModel
 from core.logging_config import setup_logging
 
 setup_logging()
@@ -276,6 +279,136 @@ class PipelineMCP:
             logger.error(err, exc_info=True)
             return self._error_result(err)
 
+    async def get_fng(self, request: CallToolRequest) -> CallToolResult:
+        if not self.is_initialized:
+            raise Exception("Server not initialized")
+        
+        params = request.params if hasattr(request, "params") else None
+        input_data = (params.arguments if params and params.arguments is not None else {})
+        limit = input_data.get('limit', 30)  # Last 30 records
+        days_back = input_data.get('days_back', 30)
+
+        try:
+            def fetch_fng():
+                with get_timescale_db() as db:
+                    from sqlalchemy import desc
+                    
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+                    records = db.query(IngestionJobModel).filter(
+                        IngestionJobModel.pipeline == 'fear_greed',
+                        IngestionJobModel.last_success >= cutoff
+                    ).order_by(desc(IngestionJobModel.last_success)).limit(limit).all()
+                    
+                    return [
+                        {
+                            "time": record.last_success.isoformat(),
+                            "score": details.get("score"),
+                            "value": details.get("value"),
+                            "timestamp": details.get("timestamp"),
+                            "time_until_update": details.get("time_until_update"),
+                            "value_classification": details.get("value_classification"),
+                            "last_update": record.last_run.isoformat() if record.last_run else None
+                        }
+                        for record in records
+                        if (details := record.details) and isinstance(details, dict)
+                    ]
+            
+            fng_data = await asyncio.to_thread(fetch_fng)
+            
+            # Calculate current sentiment from latest FNG
+            current_sentiment = "NEUTRAL"
+            if fng_data:
+                latest_value = float(fng_data[0].get("value", 50))
+                if latest_value >= 75:
+                    current_sentiment = "EXTREME GREED"
+                elif latest_value >= 55:
+                    current_sentiment = "GREED" 
+                elif latest_value >= 45:
+                    current_sentiment = "NEUTRAL"
+                elif latest_value >= 25:
+                    current_sentiment = "FEAR"
+                else:
+                    current_sentiment = "EXTREME FEAR"
+
+            payload = {
+                "current_sentiment": current_sentiment,
+                "current_value": fng_data[0].get("value") if fng_data else None,
+                "historical_data": fng_data,
+                "count": len(fng_data)
+            }
+            
+            return self._json_result(payload)
+            
+        except Exception as e:
+            err = f"FNG data fetch failed: {type(e).__name__} - {e}"
+            logger.error(err, exc_info=True)
+            return self._error_result(err)
+
+    async def get_fng_current(self, request: CallToolRequest) -> CallToolResult:
+        """Get only the current FNG value and classification"""
+        if not self.is_initialized:
+            raise Exception("Server not initialized")
+        
+        try:
+            def fetch_current_fng():
+                with get_timescale_db() as db:
+                    from sqlalchemy import desc
+                    
+                    latest = db.query(IngestionJobModel).filter(
+                        IngestionJobModel.pipeline == 'fear_greed'
+                    ).order_by(desc(IngestionJobModel.last_success)).first()
+                    if not latest or not (details := latest.details) or not isinstance(details, dict):
+                        return None
+                    
+                    return {
+                        "time": latest.last_success.isoformat(),
+                        "score": details.get("score"),
+                        "value": details.get("value"),
+                        "timestamp": details.get("timestamp"),
+                        "time_until_update": details.get("time_until_update"),
+                        "value_classification": details.get("value_classification"),
+                        "last_update": latest.last_run.isoformat() if latest.last_run else None
+                    }
+            
+            current_fng = await asyncio.to_thread(fetch_current_fng)
+            
+            if not current_fng:
+                return self._error_result("No FNG data available")
+                
+            # Classify sentiment
+            value = float(current_fng.get("value", 50))
+            if value >= 75:
+                sentiment = "EXTREME GREED"
+                market_bias = "BEARISH"  # Contrarian indicator
+            elif value >= 55:
+                sentiment = "GREED"
+                market_bias = "CAUTION"
+            elif value >= 45:
+                sentiment = "NEUTRAL" 
+                market_bias = "NEUTRAL"
+            elif value >= 25:
+                sentiment = "FEAR"
+                market_bias = "OPPORTUNITY"
+            else:
+                sentiment = "EXTREME FEAR"
+                market_bias = "BULLISH"  # Contrarian indicator
+
+            payload = {
+                "current_value": current_fng.get("value"),
+                "sentiment": sentiment,
+                "classification": current_fng.get("value_classification"),
+                "market_bias": market_bias,
+                "timestamp": current_fng.get("time"),
+                "last_updated": current_fng.get("last_update")
+            }
+            
+            return self._json_result(payload)
+            
+        except Exception as e:
+            err = f"Current FNG fetch failed: {type(e).__name__} - {e}"
+            logger.error(err, exc_info=True)
+            return self._error_result(err)
+
     def _get_vector_count(self):
         count_result = self.vector_store.count()
         return count_result if isinstance(count_result, int) else count_result.get("count", 0)
@@ -355,6 +488,26 @@ async def list_tools():
             name="get_stats",
             description="Get vector store and cache stats",
             inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="get_fng",
+            description="Get Fear and Greed Index historical data",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "default": 30, "description": "Number of historical records"},
+                    "days_back": {"type": "integer", "default": 30, "description": "Days of history to fetch"}
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_fng_current", 
+            description="Get current Fear and Greed Index value with market bias interpretation",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
         )
     ]
 
@@ -392,6 +545,18 @@ async def call_tool(name: str, arguments: Dict[str, Any]):
         )
     elif name == "get_stats":
         return await mcp.get_stats(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+    elif name == "get_fng":
+        return await mcp.get_fng(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+    elif name == "get_fng_current":
+        return await mcp.get_fng_current(
             CallToolRequest(
                 params=CallToolRequestParams(name=name, arguments=arguments)
             )
