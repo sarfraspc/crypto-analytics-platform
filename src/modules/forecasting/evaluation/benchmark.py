@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import logging
 from typing import Any, List
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
@@ -287,7 +288,7 @@ def evaluate_tft_panel(
 
 
 def run_benchmark(
-    symbol: str = 'BTCUSDT', 
+    symbol: str = 'BTC', 
     exchange: str = 'binance', 
     interval: str = '1h', 
     forecast_steps: int = 24, 
@@ -378,12 +379,11 @@ def run_benchmark(
 
 if __name__ == "__main__":
     import argparse
-    import logging
     
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
     parser = argparse.ArgumentParser(description='Run forecasting model benchmark')
-    parser.add_argument('--symbol', default='BTCUSDT', help='Symbol to benchmark')
+    parser.add_argument('--symbol', default='BTC', help='Symbol to benchmark')
     parser.add_argument('--exchange', default='binance', help='Exchange name')
     parser.add_argument('--interval', default='1h', help='Data interval')
     parser.add_argument('--forecast-steps', type=int, default=24, help='Forecast horizon')

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Info, Target } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
-import { getTechnicalPatterns } from '../services/api'
+import { getPatternSymbols, getTechnicalPatterns } from '../services/api'
 import Loader from './Loader'
 import ErrorBox from './ErrorBox'
 
@@ -10,11 +10,21 @@ const confidenceWidth = (value) => {
   return Math.min(Math.max(value, 0), 1) * 100
 }
 
+const PATTERN_QUERY = {
+  exchange: 'binance',
+  interval: '1d',
+  limit: 100,
+}
+
 const PatternsTable = () => {
   const { isDark } = useTheme()
   const [patterns, setPatterns] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [lastUpdated, setLastUpdated] = useState(null)
+  const [taSymbols, setTaSymbols] = useState([])
+  const [symbolsLoading, setSymbolsLoading] = useState(false)
+  const [symbolsError, setSymbolsError] = useState(null)
 
   useEffect(() => {
     let isMounted = true
@@ -22,7 +32,7 @@ const PatternsTable = () => {
       setLoading(true)
       setError(null)
       try {
-        const result = await getTechnicalPatterns()
+        const result = await getTechnicalPatterns(PATTERN_QUERY)
         if (isMounted) {
           const rawPatterns = result.patterns
           let safePatterns = []
@@ -34,10 +44,8 @@ const PatternsTable = () => {
               ...(typeof details === 'object' ? details : { pattern: String(details) }),
             }))
           }
-
-          console.log('Patterns from API:', rawPatterns)
-          console.log('Safe patterns:', safePatterns)
           setPatterns(safePatterns)
+          setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
         }
       } catch (err) {
         if (isMounted) setError(err.message ?? 'Unable to load patterns')
@@ -46,11 +54,47 @@ const PatternsTable = () => {
       }
     }
 
+    const fetchSymbols = async () => {
+      setSymbolsLoading(true)
+      setSymbolsError(null)
+      try {
+        const response = await getPatternSymbols(PATTERN_QUERY)
+        if (isMounted) {
+          const fetched = Array.isArray(response?.symbols)
+            ? response.symbols.filter((item) => typeof item === 'string')
+            : []
+          setTaSymbols(fetched)
+        }
+      } catch (err) {
+        if (isMounted) {
+          setSymbolsError(err.message ?? 'Unable to load TA symbol list')
+          setTaSymbols([])
+        }
+      } finally {
+        if (isMounted) setSymbolsLoading(false)
+      }
+    }
+
     fetchData()
+    fetchSymbols()
     return () => {
       isMounted = false
     }
   }, [])
+
+  const formattedUpdated =
+    lastUpdated && !Number.isNaN(new Date(lastUpdated).getTime())
+      ? new Date(lastUpdated).toLocaleString()
+      : null
+
+  const filteredPatterns = useMemo(() => {
+    if (!patterns.length) return []
+    if (!taSymbols.length) return patterns
+    const allowSet = new Set(
+      taSymbols.map((item) => (item?.toUpperCase?.() || '').trim()).filter(Boolean),
+    )
+    return patterns.filter((pattern) => allowSet.has((pattern.symbol || '').toUpperCase()))
+  }, [patterns, taSymbols])
 
   return (
     <div
@@ -60,12 +104,28 @@ const PatternsTable = () => {
           : 'bg-white border border-gray-200'
       }`}
     >
-      <div className="flex items-center gap-2 mb-6">
-        <Target className="text-indigo-500" size={24} />
-        <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Technical Patterns
-        </h3>
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-2">
+          <Target className="text-indigo-500" size={24} />
+          <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            Technical Patterns
+          </h3>
+        </div>
+        {formattedUpdated && (
+          <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            Last updated {formattedUpdated}
+          </span>
+        )}
       </div>
+
+      {symbolsLoading && (
+        <p className={`text-xs mb-3 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+          Syncing available TA symbols…
+        </p>
+      )}
+      {!symbolsLoading && symbolsError && (
+        <p className={`text-xs mb-3 ${isDark ? 'text-rose-300' : 'text-rose-500'}`}>{symbolsError}</p>
+      )}
 
       {loading && <Loader label="Scanning market patterns" />}
       {!loading && error && <ErrorBox message={error} />}
@@ -87,7 +147,7 @@ const PatternsTable = () => {
               </tr>
             </thead>
             <tbody>
-              {patterns.map((pattern, index) => (
+              {filteredPatterns.map((pattern, index) => (
                 <tr
                   key={`${pattern.symbol}-${pattern.pattern}-${index}`}
                   className={`border-b ${isDark ? 'border-slate-700' : 'border-gray-200'} ${
@@ -138,8 +198,12 @@ const PatternsTable = () => {
               ))}
             </tbody>
           </table>
-          {patterns.length === 0 && (
-            <p className="text-sm text-center text-gray-500 py-6">No patterns detected at the moment.</p>
+          {filteredPatterns.length === 0 && (
+            <p className="text-sm text-center text-gray-500 py-6">
+              {taSymbols.length === 0
+                ? 'No TA symbols found in the database.'
+                : 'No patterns detected at the moment.'}
+            </p>
           )}
         </div>
       )}

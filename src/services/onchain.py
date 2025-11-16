@@ -1,12 +1,15 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
+from core.database import get_timescale_db
 from core.logging_config import setup_logging
+from data.storage.models import TASignal as TASignalModel
 from modules.agent.agent_client import call_mcp_tool
 
 setup_logging()
@@ -167,4 +170,42 @@ async def get_ta_patterns(
         "interval": interval,
         "patterns": formatted,
         "raw_text": payload.get("raw_text") if isinstance(payload, dict) else None,
+    }
+
+
+@router.get("/pattern-symbols")
+async def list_pattern_symbols(
+    exchange: Optional[str] = Query(None, description="Filter by exchange (e.g., binance)."),
+    interval: Optional[str] = Query(None, description="Filter by interval (e.g., 1d)."),
+    limit: int = Query(200, ge=1, le=1000, description="Maximum number of symbols to return."),
+):
+    request_id = str(uuid.uuid4())
+    logger.info(
+        "[%s] Pattern symbols: exchange=%s interval=%s limit=%s",
+        request_id,
+        exchange,
+        interval,
+        limit,
+    )
+
+    try:
+        with get_timescale_db() as session:
+            stmt = select(TASignalModel.symbol).distinct()
+            if exchange:
+                stmt = stmt.where(TASignalModel.exchange == exchange)
+            if interval:
+                stmt = stmt.where(TASignalModel.interval == interval)
+            stmt = stmt.order_by(TASignalModel.symbol).limit(limit)
+            rows = session.execute(stmt).scalars().all()
+    except Exception as exc:
+        logger.error("[%s] Pattern symbol query failed: %s", request_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Unable to load pattern symbols.") from exc
+
+    symbols = [symbol for symbol in rows if isinstance(symbol, str) and symbol.strip()]
+    return {
+        "request_id": request_id,
+        "exchange": exchange,
+        "interval": interval,
+        "count": len(symbols),
+        "symbols": symbols,
     }
