@@ -65,34 +65,6 @@ class PipelineMCP:
         except Exception as e:
             logger.exception("Pipeline initialization failed")
             raise e
-
-    async def ingest_documents(self, request: CallToolRequest) -> CallToolResult:
-        if not self.is_initialized:
-            raise Exception("Server not initialized")
-        params = request.params if hasattr(request, "params") else None
-        input_data = (params.arguments if params and params.arguments is not None else {})
-        days_back = input_data.get('days_back', 30)
-        try:
-            await asyncio.to_thread(self.vector_store.delete_all)
-            docs = await asyncio.to_thread(self.embedder.fetch_docs, days_back)
-            chunks, embeddings, metadatas = await asyncio.to_thread(
-                lambda: self.embedder.process_docs(docs, chunk_method='sentence')
-            )
-            await asyncio.to_thread(self.vector_store.add, chunks, embeddings, metadatas)
-            await asyncio.to_thread(self.retriever.index_for_hybrid)
-            await self._clear_cache("rag_query:*", "combined:*")
-            logger.info(f"Ingested {len(docs)} docs with {len(chunks)} chunks")
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Successfully ingested {len(docs)} documents ({len(chunks)} chunks) from the last {days_back} days."
-                )]
-            )
-        except Exception as e:
-            err = f"Document ingestion failed: {type(e).__name__} - {e}"
-            logger.error(err, exc_info=True)
-            return self._error_result(err)
-
     async def query_rag(self, request: CallToolRequest) -> CallToolResult:
         if not self.is_initialized:
             raise Exception("Server not initialized")
@@ -103,7 +75,7 @@ class PipelineMCP:
         if not query:
             return self._error_result("Query parameter is required")
         if await asyncio.to_thread(self._get_vector_count) == 0:
-            return self._error_result("No documents ingested; run 'ingest_documents' first")
+            return self._error_result("No documents ingested; please run manual sentiment ingestion first")
         cache_key = f"rag_query:{hashlib.sha256(query.encode()).hexdigest()}:{k}"
         cached = await asyncio.to_thread(self.cache.get_json, cache_key)
         if cached:
@@ -204,16 +176,19 @@ class PipelineMCP:
         query = input_data.get('query', '')
         k = input_data.get('k', 5)
         include_sources = input_data.get('include_sources', True)
+        refresh = bool(input_data.get('refresh', False))
         request_sources = "sources" in query.lower() or "source" in query.lower()
         if not query:
             return self._error_result("Query parameter is required")
         if await asyncio.to_thread(self._get_vector_count) == 0:
-            return self._error_result("No documents ingested; run ingestion first")
+            return self._error_result("No documents ingested; please run manual sentiment ingestion first")
         cache_key = f"combined:{hashlib.sha256(query.encode()).hexdigest()}:{k}"
-        cached = await asyncio.to_thread(self.cache.get_json, cache_key)
-        if cached:
-            logger.info(f"Returning cached combined response for: {query[:50]}...")
-            return self._format_combined_response(cached, query, include_sources or request_sources)
+        cached = None
+        if not refresh:
+            cached = await asyncio.to_thread(self.cache.get_json, cache_key)
+            if cached:
+                logger.info(f"Returning cached combined response for: {query[:50]}...")
+                return self._format_combined_response(cached, query, include_sources or request_sources)
         try:
             contexts = await asyncio.to_thread(lambda: self.retriever.retrieve(query, k=k))
             if not contexts:
@@ -226,7 +201,10 @@ class PipelineMCP:
                 'query': query, 'response': response, 'sources': contexts,
                 'sentiments': sentiment_results, 'aggregated': aggregated
             }
-            await asyncio.to_thread(self.cache.set_json, cache_key, cache_data)
+            if refresh:
+                await asyncio.to_thread(self.cache.delete, cache_key)
+            else:
+                await asyncio.to_thread(self.cache.set_json, cache_key, cache_data)
             return self._format_combined_response(cache_data, query, include_sources or request_sources)
         except Exception as e:
             err = f"Combined pipeline failed: {type(e).__name__} - {e}"
@@ -279,87 +257,19 @@ class PipelineMCP:
             logger.error(err, exc_info=True)
             return self._error_result(err)
 
-    async def get_fng(self, request: CallToolRequest) -> CallToolResult:
-        if not self.is_initialized:
-            raise Exception("Server not initialized")
-        
-        params = request.params if hasattr(request, "params") else None
-        input_data = (params.arguments if params and params.arguments is not None else {})
-        limit = input_data.get('limit', 30)  # Last 30 records
-        days_back = input_data.get('days_back', 30)
-
-        try:
-            def fetch_fng():
-                with get_timescale_db() as db:
-                    from sqlalchemy import desc
-                    
-                    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
-                    records = db.query(IngestionJobModel).filter(
-                        IngestionJobModel.pipeline == 'fear_greed',
-                        IngestionJobModel.last_success >= cutoff
-                    ).order_by(desc(IngestionJobModel.last_success)).limit(limit).all()
-                    
-                    return [
-                        {
-                            "time": record.last_success.isoformat(),
-                            "score": details.get("score"),
-                            "value": details.get("value"),
-                            "timestamp": details.get("timestamp"),
-                            "time_until_update": details.get("time_until_update"),
-                            "value_classification": details.get("value_classification"),
-                            "last_update": record.last_run.isoformat() if record.last_run else None
-                        }
-                        for record in records
-                        if (details := record.details) and isinstance(details, dict)
-                    ]
-            
-            fng_data = await asyncio.to_thread(fetch_fng)
-            
-            # Calculate current sentiment from latest FNG
-            current_sentiment = "NEUTRAL"
-            if fng_data:
-                latest_value = float(fng_data[0].get("value", 50))
-                if latest_value >= 75:
-                    current_sentiment = "EXTREME GREED"
-                elif latest_value >= 55:
-                    current_sentiment = "GREED" 
-                elif latest_value >= 45:
-                    current_sentiment = "NEUTRAL"
-                elif latest_value >= 25:
-                    current_sentiment = "FEAR"
-                else:
-                    current_sentiment = "EXTREME FEAR"
-
-            payload = {
-                "current_sentiment": current_sentiment,
-                "current_value": fng_data[0].get("value") if fng_data else None,
-                "historical_data": fng_data,
-                "count": len(fng_data)
-            }
-            
-            return self._json_result(payload)
-            
-        except Exception as e:
-            err = f"FNG data fetch failed: {type(e).__name__} - {e}"
-            logger.error(err, exc_info=True)
-            return self._error_result(err)
-
     async def get_fng_current(self, request: CallToolRequest) -> CallToolResult:
-        """Get only the current FNG value and classification"""
+        """Get only the latest Fear & Greed value and classification (single-row store)"""
         if not self.is_initialized:
             raise Exception("Server not initialized")
         
         try:
             def fetch_current_fng():
                 with get_timescale_db() as db:
-                    from sqlalchemy import desc
-                    
                     latest = db.query(IngestionJobModel).filter(
                         IngestionJobModel.pipeline == 'fear_greed'
-                    ).order_by(desc(IngestionJobModel.last_success)).first()
+                    ).order_by(IngestionJobModel.last_success.desc()).first()
                     if not latest or not (details := latest.details) or not isinstance(details, dict):
                         return None
-                    
                     return {
                         "time": latest.last_success.isoformat(),
                         "score": details.get("score"),
@@ -394,6 +304,8 @@ class PipelineMCP:
                 market_bias = "BULLISH"  # Contrarian indicator
 
             payload = {
+                # keep both keys for downstream compatibility
+                "value": current_fng.get("value"),
                 "current_value": current_fng.get("value"),
                 "sentiment": sentiment,
                 "classification": current_fng.get("value_classification"),
@@ -419,28 +331,12 @@ class PipelineMCP:
             return ' '.join(tokens[:max_tokens]) + "... [truncated]"
         return text
 
-    async def _clear_cache(self, *patterns):
-        for pattern in patterns:
-            try:
-                await asyncio.to_thread(self.cache.delete_by_pattern, pattern)
-            except Exception as e:
-                logger.warning(f"Cache clear failed for {pattern}: {e}")
-
 server = Server("crypto-sentiment-server")
 mcp = PipelineMCP()
 
 @server.list_tools()
 async def list_tools():
     return [
-        Tool(
-            name="ingest_documents",
-            description="Ingest recent crypto news/Reddit (prereq for queries)",
-            inputSchema={
-                "type": "object",
-                "properties": {"days_back": {"type": "integer", "default": 30}},
-                "required": []
-            }
-        ),
         Tool(
             name="query_rag",
             description="Query RAG for insights (without sentiment)",
@@ -479,7 +375,12 @@ async def list_tools():
                 "properties": {
                     "query": {"type": "string"},
                     "k": {"type": "integer", "default": 5},
-                    "include_sources": {"type": "boolean", "default": True}
+                    "include_sources": {"type": "boolean", "default": True},
+                    "refresh": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Bypass cached combined sentiment and recompute from latest vectors.",
+                    },
                 },
                 "required": ["query"]
             }
@@ -488,18 +389,6 @@ async def list_tools():
             name="get_stats",
             description="Get vector store and cache stats",
             inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="get_fng",
-            description="Get Fear and Greed Index historical data",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "default": 30, "description": "Number of historical records"},
-                    "days_back": {"type": "integer", "default": 30, "description": "Days of history to fetch"}
-                },
-                "required": []
-            }
         ),
         Tool(
             name="get_fng_current", 
@@ -513,13 +402,7 @@ async def list_tools():
 
 @server.call_tool()
 async def call_tool(name: str, arguments: Dict[str, Any]):
-    if name == "ingest_documents":
-        return await mcp.ingest_documents(
-            CallToolRequest(
-                params=CallToolRequestParams(name=name, arguments=arguments)
-            )
-        )
-    elif name == "query_rag":
+    if name == "query_rag":
         return await mcp.query_rag(
             CallToolRequest(
                 params=CallToolRequestParams(name=name, arguments=arguments)
@@ -545,12 +428,6 @@ async def call_tool(name: str, arguments: Dict[str, Any]):
         )
     elif name == "get_stats":
         return await mcp.get_stats(
-            CallToolRequest(
-                params=CallToolRequestParams(name=name, arguments=arguments)
-            )
-        )
-    elif name == "get_fng":
-        return await mcp.get_fng(
             CallToolRequest(
                 params=CallToolRequestParams(name=name, arguments=arguments)
             )

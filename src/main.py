@@ -12,6 +12,7 @@ from core.config import settings
 from core.database import get_metadata_db, get_timescale_db
 from core.exceptions import APIError, CryptoAnalyticsError
 from core.logging_config import setup_logging
+from modules.agent.agent_client import call_mcp_tool
 from services.agent import router as agent_router
 from services.dashboard import router as dashboard_router
 from services.onchain import router as onchain_router
@@ -135,6 +136,23 @@ async def root():
 @app.get("/healthz")
 async def healthcheck():
     payload = _base_health_payload()
+
+    # Best-effort sentiment MCP/vector-store health: do not fail overall health if this errors.
+    try:
+        stats = await call_mcp_tool(
+            "crypto-sentiment-server",
+            "get_stats",
+            use_cache=False,
+        )
+        if isinstance(stats, dict):
+            payload["sentiment_mcp"] = "ok"
+            payload["sentiment_stats"] = stats.get("raw") or stats.get("raw_text")
+        else:
+            payload["sentiment_mcp"] = "ok"
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Sentiment MCP health check failed: %s", exc)
+        payload["sentiment_mcp"] = "down"
+
     if payload["db"] == "ok" and payload["redis"] == "ok":
         return payload
     raise HTTPException(status_code=503, detail=payload)

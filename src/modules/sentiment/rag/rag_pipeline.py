@@ -11,7 +11,7 @@ from modules.sentiment.rag.generator import Generator
 from utils.cache import RedisCache
 from modules.sentiment.evaluation.rag_metrics import faithfulness
 from modules.sentiment.evaluation.mlflow_logger import setup_mlflow, start_rag_run, log_rag_metrics, end_rag_run
-from core.config import settings  
+from core.config import settings
 
 cache = RedisCache(
     host=settings.REDIS_HOST,
@@ -21,15 +21,27 @@ cache = RedisCache(
 )
 logger = logging.getLogger(__name__)
 
+def clear_rag_cache():
+    patterns = [
+        "rag:*",
+        "rag_query:*",
+        "combined:*",
+        "mcp:crypto-sentiment-server:*",
+    ]
+    for pattern in patterns:
+        cache.delete_by_pattern(pattern)
+    logger.info("Cleared RAG-related Redis cache keys.")
+
 def ingest(embedder: Embedder, vector_store: QdrantVectorStore, retriever: Retriever):
     vector_store.delete_all()
     docs = embedder.fetch_docs()
     chunks, embeddings, metadatas = embedder.process_docs(docs, chunk_method='sentence')
     vector_store.add(chunks, embeddings, metadatas)
+    clear_rag_cache()
     logger.info("Ingestion complete.")
 
 def query_rag(query: str, retriever: Retriever, generator: Generator, k: int = 3, log_mlflow: bool = False):
-    cache_key = f"rag:{hashlib.sha256(query.encode()).hexdigest()}"  
+    cache_key = f"rag:{hashlib.sha256(query.encode()).hexdigest()}"
     if cached := cache.get_json(cache_key):
         return cached['response']
 
@@ -48,7 +60,7 @@ def query_rag(query: str, retriever: Retriever, generator: Generator, k: int = 3
                 "response": response
             }
             artifact_filename = f"query_artifacts_{uuid.uuid4().hex[:8]}.json"
-            mlflow.log_text(json.dumps(artifact), artifact_filename)  
+            mlflow.log_text(json.dumps(artifact), artifact_filename)
         finally:
             end_rag_run()
 

@@ -12,6 +12,7 @@ from core.logging_config import setup_logging
 from data.storage.models import WhaleAlert as WhaleAlertModel
 from modules.agent.agent_client import call_mcp_tool
 from modules.agent.backtester import PortfolioBacktester
+from .onchain import _shape_metrics as _shape_raw_onchain_metrics
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -56,12 +57,14 @@ def _shape_sentiment(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return {"raw": payload}
+    flattened = _shape_raw_onchain_metrics(payload)
     return {
-        "whale_transactions": payload.get("whale_transactions"),
-        "inflow_usd": payload.get("inflow_usd"),
-        "outflow_usd": payload.get("outflow_usd"),
-        "market_pressure_index": payload.get("market_pressure_index"),
-        "dominant_flow": payload.get("dominant_flow"),
+        "whale_transactions": flattened.get("whale_transactions"),
+        "inflow_usd": flattened.get("exchange_inflow_usd"),
+        "outflow_usd": flattened.get("exchange_outflow_usd"),
+        "market_pressure_index": flattened.get("market_pressure_index"),
+        # Use short-term flow trend as a proxy for dominant flow direction.
+        "dominant_flow": flattened.get("flow_trend_24h"),
     }
 
 

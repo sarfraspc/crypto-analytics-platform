@@ -143,6 +143,13 @@ export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, re
     sources: Array.isArray(result.sources) ? result.sources : [],
   }))
 
+export const getRecentSentimentSources = ({ k = 5, refresh = true } = {}) =>
+  request(`/sentiment/sources/recent${buildQuery({ k, refresh })}`).then((result) => ({
+    ...result,
+    aggregated: result.aggregated || {},
+    sources: Array.isArray(result.sources) ? result.sources : [],
+  }))
+
 export const getFngCurrent = () =>
   request('/sentiment/fng/current').then((result) => ({
     ...result,
