@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import SentimentGauge from './SentimentGauge'
 import SentimentSourcesCarousel from './SentimentSourcesCarousel'
+import FngGauge from './FngGauge'
 import { useTheme } from '../hooks/useTheme'
-import { getSentimentAnalysis } from '../services/api'
+import { getSentimentAnalysis, getFngCurrent } from '../services/api'
 import Loader from './Loader'
 import ErrorBox from './ErrorBox'
 
@@ -12,6 +13,7 @@ const SentimentPanel = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
+  const [fng, setFng] = useState(null)
 
   useEffect(() => {
     let isMounted = true
@@ -19,10 +21,20 @@ const SentimentPanel = () => {
       setLoading(true)
       setError(null)
       try {
-        const result = await getSentimentAnalysis()
+        const [result, fngResult] = await Promise.all([
+          getSentimentAnalysis(),
+          getFngCurrent().catch(() => null),
+        ])
         if (isMounted) {
           setData(result)
-          setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
+          setFng(fngResult)
+          setLastUpdated(
+            result.generated_at ||
+              result.timestamp ||
+              fngResult?.last_updated ||
+              fngResult?.fng?.last_updated ||
+              new Date().toISOString(),
+          )
         }
       } catch (err) {
         if (isMounted) setError(err.message ?? 'Unable to load sentiment data')
@@ -39,7 +51,8 @@ const SentimentPanel = () => {
 
   const aggregated = data?.aggregated || {}
   const sources = Array.isArray(data?.sources) ? data.sources : []
-
+  const fngData = fng?.fng || fng || {}
+  const showFng = fngData && Object.keys(fngData).length > 0
   const formattedUpdated =
     lastUpdated && !Number.isNaN(new Date(lastUpdated).getTime())
       ? new Date(lastUpdated).toLocaleString()
@@ -56,22 +69,27 @@ const SentimentPanel = () => {
       {loading && <Loader label="Analyzing sentiment" />}
       {!loading && error && <ErrorBox message={error} />}
       {!loading && !error && data && (
-        <div className="flex flex-col lg:flex-row gap-6">
-          <div className="lg:w-1/3">
+        <div className="flex flex-col lg:flex-row gap-6 items-center lg:items-start">
+          <div className="flex flex-col items-center">
             <SentimentGauge aggregated={aggregated} />
           </div>
-          <div className="lg:w-2/3 flex flex-col">
-            <div className="flex items-center justify-between mb-6 gap-3">
+          {showFng && (
+            <div className="flex flex-col items-center">
+              <FngGauge fng={fngData} size={116} />
+            </div>
+          )}
+          <div className="flex-1 w-full flex flex-col min-w-0">
+            <div className="flex flex-wrap items-center justify-between w-full mb-4 gap-2 sm:gap-3">
               <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Sentiment Sources
               </h3>
               {formattedUpdated && (
-                <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'} truncate`}>
                   Last updated {formattedUpdated}
                 </span>
               )}
             </div>
-            <div className="flex-grow">
+            <div className="flex-grow w-full">
               <SentimentSourcesCarousel sources={sources} />
             </div>
           </div>
