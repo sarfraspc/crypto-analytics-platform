@@ -26,10 +26,8 @@ DEFAULT_OPTIONS = {
     "k_docs": 5,
     "window": "24h",
     "horizon": 3,  # days
-    "ingest_days": 7,
     "backtest_days": 30,
     "force_llm": None,
-    "refresh_sentiment": False,
     "explain_forecast": False,
     "run_backtest": False,
 }
@@ -69,12 +67,10 @@ class AgentMCP:
         merged = {**DEFAULT_OPTIONS, **raw_options}
         merged["k_docs"] = max(1, int(merged.get("k_docs", DEFAULT_OPTIONS["k_docs"])))
         merged["horizon"] = max(1, int(merged.get("horizon", DEFAULT_OPTIONS["horizon"])))
-        merged["ingest_days"] = max(1, int(merged.get("ingest_days", DEFAULT_OPTIONS["ingest_days"])))
         merged["backtest_days"] = max(
             merged["horizon"],
             int(merged.get("backtest_days", DEFAULT_OPTIONS["backtest_days"])),
         )
-        merged["refresh_sentiment"] = bool(merged.get("refresh_sentiment", False))
         merged["explain_forecast"] = bool(merged.get("explain_forecast", False))
         merged["run_backtest"] = bool(merged.get("run_backtest", False))
 
@@ -132,13 +128,12 @@ class AgentMCP:
 
         request_id = str(uuid.uuid4())
         logger.info(
-            "[%s] get_agent_insight: symbol=%s horizon=%s window=%s k_docs=%s refresh_sentiment=%s explain_forecast=%s run_backtest=%s no_cache=%s",
+            "[%s] get_agent_insight: symbol=%s horizon=%s window=%s k_docs=%s explain_forecast=%s run_backtest=%s no_cache=%s",
             request_id,
             symbol,
             options.get("horizon"),
             options.get("window"),
             options.get("k_docs"),
-            options.get("refresh_sentiment"),
             options.get("explain_forecast"),
             options.get("run_backtest"),
             no_cache,
@@ -244,20 +239,19 @@ async def list_tools():
                         "type": "object",
                         "properties": {
                             "k_docs": {"type": "integer", "default": 5, "description": "RAG top-K contexts"},
-                            "window": {
-                                "type": "string",
-                                "default": "24h",
-                                "enum": sorted(list(SUPPORTED_WINDOWS)),
-                                "description": "On-chain lookback window",
-                            },
-                            "horizon": {"type": "integer", "default": 3, "description": "Forecast horizon (days)"},
-                            "ingest_days": {"type": "integer", "default": 7, "description": "Sentiment ingest lookback"},
-                            "backtest_days": {"type": "integer", "default": 30, "description": "Backtest window (days)"},
-                            "force_llm": {
-                                "type": "string",
-                                "enum": ["real_time", "reasoning", "long_context", "combined", "patterns"],
-                                "description": "Override classifier-selected LLM profile",
-                            },
+                        "window": {
+                            "type": "string",
+                            "default": "24h",
+                            "enum": sorted(list(SUPPORTED_WINDOWS)),
+                            "description": "On-chain lookback window",
+                        },
+                        "horizon": {"type": "integer", "default": 3, "description": "Forecast horizon (days)"},
+                        "backtest_days": {"type": "integer", "default": 30, "description": "Backtest window (days)"},
+                        "force_llm": {
+                            "type": "string",
+                            "enum": ["real_time", "reasoning", "long_context", "combined", "patterns"],
+                            "description": "Override classifier-selected LLM profile",
+                        },
                             "no_cache": {
                                 "type": "boolean",
                                 "default": False,
@@ -272,11 +266,6 @@ async def list_tools():
                                 "type": "boolean",
                                 "default": False,
                                 "description": "Force backtesting even if the classifier does not request it",
-                            },
-                            "refresh_sentiment": {
-                                "type": "boolean",
-                                "default": False,
-                                "description": "Force a new sentiment/RAG ingestion cycle before answering",
                             },
                         },
                         "default": {},

@@ -1,15 +1,18 @@
 import logging
 from typing import List, Dict, Any, Optional
-import uuid  
+import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class QdrantVectorStore:
-    def __init__(self, url: str = "http://localhost:6333", collection_name: str = "crypto_rag"):
-        self.client = QdrantClient(url=url)
-        self.collection_name = collection_name
+    def __init__(self, url: Optional[str] = None, collection_name: Optional[str] = None):
+        resolved_url = url or settings.QDRANT_URL
+        resolved_collection = collection_name or settings.QDRANT_COLLECTION
+        self.client = QdrantClient(url=resolved_url)
+        self.collection_name = resolved_collection
         self._ensure_collection()
 
     def _ensure_collection(self):
@@ -33,8 +36,7 @@ class QdrantVectorStore:
             logger.info(f"Created Qdrant collection '{self.collection_name}' with vector_size={vector_size}")
 
         if ids is None:
-            ids = [str(uuid.uuid4()) for _ in documents]  
-
+            ids = [str(uuid.uuid4()) for _ in documents]
         points = []
         for i, (doc, emb, meta) in enumerate(zip(documents, embeddings, metadatas)):
             point = PointStruct(
@@ -42,7 +44,7 @@ class QdrantVectorStore:
                 vector=emb,
                 payload={
                     "document": doc,
-                    "metadata": meta  
+                    "metadata": meta
                 }
             )
             points.append(point)
@@ -62,9 +64,9 @@ class QdrantVectorStore:
         )
         return {
             "documents": [hit.payload["document"] for hit in search_result],
-            "distances": [hit.score for hit in search_result],  
+            "distances": [hit.score for hit in search_result],
             "metadatas": [hit.payload["metadata"] for hit in search_result],
-            "ids": [str(hit.id) for hit in search_result]  
+            "ids": [str(hit.id) for hit in search_result]
         }
 
     def get_all(self):
@@ -80,7 +82,7 @@ class QdrantVectorStore:
         return {
             "documents": [p.payload["document"] for p in scroll_result],
             "metadatas": [p.payload["metadata"] for p in scroll_result],
-            "ids": [str(p.id) for p in scroll_result] 
+            "ids": [str(p.id) for p in scroll_result]
         }
 
     def delete_all(self):
@@ -90,7 +92,7 @@ class QdrantVectorStore:
             pass
         self.client.create_collection(
             collection_name=self.collection_name,
-            vectors_config=VectorParams(size=384, distance=Distance.COSINE)  
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE)
         )
         logger.info("Cleared Qdrant collection.")
 

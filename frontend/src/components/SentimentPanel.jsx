@@ -3,13 +3,16 @@ import SentimentGauge from './SentimentGauge'
 import SentimentSourcesCarousel from './SentimentSourcesCarousel'
 import FngGauge from './FngGauge'
 import { useTheme } from '../hooks/useTheme'
-import { getSentimentAnalysis, getFngCurrent } from '../services/api'
+import { useSymbol } from '../hooks/useSymbol'
+import { getSentimentAnalysis, getFngCurrent, getRecentSentimentSources } from '../services/api'
 import Loader from './Loader'
 import ErrorBox from './ErrorBox'
 
 const SentimentPanel = () => {
   const { isDark } = useTheme()
+  const { symbol } = useSymbol()
   const [data, setData] = useState(null)
+  const [sources, setSources] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -22,7 +25,7 @@ const SentimentPanel = () => {
       setError(null)
       try {
         const [result, fngResult] = await Promise.all([
-          getSentimentAnalysis(),
+          getSentimentAnalysis(symbol),
           getFngCurrent().catch(() => null),
         ])
         if (isMounted) {
@@ -47,16 +50,37 @@ const SentimentPanel = () => {
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [symbol])
 
   const aggregated = data?.aggregated || {}
-  const sources = Array.isArray(data?.sources) ? data.sources : []
   const fngData = fng?.fng || fng || {}
   const showFng = fngData && Object.keys(fngData).length > 0
   const formattedUpdated =
     lastUpdated && !Number.isNaN(new Date(lastUpdated).getTime())
       ? new Date(lastUpdated).toLocaleString()
       : null
+
+  useEffect(() => {
+    let isMounted = true
+    const fetchSources = async () => {
+      try {
+        const result = await getRecentSentimentSources()
+        if (isMounted && Array.isArray(result?.sources)) {
+          setSources(result.sources)
+        }
+      } catch (err) {
+        console.error('Failed to load recent sentiment sources', err)
+        if (isMounted) {
+          setSources([])
+        }
+      }
+    }
+
+    fetchSources()
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   return (
     <div

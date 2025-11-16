@@ -16,6 +16,7 @@ def run_onchain_metrics(
     symbol: str = 'BTC'
 ):
     logger.info(f"Starting onchain metrics pipeline for {chain}, {time_window}")
+    errors = []
     status = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "chain": chain,
@@ -26,7 +27,6 @@ def run_onchain_metrics(
     }
 
     try:
-        errors = []
         flows = compute_exchange_flows(chain, time_window)
         status["flows"] = flows
         if not flows:
@@ -46,7 +46,12 @@ def run_onchain_metrics(
             logger.warning(f"Metrics had partial failures: {errors}")
         else:
             logger.info("All metrics computed")
-        return {"flows": flows or {}, "whales": whales or {}, "errors": errors}
+        return {
+            "flows": flows or {},
+            "whales": whales or {},
+            "aggregated": agg or {},
+            "errors": errors,
+        }
 
     except Exception as e:
         logger.error(f"Pipeline error: {e}")

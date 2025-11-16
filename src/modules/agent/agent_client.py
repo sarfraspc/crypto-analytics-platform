@@ -197,8 +197,6 @@ async def route_tools(
     forecast_horizon = max(1, horizon_days * 24)
     window = str(options.get("window") or "24h")
     k_docs = max(1, _safe_int(options.get("k_docs"), 5))
-    ingest_days = max(1, _safe_int(options.get("ingest_days"), 7))
-    refresh_sentiment = bool(options.get("refresh_sentiment"))
     explain_forecast = bool(options.get("explain_forecast"))
 
     logger.info(
@@ -217,9 +215,13 @@ async def route_tools(
             use_cache=use_cache,
         )
 
-    if any(cat in cats for cat in ("onchain", "combined")):
+    wants_onchain = any(cat in cats for cat in ("onchain", "combined", "patterns"))
+    if wants_onchain:
         onchain_args = {"symbol": symbol, "window": window}
-        if any(word in query_lower for word in ['pattern', 'rsi', 'macd', 'ta', 'technical']):
+        wants_patterns = "patterns" in cats or any(
+            word in query_lower for word in ["pattern", "rsi", "macd", "ta", "technical"]
+        )
+        if wants_patterns:
             onchain_args.update({"limit": 20})
             tasks["onchain"] = call_mcp_tool(
                 "crypto-onchain-server",
@@ -228,24 +230,14 @@ async def route_tools(
                 use_cache=use_cache,
             )
         else:
-            onchain_args.update({"run_steps": "all"})
             tasks["onchain"] = call_mcp_tool(
                 "crypto-onchain-server",
-                "run_onchain_pipeline",
+                "run_metrics_only",
                 onchain_args,
                 use_cache=use_cache,
             )
 
     if any(cat in cats for cat in ("sentiment", "combined")):
-        if refresh_sentiment:
-            await call_mcp_tool(
-                "crypto-sentiment-server",
-                "ingest_documents",
-                {"days_back": ingest_days},
-                use_cache=False,
-            )
-            logger.info("Sentiment refresh requested; ingestion triggered")
-
         sentiment_query = f"Current market sentiment and news about {symbol}"
         if any(token in query_lower for token in ['pattern', 'technical', 'ta']):
             sentiment_query += " including technical impact"

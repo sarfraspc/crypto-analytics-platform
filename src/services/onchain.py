@@ -62,26 +62,6 @@ def _shape_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _metrics_lack_data(metrics: Dict[str, Any]) -> bool:
-    numeric_fields = [
-        "whale_transactions",
-        "total_whale_volume_usd",
-        "avg_whale_tx_size_usd",
-        "whale_exchange_inflow",
-        "whale_exchange_outflow",
-        "exchange_inflow_usd",
-        "exchange_outflow_usd",
-        "net_flow_usd",
-        "market_pressure_index",
-        "price_change_pct",
-    ]
-    for field in numeric_fields:
-        value = metrics.get(field)
-        if isinstance(value, (int, float)) and value not in (None, 0):
-            return False
-    return True
-
-
 @router.get("/metrics/{symbol}")
 async def get_onchain_metrics(
     symbol: str,
@@ -107,19 +87,6 @@ async def get_onchain_metrics(
         raise HTTPException(status_code=502, detail="On-chain metrics unavailable.") from exc
 
     metrics = _shape_metrics(payload)
-
-    if _metrics_lack_data(metrics):
-        logger.info("[%s] Metrics empty; triggering ingestion for %s", request_id, sanitized_symbol)
-        try:
-            await call_mcp_tool(
-                "crypto-onchain-server",
-                "run_ingestion_only",
-                {"symbol": sanitized_symbol},
-            )
-            payload = await _fetch_metrics()
-            metrics = _shape_metrics(payload)
-        except Exception as exc:
-            logger.warning("[%s] Ingestion retry failed: %s", request_id, exc)
 
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
     response = {
