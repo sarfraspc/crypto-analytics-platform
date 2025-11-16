@@ -13,6 +13,7 @@ const InsightSummary = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const isMountedRef = useRef(true)
+  const [lastUpdated, setLastUpdated] = useState(null)
 
   const fetchSummary = useCallback(async () => {
     setLoading(true)
@@ -21,6 +22,7 @@ const InsightSummary = () => {
       const result = await getInsightSummary(symbol)
       if (isMountedRef.current) {
         setData(result)
+        setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -81,50 +83,63 @@ const InsightSummary = () => {
     return result
   }, [data])
 
+  const formattedUpdated =
+    lastUpdated && !Number.isNaN(new Date(lastUpdated).getTime())
+      ? new Date(lastUpdated).toLocaleString()
+      : null
+
   return (
     <div
-      className={`rounded-xl p-6 shadow-lg ${
-        isDark
-          ? 'bg-gradient-to-br from-indigo-900/50 to-purple-900/50 backdrop-blur-xl border border-indigo-800'
-          : 'bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200'
-      }`}
+      className="relative rounded-xl p-6 shadow-lg bg-gray-900 border border-indigo-700 overflow-hidden"
     >
-      <div className="flex items-center gap-2 mb-4">
-        <Brain className="text-indigo-500" size={24} />
-        <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          AI Insight Summary
-        </h3>
-      </div>
+      {/* Gradient and blur overlay */}
+      <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-indigo-900/50 to-purple-900/50 backdrop-blur-xl"></div>
 
-      {loading && <Loader label="Gathering latest dashboard data..." />}
-      {!loading && error && <ErrorBox message={error} onRetry={handleRetry} />}
-      {!loading && !error && summary && (
-        <p className={`text-sm leading-relaxed ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-          {summary}
-        </p>
-      )}
-      {!loading && !error && !summary && data?.response && (
-        <p className={`text-sm leading-relaxed ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{data.response}</p>
-      )}
-
-      {!loading && !error && badges.length > 0 && (
-        <div className="flex flex-wrap gap-2 mt-4">
-          {badges.map((badge) => (
-            <span
-              key={badge.label}
-              className={`px-3 py-1 rounded-full text-xs font-medium ${
-                badge.tone === 'green'
-                  ? 'bg-green-500/20 text-green-300'
-                  : badge.tone === 'blue'
-                    ? 'bg-blue-500/20 text-blue-300'
-                    : 'bg-purple-500/20 text-purple-300'
-              }`}
-            >
-              {badge.label}
-            </span>
-          ))}
+      {/* Content */}
+      <div className="relative z-10">
+        <div className="flex items-center gap-2 mb-4">
+          <Brain className="text-indigo-500" size={24} />
+          <h3 className="text-lg font-semibold text-white">
+            AI Insight Summary
+          </h3>
         </div>
-      )}
+
+        {loading && <Loader label="Gathering latest dashboard data..." />}
+        {!loading && error && <ErrorBox message={error} onRetry={handleRetry} />}
+        {!loading && !error && summary && (
+          <p className="text-sm leading-relaxed text-gray-300">
+            {summary}
+          </p>
+        )}
+        {!loading && !error && !summary && data?.response && (
+          <p className="text-sm leading-relaxed text-gray-300">{data.response}</p>
+        )}
+
+        {!loading && !error && badges.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-4">
+            {badges.map((badge) => (
+              <span
+                key={badge.label}
+                className={`px-3 py-1 rounded-full text-xs font-medium ${
+                  badge.tone === 'green'
+                    ? 'bg-green-500/20 text-green-300'
+                    : badge.tone === 'blue'
+                      ? 'bg-blue-500/20 text-blue-300'
+                      : 'bg-purple-500/20 text-purple-300'
+                }`}
+              >
+                {badge.label}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {formattedUpdated && (
+          <p className="mt-4 text-xs text-gray-400">
+            Last updated {formattedUpdated}
+          </p>
+        )}
+      </div>
     </div>
   )
 }

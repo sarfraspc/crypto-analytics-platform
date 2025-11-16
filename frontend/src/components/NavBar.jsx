@@ -1,12 +1,45 @@
-import { Moon, Sun } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Moon, Sun, ChevronDown, Loader2, Check } from 'lucide-react'
 import Logo from './Logo'
 import { useTheme } from '../hooks/useTheme'
 import { useSymbol } from '../hooks/useSymbol'
 
 const NavBar = ({ currentPage, onPageChange }) => {
   const { isDark, toggleTheme } = useTheme()
-  const { symbol, setSymbol } = useSymbol()
-  const symbols = ['BTC', 'ETH', 'SOL', 'AVAX', 'MATIC']
+  const { symbol, setSymbol, availableSymbols, loadingSymbols, symbolsError } = useSymbol()
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const dropdownRef = useRef(null)
+  const symbolOptions =
+    Array.isArray(availableSymbols) && availableSymbols.length > 0
+      ? availableSymbols
+      : symbol
+        ? [symbol]
+        : []
+  const dropdownDisabled = loadingSymbols || symbolOptions.length === 0
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setDropdownOpen(false)
+      }
+    }
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [])
+
+  const handleSymbolSelect = (value) => {
+    setSymbol(value)
+    setDropdownOpen(false)
+  }
 
   return (
     <nav
@@ -18,21 +51,58 @@ const NavBar = ({ currentPage, onPageChange }) => {
         <div className="flex items-center justify-between h-16">
           <Logo />
           <div className="flex items-center gap-4">
-            <select
-              value={symbol}
-              onChange={(event) => setSymbol(event.target.value)}
-              className={`px-4 py-2 rounded-lg font-medium border focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                isDark
-                  ? 'bg-slate-800 text-white border-slate-700'
-                  : 'bg-gray-100 text-gray-900 border-gray-300'
-              }`}
-            >
-              {symbols.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
+            <div className="relative" ref={dropdownRef}>
+              <button
+                type="button"
+                onClick={() => !dropdownDisabled && setDropdownOpen((prev) => !prev)}
+                className={`w-40 px-4 py-2 rounded-lg font-medium border focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center justify-between ${
+                  isDark
+                    ? 'bg-slate-800 text-white border-slate-700 disabled:bg-slate-800/60'
+                    : 'bg-white text-gray-900 border-gray-200 disabled:bg-gray-50'
+                } ${dropdownDisabled ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
+                aria-haspopup="listbox"
+                aria-expanded={dropdownOpen}
+                disabled={dropdownDisabled}
+              >
+                <span className="truncate">
+                  {loadingSymbols ? 'Loading...' : symbol || 'Select symbol'}
+                </span>
+                {loadingSymbols ? <Loader2 size={16} className="animate-spin" /> : <ChevronDown size={18} />}
+              </button>
+              {dropdownOpen && (
+                <div
+                  className={`absolute right-0 mt-2 w-48 rounded-lg border shadow-lg z-50 ${
+                    isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'
+                  }`}
+                >
+                  <div className="max-h-64 overflow-y-auto py-1">
+                    {symbolOptions.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => handleSymbolSelect(option)}
+                        className={`w-full flex items-center justify-between px-4 py-2 text-sm ${
+                          isDark
+                            ? 'text-gray-100 hover:bg-slate-800'
+                            : 'text-gray-800 hover:bg-gray-100'
+                        } ${option === symbol ? 'font-semibold' : ''}`}
+                      >
+                        <span>{option}</span>
+                        {option === symbol && <Check size={14} className="text-indigo-500" />}
+                      </button>
+                    ))}
+                    {symbolOptions.length === 0 && (
+                      <p className={`px-4 py-3 text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                        No symbols available
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+              {symbolsError && (
+                <p className={`mt-1 text-xs ${isDark ? 'text-rose-400' : 'text-rose-500'}`}>{symbolsError}</p>
+              )}
+            </div>
 
             <div
               className={`hidden sm:flex gap-2 px-2 py-1 rounded-lg ${
