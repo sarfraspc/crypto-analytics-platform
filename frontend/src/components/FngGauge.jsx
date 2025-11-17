@@ -26,9 +26,16 @@ const FngGauge = ({ fng }) => {
       </div>
 
       <div className="flex items-center justify-center">
-        <div className="relative w-48 h-48">
-          <svg className="transform -rotate-90 w-48 h-48">
-            <circle cx="96" cy="96" r="80" stroke={isDark ? '#334155' : '#e5e7eb'} strokeWidth="12" fill="none" />
+        <div className="relative w-32 h-32 sm:w-48 sm:h-48">
+          <svg className="transform -rotate-90 w-full h-full" viewBox="0 0 192 192">
+            <circle
+              cx="96"
+              cy="96"
+              r="80"
+              stroke={isDark ? '#334155' : '#e5e7eb'}
+              strokeWidth="12"
+              fill="none"
+            />
             <circle
               cx="96"
               cy="96"
@@ -41,8 +48,8 @@ const FngGauge = ({ fng }) => {
             />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className={`text-4xl font-bold ${gaugeColor}`}>{Math.round(score * 100)}</span>
-            <span className={`text-sm font-medium mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            <span className={`text-2xl sm:text-4xl font-bold ${gaugeColor}`}>{Math.round(score * 100)}</span>
+            <span className={`text-xs sm:text-sm font-medium mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
               {sentiment}
             </span>
             <span className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>{bias} bias</span>

@@ -227,19 +227,18 @@ const ChatBox = () => {
 
   return (
     <div
-      className={`rounded-xl shadow-lg flex flex-col ${
+      className={`rounded-xl shadow-lg flex flex-col h-[500px] sm:h-[600px] lg:h-[650px] ${
         isDark ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700' : 'bg-white border border-gray-200'
       }`}
-      style={{ height: '600px' }}
     >
-      <div className={`px-6 py-4 border-b flex-shrink-0 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
+      <div className={`px-4 sm:px-6 py-3 sm:py-4 border-b flex-shrink-0 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
         <div className="flex items-center gap-2">
           <MessageSquare className="text-indigo-500" size={20} />
           <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>AI Assistant</h3>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 min-h-0">
         {messages.map((message, index) => (
           <div
             key={`${message.role}-${index}`}
@@ -275,7 +274,7 @@ const ChatBox = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className={`p-4 border-t space-y-3 flex-shrink-0 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
+      <div className={`p-3 sm:p-4 border-t space-y-3 flex-shrink-0 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
         {error && <ErrorBox message={error} />}
         <div className="flex gap-2">
           <input
