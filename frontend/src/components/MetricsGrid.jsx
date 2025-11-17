@@ -165,7 +165,7 @@ const MetricsGrid = () => {
       {loading && <Loader label="Fetching on-chain data" />}
       {!loading && error && <ErrorBox message={error} onRetry={handleRetry} />}
       {!loading && !error && (
-        <div className="grid grid-cols-2 grid-rows-3 gap-4 flex-grow">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 flex-grow">
           {cards.map((card) => (
             <MetricCard key={card.title} {...card} isDark={isDark} />
           ))}

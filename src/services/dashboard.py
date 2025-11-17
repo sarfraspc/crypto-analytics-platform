@@ -58,13 +58,29 @@ def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return {"raw": payload}
     flattened = _shape_raw_onchain_metrics(payload)
+    flow_trend = flattened.get("flow_trend_24h")
+    # Map numeric flow trend into a human-readable dominant flow label.
+    dominant_flow_label: str | None = None
+    try:
+        if flow_trend is not None:
+            val = float(flow_trend)
+            if val > 5:
+                dominant_flow_label = "inflow-dominated"
+            elif val < -5:
+                dominant_flow_label = "outflow-dominated"
+            else:
+                dominant_flow_label = "balanced"
+    except Exception:
+        dominant_flow_label = None
+
     return {
         "whale_transactions": flattened.get("whale_transactions"),
         "inflow_usd": flattened.get("exchange_inflow_usd"),
         "outflow_usd": flattened.get("exchange_outflow_usd"),
         "market_pressure_index": flattened.get("market_pressure_index"),
         # Use short-term flow trend as a proxy for dominant flow direction.
-        "dominant_flow": flattened.get("flow_trend_24h"),
+        "dominant_flow": dominant_flow_label,
+        "flow_trend_24h": flow_trend,
     }
 
 
@@ -135,6 +151,28 @@ async def get_dashboard_overview(
         "onchain": _shape_onchain_metrics(shaped.get("onchain", {})),
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+    # Optional plain-text summary for frontend fallbacks (InsightSummary).
+    try:
+        sent = response["sentiment"]
+        onchain = response["onchain"]
+        sentiment_label = (sent.get("top_sentiment") or "mixed").lower()
+        whale_tx = onchain.get("whale_transactions")
+        flow = onchain.get("dominant_flow")
+        pressure = onchain.get("market_pressure_index")
+
+        parts = [f"Market mood for {sanitized_symbol} is {sentiment_label}."]
+        if whale_tx:
+            parts.append(f"{whale_tx} whale transactions observed in the recent window.")
+        if flow:
+            parts.append(f"Dominant flow is {flow}.")
+        if pressure is not None:
+            parts.append(f"Market pressure index is {pressure}.")
+
+        response["response"] = " ".join(parts)
+    except Exception as e:
+        logger.warning("Failed to build overview summary: %s", e)
+
     return response
 
 

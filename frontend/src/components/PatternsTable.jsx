@@ -134,7 +134,7 @@ const PatternsTable = () => {
           <table className="w-full">
             <thead>
               <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
-                {['Symbol', 'Pattern', 'Confidence', 'Details'].map((heading) => (
+                {['Symbol', 'Pattern', 'Signal', 'Confidence', 'Details'].map((heading) => (
                   <th
                     key={heading}
                     className={`text-left py-3 px-4 text-xs font-semibold ${
@@ -159,6 +159,9 @@ const PatternsTable = () => {
                   </td>
                   <td className={`py-3 px-4 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                     {pattern.pattern || pattern.name}
+                  </td>
+                  <td className={`py-3 px-4 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    {(pattern.signal || '').toString().toLowerCase() || 'neutral'}
                   </td>
                   <td className="py-3 px-4">
                   <div className="flex items-center gap-2">

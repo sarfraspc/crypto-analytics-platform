@@ -55,11 +55,17 @@ const InsightSummary = () => {
     const pressure = data.onchain?.market_pressure_index
     const whaleTx = data.onchain?.whale_transactions
     const flow = data.onchain?.dominant_flow
+    const bias = data.onchain?.market_bias
+
+    const pressureText =
+      typeof pressure === 'number' ? pressure.toFixed(2) : pressure
 
     const computed = `Market mood for ${symbol} is ${sentimentLabel.toLowerCase()} with ${
       whaleTx ? `${whaleTx} whale transactions` : 'limited whale data'
     }. ${flow ? `Dominant flow is ${flow}.` : ''} ${
-      pressure ? `Market pressure index stands at ${pressure}.` : ''
+      pressure != null ? `Market pressure index stands at ${pressureText}.` : ''
+    } ${
+      bias ? `TA bias is ${bias}.` : ''
     }`.trim()
 
     if (computed.trim().length < 50 || !computed.toLowerCase().includes(symbol.toLowerCase())) {

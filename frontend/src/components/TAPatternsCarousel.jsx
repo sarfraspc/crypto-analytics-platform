@@ -158,6 +158,7 @@ const TAPatternsCarousel = () => {
                 </div>
                 <p className={`text-sm mt-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                   {pattern.pattern || pattern.name}
+                  {pattern.signal ? ` (${String(pattern.signal).toLowerCase()})` : ''}
                 </p>
               </div>
               <div className="flex-grow" />

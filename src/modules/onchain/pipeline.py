@@ -102,14 +102,13 @@ def get_top_symbols(db: Session, limit: int = 50):
 def run_whale_ingestion(
     db: Session,
     chain: str = 'ethereum',
-    batch_size: int = 100,
-    threshold_usd: float = 500000.0,
+    threshold_usd: float = 200000.0,
     time_window: str = '24h',  # NEW: For dynamic cache keys
     symbol: str = 'BTC'        # NEW: For dynamic cache keys
 ):
     try:
-        logger.info(f"Starting whale ingestion for {chain} (batch_size={batch_size})")
-        result = chain_client.scan_eth_transfers(db, batch_size=batch_size, threshold_usd=threshold_usd)
+        logger.info(f"Starting whale ingestion for {chain} (24h window, threshold_usd={threshold_usd})")
+        result = chain_client.scan_eth_transfers(db, threshold_usd=threshold_usd)
         if result and result.get('whale_alerts', 0) > 0:
             logger.info(f"Ingested {result['whale_alerts']} whale alerts")
             
@@ -190,8 +189,7 @@ def run_ta_patterns(
 def run_onchain_pipeline(
     db: Session,
     chain: str = 'ethereum',
-    batch_size: int = 100,
-    threshold_usd: float = 500000.0,
+    threshold_usd: float = 200000.0,
     time_window: str = '24h',
     symbol: str = 'BTC',
     run_steps: List[str] = None 
@@ -213,8 +211,7 @@ def run_onchain_pipeline(
     }
 
     if 'ingestion' in run_steps:
-        # FIXED: Pass time_window/symbol for dynamic deletes
-        ingestion = run_whale_ingestion(db, chain, batch_size, threshold_usd, time_window, symbol)
+        ingestion = run_whale_ingestion(db, chain, threshold_usd, time_window, symbol)
         status["ingestion"] = ingestion
         if ingestion and ingestion.get("status") == "error":
             status["errors"].append("Ingestion failed")
@@ -243,8 +240,7 @@ if __name__ == "__main__":
     setup_mlflow()
     parser = argparse.ArgumentParser(description="Run on-chain analytics pipeline")
     parser.add_argument("--chain", default="ethereum", help="Blockchain (default: ethereum)")
-    parser.add_argument("--batch-size", type=int, default=100, help="Ingestion batch size")
-    parser.add_argument("--threshold-usd", type=float, default=500000.0, help="Whale USD threshold")
+    parser.add_argument("--threshold-usd", type=float, default=200000.0, help="Whale USD threshold")
     parser.add_argument("--window", default="24h", choices=["1h", "24h"], help="Time window")
     parser.add_argument("--symbol", default="BTC", help="Symbol for metrics")
     parser.add_argument("--run", default="all", help="Steps to run: 'all' or comma-separated e.g., 'ingestion,metrics'")
@@ -266,7 +262,6 @@ if __name__ == "__main__":
         result = run_onchain_pipeline(
             db=db,
             chain=args.chain,
-            batch_size=args.batch_size,
             threshold_usd=args.threshold_usd,
             time_window=args.window,
             symbol=args.symbol,

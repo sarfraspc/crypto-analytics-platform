@@ -1,20 +1,15 @@
 from web3 import Web3
-from sqlalchemy import select, func
 from typing import Any, Dict, List, Optional, Set
 from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.orm import Session
 import logging
-import time
-import random
 from pycoingecko import CoinGeckoAPI  
-from tenacity import retry, wait_exponential, stop_after_attempt
 
 from core.config import settings
-from data.validation import WhaleAlert, ChainState
-from data.storage.crud import upsert_whale_alerts, update_chain_state
+from data.validation import WhaleAlert
+from data.storage.crud import upsert_whale_alerts
 from core.logging_config import setup_logging
-from data.storage.models import Token as TokenModel 
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -25,40 +20,36 @@ TRANSFER_TOPIC = "0x" + Web3.keccak(text="Transfer(address,address,uint256)").he
 EXCHANGE_ADDRESSES = settings.EXCHANGE_ADDRESSES
 ALL_EXCHANGE_ADDRS = set(addr.lower() for addrs in EXCHANGE_ADDRESSES.values() for addr in addrs)
 
-def get_top_eth_tokens(db: Session, limit: int = 20) -> List[Dict[str, str]]:
-    try:
-        result = db.execute(
-            select(TokenModel)
-            .where(
-                func.jsonb_extract_path_text(TokenModel.token_metadata, 'market_cap_rank').isnot(None),
-                func.jsonb_extract_path_text(TokenModel.token_metadata, 'detail_platforms', 'ethereum').isnot(None)
-            )
-            .order_by(
-                func.cast(func.jsonb_extract_path_text(TokenModel.token_metadata, 'market_cap_rank'), func.Integer)
-            )
-            .limit(limit)
-        ).scalars().all()
+def _get_static_eth_tokens(limit: int) -> List[Dict[str, str]]:
+    """
+    Fallback list of major ETH ERC-20 tokens with correct CoinGecko IDs.
+    Used when DB metadata is missing or incomplete.
+    """
+    fallback_tokens: List[Dict[str, str]] = []
+    for addr, meta in settings.STATIC_TOKEN_METADATA.items():
+        key = addr.lower()
+        cg_id = meta.get("coingecko_id", "weth")
+        symbol = meta.get("symbol", "WETH")
+        fallback_tokens.append(
+            {
+                "contract_addr": key,
+                "coingecko_id": cg_id,
+                "symbol": symbol,
+            }
+        )
+        if len(fallback_tokens) >= limit:
+            break
 
-        top_tokens = []
-        for token in result:
-            metadata = token.token_metadata or {}
-            platforms = metadata.get('detail_platforms', {})
-            eth_addr = platforms.get('ethereum')
-            if eth_addr:
-                top_tokens.append({
-                    'contract_addr': eth_addr.lower(),
-                    'coingecko_id': token.coingecko_id,
-                    'symbol': token.symbol
-                })
-        
-        logger.info(f"Loaded {len(top_tokens)} top ETH tokens from DB (limit={limit})")
-        return top_tokens
-    except Exception as e:
-        logger.error(f"Error fetching top ETH tokens from DB: {e}", exc_info=True)
-        return [
-            {'contract_addr': addr.lower(), 'coingecko_id': 'weth', 'symbol': 'WETH'}  
-            for addr in settings.STATIC_KNOWN_TOKENS
-        ][:limit]
+    return fallback_tokens
+
+def get_top_eth_tokens(db: Session, limit: int = 20) -> List[Dict[str, str]]:
+    """
+    Return top ETH tokens based purely on STATIC_TOKEN_METADATA / STATIC_KNOWN_TOKENS
+    from settings, without requiring the tokens table.
+    """
+    tokens = _get_static_eth_tokens(limit)
+    logger.info(f"Loaded {len(tokens)} ETH tokens from STATIC_TOKEN_METADATA (limit={limit})")
+    return tokens
 
 def fetch_prices_bulk(coingecko_ids: List[str]) -> Dict[str, float]:
     if not coingecko_ids:
@@ -72,28 +63,58 @@ def fetch_prices_bulk(coingecko_ids: List[str]) -> Dict[str, float]:
         logger.warning(f"Failed to bulk fetch prices for {len(coingecko_ids)} IDs: {e}", exc_info=True)
         return {}
 
-def get_last_chain_block(db: Session, chain: str = 'ethereum'):
-    from data.storage.models import ChainState as ChainStateModel
-    state = db.execute(select(ChainStateModel).where(ChainStateModel.chain == chain)).scalar_one_or_none()
-    return state.last_block if state else None
+def get_logs_in_chunks(
+    w3,
+    from_block: int,
+    to_block: int,
+    known_tokens: List[str],
+    chunk_size: int = 120,
+) -> List[Dict]:
+    """
+    Fetch Transfer logs in smaller block chunks to avoid provider
+    limits (e.g., Infura's 10k log cap per query).
+    """
+    all_logs: List[Dict] = []
+    if from_block > to_block:
+        return all_logs
 
-@retry(wait=wait_exponential(multiplier=2, min=2, max=30), stop=stop_after_attempt(10))
-def _get_logs_with_retry(w3, from_block, to_block, known_tokens: List[str], step=50):
-    all_logs = []
-    for start in range(from_block, to_block + 1, step):
-        end = min(start + step - 1, to_block)
+    # Start with a safe-ish chunk size and shrink dynamically
+    # if the provider reports >10k logs (Infura code -32005).
+    current_chunk = max(20, int(chunk_size))
+    start = from_block
+
+    while start <= to_block:
+        end = min(start + current_chunk - 1, to_block)
         try:
-            logs = w3.eth.get_logs({
-                "fromBlock": start,
-                "toBlock": end,
-                "topics": [TRANSFER_TOPIC],
-                "address": [Web3.to_checksum_address(addr) for addr in known_tokens]  
-            })
+            logs = w3.eth.get_logs(
+                {
+                    "fromBlock": start,
+                    "toBlock": end,
+                    "topics": [TRANSFER_TOPIC],
+                    "address": [Web3.to_checksum_address(addr) for addr in known_tokens],
+                }
+            )
             all_logs.extend(logs)
-            time.sleep(1.0 + random.uniform(0, 0.5))  
+            logger.info(f"Chunk {start}-{end} (size={current_chunk}) fetched {len(logs)} logs")
+            start = end + 1
         except Exception as e:
-            logger.warning(f"Partial fetch failed for blocks {start}-{end}: {e}", exc_info=True)
-            continue
+            msg = str(e)
+            too_many_logs = "more than 10000 results" in msg or "10000 results" in msg or "-32005" in msg
+            if too_many_logs and current_chunk > 20:
+                # Shrink chunk and retry same start range
+                new_chunk = max(20, current_chunk // 2)
+                logger.warning(
+                    f"Chunk {start}-{end} hit provider log cap; "
+                    f"shrinking chunk_size {current_chunk} -> {new_chunk} and retrying"
+                )
+                current_chunk = new_chunk
+                continue
+
+            logger.warning(f"Chunk get_logs failed for blocks {start}-{end}: {e}", exc_info=True)
+            # Skip this problematic range and move on
+            start = end + 1
+
+    logger.info(f"Total logs fetched across chunks: {len(all_logs)}")
     return all_logs
 
 def is_erc20(w3, address: str) -> bool:
@@ -138,7 +159,14 @@ def clean_hexbytes(obj: Any):
         return obj.hex()
     return obj
 
-def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd: float) -> tuple[Optional[WhaleAlert], Set[str]]:
+def process_transfer_log(
+    w3,
+    prices: Dict[str, float],
+    log: Dict,
+    block_timestamps: Dict[int, int],
+    threshold_usd: float,
+    min_timestamp: Optional[int] = None
+) -> tuple[Optional[WhaleAlert], Set[str]]:
     try:
         if len(log['topics']) < 3:
             logger.warning(f"Skipping malformed log (short topics): {log.get('transactionHash', 'unknown').hex() if hasattr(log.get('transactionHash'), 'hex') else 'unknown'}")
@@ -150,6 +178,16 @@ def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd:
         amount_raw = int.from_bytes(log['data'], 'big')
         
         addresses = {from_addr, to_addr}
+        
+        block_number = log['blockNumber']
+        if block_number in block_timestamps:
+            block_timestamp = int(block_timestamps[block_number])
+        else:
+            block_data = w3.eth.get_block(block_number)
+            block_timestamp = int(block_data['timestamp'])
+
+        if min_timestamp is not None and block_timestamp < min_timestamp:
+            return None, addresses
         
         if from_addr in ALL_EXCHANGE_ADDRS and to_addr in ALL_EXCHANGE_ADDRS:
             logger.debug(f"Skipping internal exchange transfer: {from_addr} -> {to_addr}")
@@ -168,10 +206,6 @@ def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd:
         value_usd = float(amount) * price_usd
         if value_usd < threshold_usd:
             return None, addresses
-
-        block_number = log['blockNumber']
-        block_data = w3.eth.get_block(block_number)
-        block_timestamp = block_data['timestamp']
 
         raw_log = clean_hexbytes(dict(log))
         
@@ -195,63 +229,111 @@ def process_transfer_log(w3, prices: Dict[str, float], log: Dict, threshold_usd:
         logger.error(f"Error processing transfer log: {e}", exc_info=True)
         return None, set()
 
-def scan_eth_transfers(db: Session, batch_size: int = 100, threshold_usd: float = 500000.0): 
-    logger.info(f"Starting Ethereum whale scan with USD threshold: {threshold_usd:,}")
+def scan_eth_transfers(db: Session, threshold_usd: float = 200000.0):
+    """
+    Timestamp-based 24h rolling ingestion for Ethereum whale transfers.
+
+    This no longer relies on ChainState or incremental block scanning.
+    Each run:
+      - Estimates a block range covering the last 24h
+      - Fetches logs once for that range
+      - Filters by timestamp and USD value
+      - Upserts whale alerts idempotently into Timescale
+    """
+    logger.info(f"Starting Ethereum 24h whale scan (USD threshold={threshold_usd:,})")
     try:
         w3 = Web3(Web3.HTTPProvider(settings.INFURA_HTTPS))
         if not w3.is_connected():
             raise Exception("Failed to connect to Ethereum")
 
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        min_ts = now_ts - 24 * 60 * 60
+
+        latest_block = w3.eth.get_block("latest")
+        latest_number = latest_block["number"]
+
+        # Estimate average seconds per block from recent history
+        lookback_blocks = min(10_000, max(100, int(24 * 60 * 60 / 12)))
+        sample_start = max(1, latest_number - lookback_blocks)
+        sample_block = w3.eth.get_block(sample_start)
+
+        seconds_diff = max(1, int(latest_block["timestamp"]) - int(sample_block["timestamp"]))
+        blocks_diff = latest_number - sample_start or 1
+        avg_seconds_per_block = seconds_diff / blocks_diff
+
+        estimated_window_blocks = int((24 * 60 * 60) / avg_seconds_per_block) + 200
+        from_block = max(0, latest_number - estimated_window_blocks)
+        to_block = latest_number
+
+        logger.info(
+            f"Fetching logs for ~24h window: blocks {from_block}–{to_block} "
+            f"(avg_seconds_per_block≈{avg_seconds_per_block:.2f})"
+        )
+
         top_eth_tokens = get_top_eth_tokens(db, limit=20)
-        known_tokens = [t['contract_addr'] for t in top_eth_tokens]
-        coingecko_ids = [t['coingecko_id'] for t in top_eth_tokens]
+        known_tokens = [t["contract_addr"] for t in top_eth_tokens]
+        # If we're only scanning USDT (or other stable tokens with ~1 USD peg),
+        # we can skip CoinGecko and assume 1 token ≈ 1 USD for filtering.
+        if len(top_eth_tokens) == 1:
+            prices = {known_tokens[0]: 1.0}
+            logger.info("Single static token detected; using fixed price 1.0 USD and skipping CoinGecko")
+        else:
+            coingecko_ids = [t["coingecko_id"] for t in top_eth_tokens]
+            prices_dict = fetch_prices_bulk(coingecko_ids)
+            prices = {t["contract_addr"]: prices_dict.get(t["coingecko_id"], 0.0) for t in top_eth_tokens}
 
-        prices_dict = fetch_prices_bulk(coingecko_ids)
-        prices = {t['contract_addr']: prices_dict.get(t['coingecko_id'], 0.0) for t in top_eth_tokens}
-
-        last_block = get_last_chain_block(db, 'ethereum')  
-        current_block = w3.eth.block_number
-        lag = current_block - (last_block or 0)
-        if lag > 10000:  # >2 hours lag
-            batch_size = min(5000, lag // 10)  # Scale to 5k max, or 10% lag
-            logger.info(f"Lag {lag} blocks; scaling batch to {batch_size}")
-        if last_block is None:
-            last_block = current_block - 100
-        if last_block >= current_block:
-            return {'whale_alerts': 0}
-
-        start_block = last_block + 1
-        end_block = min(current_block, last_block + batch_size)
-
-        logger.info(f"Processing blocks {start_block} to {end_block} for {len(known_tokens)} ETH tokens")
-        
-        logs = _get_logs_with_retry(w3, start_block, end_block, known_tokens)
-        logger.info(f"Fetched {len(logs)} transfer logs")
+        logs = get_logs_in_chunks(
+            w3=w3,
+            from_block=from_block,
+            to_block=to_block,
+            known_tokens=known_tokens,
+            chunk_size=120,
+        )
+        total_logs = len(logs)
+        logger.info(f"Fetched {total_logs} transfer logs in estimated 24h window (chunked)")
 
         if not logs:
-            update_chain_state(db, ChainState(chain='ethereum', last_block=end_block, last_updated=datetime.now(timezone.utc)))
-            return {'whale_alerts': 0}
+            return {"whale_alerts": 0}
+
+        block_numbers = sorted({log["blockNumber"] for log in logs})
+        block_timestamps: Dict[int, int] = {}
+        for bn in block_numbers:
+            try:
+                block_data = w3.eth.get_block(bn)
+                block_timestamps[bn] = int(block_data["timestamp"])
+            except Exception as e:
+                logger.warning(f"Failed to fetch block {bn} timestamp: {e}", exc_info=True)
+        logger.info(f"Pre-fetched timestamps for {len(block_timestamps)} unique blocks")
 
         alerts: List[WhaleAlert] = []
         unique_addrs: Set[str] = set()
 
-        for log in logs:
-            alert, addrs = process_transfer_log(w3, prices, log, threshold_usd)
+        for idx, log in enumerate(logs, start=1):
+            alert, addrs = process_transfer_log(
+                w3,
+                prices,
+                log,
+                block_timestamps,
+                threshold_usd,
+                min_timestamp=min_ts,
+            )
             if alert:
                 alerts.append(alert)
             unique_addrs.update(addrs)
 
+            if idx % 10000 == 0 or idx == total_logs:
+                logger.info(f"Processed {idx:,} / {total_logs:,} logs for whale detection...")
+
         if alerts:
             upsert_whale_alerts(db, alerts)
-            logger.info(f"Upserted {len(alerts)} whale alerts")
+            logger.info(f"Upserted {len(alerts)} whale alerts from {len(unique_addrs)} unique addresses")
+        else:
+            logger.info("No whale alerts found in the last 24h window above threshold")
 
-        update_chain_state(db, ChainState(chain='ethereum', last_block=end_block, last_updated=datetime.now(timezone.utc)))
-
-        logger.info(f"Scan complete: {len(alerts)} alerts from {len(unique_addrs)} unique addresses")
-        return {'whale_alerts': len(alerts)}
+        return {"whale_alerts": len(alerts)}
 
     except Exception as e:
-        logger.error(f"Ethereum scan failed: {e}", exc_info=True)
+        logger.error(f"Ethereum 24h scan failed: {e}", exc_info=True)
         if db.in_transaction():
             db.rollback()
-        return {'whale_alerts': 0}
+        return {"whale_alerts": 0}
