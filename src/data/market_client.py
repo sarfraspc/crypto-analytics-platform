@@ -11,9 +11,9 @@ from core.config import settings
 from core.database import get_timescale_db, get_metadata_db
 from data.storage.crud import update_ingestion_job, get_last_success
 from data.validation import IngestionJob
-from data.storage.models import Token
+from data.storage.models import Token, OHLCV as OHLCVModel
 from data.ingestion.market_client import backfill_ohlcv_ccxt, poll_trades_ccxt
-from data.ingestion.news_client import ingest_cryptopanic, ingest_reddit_praw, ingest_fng
+from modules.onchain.patterns.ta_patterns import generate_ta_signal
 
 from core.logging_config import setup_logging
 
@@ -45,9 +45,73 @@ def get_symbols_from_tokens(db: Session, limit: int = 50):
         logger.error(f"Error fetching symbols: {e}")
         return []
 
+def get_top_symbols(db: Session, limit: int = 50):
+    """
+    Select TA symbols directly from the OHLCV table so TA runs only
+    on assets that actually have market data, with no token-metadata
+    lookup or hardcoded fallback list.
+    """
+    try:
+        result = (
+            db.execute(
+                select(OHLCVModel.symbol)
+                .where(
+                    OHLCVModel.exchange == "binance",
+                    OHLCVModel.interval == "1h",
+                )
+                .group_by(OHLCVModel.symbol)
+                .order_by(func.max(OHLCVModel.time).desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        symbols = [s for s in result if s]
+        logger.info("Loaded %d OHLCV-backed symbols for TA patterns", len(symbols))
+        return symbols
+    except Exception as e:
+        logger.error(f"Error fetching OHLCV symbols for TA: {e}")
+        return []
+
+def run_ta_patterns(
+    symbols: List[str],
+    exchange: str = "binance",
+    interval: str = "1d",
+):
+    """
+    Generate TA signals for a list of symbols.
+    Used by ingestion and the MCP onchain TA tool.
+    """
+    try:
+        logger.info(
+            "Starting TA patterns for %d symbols on %s (%s)",
+            len(symbols),
+            exchange,
+            interval,
+        )
+        signals = {}
+        for symbol in symbols:
+            signal = generate_ta_signal(symbol, exchange, interval)
+            if signal:
+                signals[symbol] = signal
+
+        if signals:
+            logger.info("Generated TA signals for %d symbols", len(signals))
+            return {"patterns": signals, "status": "success"}
+
+        logger.warning("No TA signals generated")
+        return {"patterns": {}, "status": "no_data"}
+    except Exception as e:
+        logger.error(f"TA patterns failed: {e}")
+        return {"patterns": {}, "status": "error", "error": str(e)}
+
 def backfill_and_ta(db_timescale, db_metadata, exchange, symbol, interval, since_ms):
-    inserted_rows = backfill_ohlcv_ccxt(db_timescale, db_metadata, exchange, symbol, interval, since_ms)
-    return inserted_rows
+    """
+    Backfill OHLCV for a symbol.
+    TA generation is run in a separate phase after OHLCV
+    has been updated for all symbols in the cycle.
+    """
+    return backfill_ohlcv_ccxt(db_timescale, db_metadata, exchange, symbol, interval, since_ms)
 
 
 async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: List[Dict] = None):
@@ -64,12 +128,9 @@ async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: Lis
         tasks.append(loop.run_in_executor(None, backfill_ohlcv_ccxt, db_timescale, db_metadata, s['exchange'], s['use_ccxt_symbol'], '1d', old_since_ms))
         tasks.append(loop.run_in_executor(None, backfill_ohlcv_ccxt, db_timescale, db_metadata, s['exchange'], s['use_ccxt_symbol'], '1h', old_since_ms))
 
-    market_tasks = tasks[:len(symbols)*2]
-    alt_tasks = tasks[len(symbols)*2:]
-
     try:
         market_start = datetime.now()
-        market_results = await asyncio.gather(*market_tasks, return_exceptions=True)
+        market_results = await asyncio.gather(*tasks, return_exceptions=True)
         market_duration = (datetime.now() - market_start).total_seconds()
 
         total_ohlcv_inserted = 0
@@ -86,49 +147,6 @@ async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: Lis
         }
         log_ingestion_to_mlflow("market_client", "backfill", market_duration, symbols, market_details)
         logger.info(f"Market Backfill summary: OHLCV Inserted: {total_ohlcv_inserted}")
-
-        alt_start = datetime.now()
-        alt_data_results = await asyncio.gather(*alt_tasks, return_exceptions=True)
-        alt_duration = (datetime.now() - alt_start).total_seconds()
-
-        cp_count, cp_skipped = (0, 0)
-        reddit_count, reddit_skipped = (0, 0)
-        fng_count, fng_skipped = (0, 0)
-
-        if len(alt_data_results) >= 1:
-            res0 = alt_data_results[0]
-            if not isinstance(res0, Exception):
-                if isinstance(res0, tuple) and len(res0) >= 2:
-                    cp_count, cp_skipped = res0
-                else:
-                    cp_count = res0
-        if len(alt_data_results) >= 2:
-            res1 = alt_data_results[1]
-            if not isinstance(res1, Exception):
-                if isinstance(res1, tuple) and len(res1) >= 2:
-                    reddit_count, reddit_skipped = res1
-                else:
-                    reddit_count = res1
-        if len(alt_data_results) >= 3:
-            res2 = alt_data_results[2]
-            if not isinstance(res2, Exception):
-                if isinstance(res2, tuple) and len(res2) >= 2:
-                    fng_count, fng_skipped = res2
-                else:
-                    fng_count = res2
-
-        news_details = {
-            'cryptopanic_inserted': cp_count,
-            'cryptopanic_skipped': cp_skipped,
-            'reddit_inserted': reddit_count,
-            'reddit_skipped': reddit_skipped,
-            'fng_inserted': fng_count,
-            'fng_skipped': fng_skipped,
-            'total_inserted': cp_count + reddit_count + fng_count,
-            'total_skipped': cp_skipped + reddit_skipped + fng_skipped
-        }
-        log_ingestion_to_mlflow("news_client", "backfill", alt_duration, [], news_details)
-        logger.info(f"News Backfill summary: CryptoPanic Inserted: {cp_count}, CryptoPanic Skipped: {cp_skipped}, Reddit Inserted: {reddit_count}, Reddit Skipped: {reddit_skipped}, FNG Inserted: {fng_count}, FNG Skipped: {fng_skipped}. Total Inserted: {news_details['total_inserted']}, Total Skipped: {news_details['total_skipped']}")
 
     except Exception as e:
         logger.error(f"Backfill failed: {e}")
@@ -241,81 +259,81 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
             else:
                 total_ohlcv_inserted += res
 
+        # Phase 2: TA generation (after all OHLCV backfill completes)
+        # Use only symbols that actually have OHLCV data in Timescale,
+        # so TA does not waste work (or log \"no data\") for invalid pairs.
+        ta_candidates = get_top_symbols(db_timescale, limit=len(symbols))
+        requested_labels = {s["label"] for s in symbols}
+        ta_symbols = [sym for sym in ta_candidates if sym in requested_labels]
+        logger.info(
+            "TA phase: %d symbols with OHLCV out of %d requested",
+            len(ta_symbols),
+            len(symbols),
+        )
+        if not ta_symbols:
+            logger.warning("TA phase skipped: no symbols with OHLCV data found")
+            ta_success = 0
+            ta_errors = 0
+            ta_no_data = 0
+            ta_duration = 0.0
+        else:
+            logger.info("Starting TA generation for symbols after OHLCV backfill")
+        ta_start = datetime.now()
+        ta_tasks = [
+            loop.run_in_executor(
+                None,
+                generate_ta_signal,
+                symbol,
+                "binance",
+                "1h",
+                False,
+            )
+            for symbol in ta_symbols
+        ]
+        ta_results = await asyncio.gather(*ta_tasks, return_exceptions=True)
+        ta_success = 0
+        ta_errors = 0
+        for res in ta_results:
+            if isinstance(res, Exception):
+                ta_errors += 1
+                logger.error(f"TA task failed: {res}")
+            elif res:
+                ta_success += 1
+        ta_no_data = max(0, len(ta_symbols) - ta_success - ta_errors)
+        ta_duration = (datetime.now() - ta_start).total_seconds()
+        logger.info(
+            f"TA generation complete for {len(ta_symbols)} symbols "
+            f"(success={ta_success}, no_data={ta_no_data}, errors={ta_errors}) "
+            f"in {ta_duration:.2f}s"
+        )
+
+        # Log combined OHLCV + TA metrics to the market_client experiment
         market_details = {
             'ohlcv_inserted': total_ohlcv_inserted,
             'total_inserted': total_ohlcv_inserted,
-            'total_skipped': 0
+            'total_skipped': 0,
+            'ta_success': ta_success,
+            'ta_no_data': ta_no_data,
+            'ta_errors': ta_errors,
+            'ta_duration_sec': ta_duration,
         }
-        log_ingestion_to_mlflow("market_client", pipeline, market_duration, symbols, market_details)
-        logger.info(f"Market Cycle summary: OHLCV Inserted: {total_ohlcv_inserted}")
+        log_ingestion_to_mlflow("market_client", pipeline, market_duration + ta_duration, symbols, market_details)
+        logger.info(f"Market Cycle summary: OHLCV Inserted: {total_ohlcv_inserted}, TA success={ta_success}, no_data={ta_no_data}")
 
-        logger.info("Starting alternative data ingestion: CryptoPanic, Reddit, FNG")
-        alt_data_tasks = [
-            loop.run_in_executor(None, ingest_cryptopanic, db_timescale),
-            loop.run_in_executor(None, ingest_reddit_praw, db_timescale, "cryptocurrency", 50),
-            loop.run_in_executor(None, ingest_fng, db_timescale)
-        ]
-
-        alt_start = datetime.now()
-        alt_data_results = await asyncio.gather(*alt_data_tasks, return_exceptions=True)
-        alt_duration = (datetime.now() - alt_start).total_seconds()
-
-        cp_count, cp_skipped = (0, 0)
-        reddit_count, reddit_skipped = (0, 0)
-        fng_count, fng_skipped = (0, 0)
-
-        if len(alt_data_results) >= 1:
-            res0 = alt_data_results[0]
-            if not isinstance(res0, Exception):
-                if isinstance(res0, tuple) and len(res0) >= 2:
-                    cp_count, cp_skipped = res0
-                else:
-                    cp_count = res0
-        if len(alt_data_results) >= 2:
-            res1 = alt_data_results[1]
-            if not isinstance(res1, Exception):
-                if isinstance(res1, tuple) and len(res1) >= 2:
-                    reddit_count, reddit_skipped = res1
-                else:
-                    reddit_count = res1
-        if len(alt_data_results) >= 3:
-            res2 = alt_data_results[2]
-            if not isinstance(res2, Exception):
-                if isinstance(res2, tuple) and len(res2) >= 2:
-                    fng_count, fng_skipped = res2
-                else:
-                    fng_count = res2
-
-        news_details = {
-            'cryptopanic_inserted': cp_count,
-            'cryptopanic_skipped': cp_skipped,
-            'reddit_inserted': reddit_count,
-            'reddit_skipped': reddit_skipped,
-            'fng_inserted': fng_count,
-            'fng_skipped': fng_skipped,
-            'total_inserted': cp_count + reddit_count + fng_count,
-            'total_skipped': cp_skipped + reddit_skipped + fng_skipped
-        }
-        log_ingestion_to_mlflow("news_client", pipeline, alt_duration, [], news_details)
-        logger.info(f"News Cycle summary: CryptoPanic Inserted: {cp_count}, CryptoPanic Skipped: {cp_skipped}, Reddit Inserted: {reddit_count}, Reddit Skipped: {reddit_skipped}, FNG Inserted: {fng_count}, FNG Skipped: {fng_skipped}. Total Inserted: {news_details['total_inserted']}, Total Skipped: {news_details['total_skipped']}")
-
-        combined_details = {
-            'market': market_details,
-            'news': news_details
-        }
-        total_inserted = total_ohlcv_inserted + cp_count + reddit_count + fng_count
-        total_skipped = cp_skipped + reddit_skipped + fng_skipped
-        combined_details['overall'] = {
-            'total_inserted': total_inserted,
-            'total_skipped': total_skipped
-        }
+        # Persist market/TA ingestion job summary only (news is handled in separate module)
         update_ingestion_job(db_timescale, IngestionJob(
             pipeline=pipeline,
             last_run=start_time,
             last_success=datetime.now(),
             details={
                 'symbols': [s['label'] for s in symbols],
-                'summary': combined_details
+                'summary': {
+                    'market': market_details,
+                    'overall': {
+                        'total_inserted': total_ohlcv_inserted,
+                        'total_skipped': 0
+                    }
+                }
             }
         ))
         logger.info(f"{pipeline} complete")

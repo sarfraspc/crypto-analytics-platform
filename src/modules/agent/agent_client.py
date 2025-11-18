@@ -217,23 +217,27 @@ async def route_tools(
 
     wants_onchain = any(cat in cats for cat in ("onchain", "combined", "patterns"))
     if wants_onchain:
-        onchain_args = {"symbol": symbol, "window": window}
+        base_onchain_args = {"window": window}
         wants_patterns = "patterns" in cats or any(
             word in query_lower for word in ["pattern", "rsi", "macd", "ta", "technical"]
         )
         if wants_patterns:
-            onchain_args.update({"limit": 20})
+            pattern_args = {
+                "exchange": "binance",
+                "interval": "1d",
+                "limit": 20,
+            }
             tasks["onchain"] = call_mcp_tool(
                 "crypto-onchain-server",
                 "run_patterns_only",
-                onchain_args,
+                pattern_args,
                 use_cache=use_cache,
             )
         else:
             tasks["onchain"] = call_mcp_tool(
                 "crypto-onchain-server",
                 "run_metrics_only",
-                onchain_args,
+                base_onchain_args,
                 use_cache=use_cache,
             )
 

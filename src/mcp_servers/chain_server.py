@@ -12,9 +12,10 @@ from mcp.types import (
     Tool,
     TextContent,
 )
-from core.database import get_metadata_db
+from core.database import get_timescale_db
 from core.logging_config import setup_logging
-from modules.onchain.pipeline import setup_mlflow, get_top_symbols, run_ta_patterns
+from data.onchain_client import setup_mlflow
+from data.market_client import get_top_symbols, run_ta_patterns
 from modules.onchain.metrics.pipeline import run_onchain_metrics
 import json
 
@@ -39,12 +40,11 @@ class OnchainMCP:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
         input_data = (params.arguments if params and params.arguments is not None else {})
-        chain = input_data.get('chain', 'ethereum')
-        time_window = input_data.get('window', '24h')
-        symbol = input_data.get('symbol', 'BTC')
+        chain = input_data.get("chain", "ethereum")
+        time_window = input_data.get("window", "24h")
 
         try:
-            result = await asyncio.to_thread(run_onchain_metrics, chain, time_window, symbol)
+            result = await asyncio.to_thread(run_onchain_metrics, chain, time_window)
             # Emit pure JSON so upstream callers receive a structured payload,
             # avoiding any \"Metrics Result:\" wrappers that break dict parsing.
             result_str = json.dumps(result, default=str)
@@ -73,8 +73,10 @@ class OnchainMCP:
 
         try:
             def execute_patterns():
-                with get_metadata_db() as meta_db:
-                    symbols = get_top_symbols(meta_db, limit=limit)
+                # Use the timescale DB so we select symbols
+                # directly from the OHLCV table for TA patterns.
+                with get_timescale_db() as ts_db:
+                    symbols = get_top_symbols(ts_db, limit=limit)
                 return run_ta_patterns(symbols, exchange=exchange, interval=interval)
 
             result = await asyncio.to_thread(execute_patterns)
@@ -111,10 +113,9 @@ async def list_tools():
                 "properties": {
                     "chain": {"type": "string", "default": "ethereum"},
                     "window": {"type": "string", "default": "24h", "enum": ["1h", "24h"]},
-                    "symbol": {"type": "string", "default": "BTC"}
                 },
-                "required": []
-            }
+                "required": [],
+            },
         ),
         Tool(
             name="run_patterns_only",
