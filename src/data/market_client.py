@@ -124,9 +124,19 @@ async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: Lis
     loop = asyncio.get_running_loop()
     tasks = []
     for i, s in enumerate(symbols):
-        logger.info("Backfilling %s/%s: %s", i + 1, len(symbols), s['label'])
-        tasks.append(loop.run_in_executor(None, backfill_ohlcv_ccxt, db_timescale, db_metadata, s['exchange'], s['use_ccxt_symbol'], '1d', old_since_ms))
-        tasks.append(loop.run_in_executor(None, backfill_ohlcv_ccxt, db_timescale, db_metadata, s['exchange'], s['use_ccxt_symbol'], '1h', old_since_ms))
+        logger.info("Backfilling %s/%s (1h only): %s", i + 1, len(symbols), s['label'])
+        tasks.append(
+            loop.run_in_executor(
+                None,
+                backfill_ohlcv_ccxt,
+                db_timescale,
+                db_metadata,
+                s['exchange'],
+                s['use_ccxt_symbol'],
+                '1h',
+                old_since_ms,
+            ),
+        )
 
     try:
         market_start = datetime.now()

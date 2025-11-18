@@ -16,6 +16,20 @@ const PATTERN_QUERY = {
   limit: 100,
 }
 
+const MAIN_SYMBOLS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'AVAX', 'DOGE', 'MATIC', 'LTC', 'DOT']
+
+const sortByPriority = (items) => {
+  const priorityIndex = new Map(MAIN_SYMBOLS.map((symbol, index) => [symbol, index]))
+  return [...items].sort((a, b) => {
+    const aSymbol = (a.symbol || '').toUpperCase()
+    const bSymbol = (b.symbol || '').toUpperCase()
+    const aPriority = priorityIndex.has(aSymbol) ? priorityIndex.get(aSymbol) : MAIN_SYMBOLS.length
+    const bPriority = priorityIndex.has(bSymbol) ? priorityIndex.get(bSymbol) : MAIN_SYMBOLS.length
+    if (aPriority !== bPriority) return aPriority - bPriority
+    return aSymbol.localeCompare(bSymbol)
+  })
+}
+
 const TAPatternsCarousel = () => {
   const { isDark } = useTheme()
   const [patterns, setPatterns] = useState([])
@@ -89,11 +103,14 @@ const TAPatternsCarousel = () => {
 
   const filteredPatterns = useMemo(() => {
     if (!patterns.length) return []
-    if (!taSymbols.length) return patterns
+    if (!taSymbols.length) return sortByPriority(patterns)
     const allowSet = new Set(
       taSymbols.map((item) => (item?.toUpperCase?.() || '').trim()).filter(Boolean),
     )
-    return patterns.filter((pattern) => allowSet.has((pattern.symbol || '').toUpperCase()))
+    const filtered = patterns.filter((pattern) =>
+      allowSet.has((pattern.symbol || '').toUpperCase()),
+    )
+    return sortByPriority(filtered)
   }, [patterns, taSymbols])
 
   return (
