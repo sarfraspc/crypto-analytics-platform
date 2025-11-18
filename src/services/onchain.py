@@ -62,22 +62,26 @@ def _shape_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@router.get("/metrics/{symbol}")
+@router.get("/metrics")
 async def get_onchain_metrics(
-    symbol: str,
     window: str = Query("24h", description="Lookback window (1h, 24h, 7d)."),
+    chain: str = Query("ethereum", description="Blockchain (e.g., ethereum)."),
 ):
-    sanitized_symbol = _validate_symbol(symbol)
     window = _validate_window(window)
     request_id = str(uuid.uuid4())
     start_time = datetime.utcnow()
-    logger.info("[%s] Metrics request: symbol=%s window=%s", request_id, sanitized_symbol, window)
+    logger.info(
+        "[%s] Metrics request: chain=%s window=%s",
+        request_id,
+        chain,
+        window,
+    )
 
     async def _fetch_metrics():
         return await call_mcp_tool(
             "crypto-onchain-server",
             "run_metrics_only",
-            {"symbol": sanitized_symbol, "window": window},
+            {"chain": chain, "window": window},
         )
 
     try:
@@ -91,7 +95,7 @@ async def get_onchain_metrics(
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
     response = {
         "request_id": request_id,
-        "symbol": sanitized_symbol,
+        "chain": chain,
         "window": window,
         "duration_ms": duration_ms,
         "metrics": metrics,

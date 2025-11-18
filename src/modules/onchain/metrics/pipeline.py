@@ -11,9 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 def run_onchain_metrics(
-    chain: str = 'ethereum',
-    time_window: str = '24h',
-    symbol: str = 'BTC'
+    chain: str = "ethereum",
+    time_window: str = "24h",
 ):
     logger.info(f"Starting onchain metrics pipeline for {chain}, {time_window}")
     errors = []
@@ -37,7 +36,7 @@ def run_onchain_metrics(
         if not whales:
             errors.append("Whale summary failed")
 
-        agg = combine_metrics(chain, time_window, symbol)
+        agg = combine_metrics(chain, time_window)
         status["aggregated"] = agg
         if not agg:
             errors.append("Aggregation failed")
@@ -61,11 +60,11 @@ def run_onchain_metrics(
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Run onchain metrics pipeline")
     parser.add_argument("--chain", default="ethereum")
     parser.add_argument("--window", default="24h", choices=["1h", "24h"])
-    parser.add_argument("--symbol", default="BTC")
     args = parser.parse_args()
 
-    status = run_onchain_metrics(args.chain, args.window, args.symbol)
+    status = run_onchain_metrics(args.chain, args.window)
     print(status)

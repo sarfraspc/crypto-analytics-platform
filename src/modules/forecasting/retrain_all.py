@@ -19,8 +19,8 @@ from modules.forecasting.models.cnn_lstm import train_and_forecast_cnn_lstm
 from modules.forecasting.models.tft import train_and_forecast_tft
 from data.storage.models import OHLCVFeature
 
-_INGESTION_MODULE_PATH = Path(__file__).resolve().parents[2] / "data" / "ingestion.py"
-_INGESTION_SPEC = importlib.util.spec_from_file_location("data.ingestion_pipeline", _INGESTION_MODULE_PATH)
+_INGESTION_MODULE_PATH = Path(__file__).resolve().parents[2] / "data" / "market_client.py"
+_INGESTION_SPEC = importlib.util.spec_from_file_location("data.market_client", _INGESTION_MODULE_PATH)
 _INGESTION_MODULE = importlib.util.module_from_spec(_INGESTION_SPEC)
 _INGESTION_SPEC.loader.exec_module(_INGESTION_MODULE)
 setup_mlflow = _INGESTION_MODULE.setup_mlflow

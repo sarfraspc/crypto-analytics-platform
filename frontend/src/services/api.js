@@ -157,7 +157,7 @@ export const getFngCurrent = () =>
   }))
 
 export const getOnChainMetrics = (symbol = GENERIC_MARKET_SYMBOL, window = '24h') =>
-  request(`/onchain/metrics/${symbol}${buildQuery({ window })}`).then((result) => ({
+  request(`/onchain/metrics${buildQuery({ window })}`).then((result) => ({
     ...result,
     metrics: result.metrics || {},
   }))

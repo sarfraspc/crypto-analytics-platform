@@ -78,6 +78,7 @@ def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
         "inflow_usd": flattened.get("exchange_inflow_usd"),
         "outflow_usd": flattened.get("exchange_outflow_usd"),
         "market_pressure_index": flattened.get("market_pressure_index"),
+        "market_bias": flattened.get("market_bias"),
         # Use short-term flow trend as a proxy for dominant flow direction.
         "dominant_flow": dominant_flow_label,
         "flow_trend_24h": flow_trend,
@@ -103,7 +104,7 @@ async def _gather_overview(symbol: str, horizon_hours: int, window: str, k_docs:
         "onchain": call_mcp_tool(
             "crypto-onchain-server",
             "run_metrics_only",
-            {"symbol": symbol, "window": window},
+            {"window": window},
         ),
     }
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
