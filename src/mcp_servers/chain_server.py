@@ -15,8 +15,7 @@ from mcp.types import (
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.onchain_client import setup_mlflow
-from modules.onchain.metrics.pipeline import run_onchain_metrics
-from data.storage.models import TASignal as TASignalModel
+from data.storage.models import TASignal as TASignalModel, OnchainMetric as OnchainMetricModel
 from sqlalchemy import select
 import json
 
@@ -45,7 +44,78 @@ class OnchainMCP:
         time_window = input_data.get("window", "24h")
 
         try:
-            result = await asyncio.to_thread(run_onchain_metrics, chain, time_window)
+            def execute_metrics():
+                with get_timescale_db() as ts_db:
+                    def latest(metric_name: str):
+                        stmt = (
+                            select(OnchainMetricModel.value)
+                            .where(
+                                OnchainMetricModel.chain == chain,
+                                OnchainMetricModel.metric == metric_name,
+                                OnchainMetricModel.raw.op("->>")("window") == time_window,
+                            )
+                            .order_by(OnchainMetricModel.time.desc())
+                            .limit(1)
+                        )
+                        value = ts_db.execute(stmt).scalar_one_or_none()
+                        return float(value) if value is not None else None
+
+                    flows = {
+                        "exchange_inflow_usd": latest("exchange_inflow_usd"),
+                        "exchange_outflow_usd": latest("exchange_outflow_usd"),
+                        "net_flow_usd": latest("net_flow_usd"),
+                        "exchange_flow_ratio": latest("exchange_flow_ratio"),
+                        "flow_trend_24h": latest("flow_trend_24h"),
+                    }
+
+                    whales = {
+                        "whale_count": latest("whale_count"),
+                        "total_whale_volume_usd": latest("total_whale_volume_usd"),
+                        "avg_whale_tx_size_usd": latest("avg_whale_tx_size_usd"),
+                        "whale_exchange_inflow": latest("whale_exchange_inflow"),
+                        "whale_exchange_outflow": latest("whale_exchange_outflow"),
+                        "whale_exchange_ratio": latest("whale_exchange_ratio"),
+                        "unique_whale_addresses": latest("unique_whale_addresses"),
+                    }
+
+                    aggregated_metrics = {
+                        "market_pressure_index": latest("market_pressure_index"),
+                        "whale_to_exchange_ratio": latest("whale_to_exchange_ratio"),
+                        "price_whale_corr_7d": latest("price_whale_corr_7d"),
+                        "flow_trend_7d": latest("flow_trend_7d"),
+                        "price_change_pct": latest("price_change_pct"),
+                    }
+
+                # Derive market_bias on the fly from stored metrics.
+                net_flow = flows.get("net_flow_usd") or 0.0
+                price_change = aggregated_metrics.get("price_change_pct") or 0.0
+                whale_ratio = aggregated_metrics.get("whale_to_exchange_ratio") or 0.0
+
+                flow_bias = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
+                price_bias = 1 if price_change > 0 else -1 if price_change < 0 else 0
+                ratio_bias = 1 - whale_ratio
+
+                bias_score = (flow_bias * 0.4) + (price_bias * 0.3) + (ratio_bias * 0.3)
+                if bias_score > 0.3:
+                    market_bias = "bullish"
+                elif bias_score < -0.3:
+                    market_bias = "bearish"
+                else:
+                    market_bias = "neutral"
+
+                aggregated = {
+                    **aggregated_metrics,
+                    "market_bias": market_bias,
+                }
+
+                return {
+                    "flows": flows,
+                    "whales": whales,
+                    "aggregated": aggregated,
+                    "errors": [],
+                }
+
+            result = await asyncio.to_thread(execute_metrics)
             # Emit pure JSON so upstream callers receive a structured payload,
             # avoiding any \"Metrics Result:\" wrappers that break dict parsing.
             result_str = json.dumps(result, default=str)

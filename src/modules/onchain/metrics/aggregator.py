@@ -66,17 +66,22 @@ def combine_metrics(
                 logger.warning("No recent flows/whales; using defaults for aggregation")
 
             symbol = _native_symbol_for_chain(chain)
-            ohlcv_query = select(OHLCVModel).where(
-                OHLCVModel.symbol == symbol,
-                OHLCVModel.exchange == 'binance',
-                OHLCVModel.interval == '1d',
-                OHLCVModel.time >= start_time
-            ).order_by(OHLCVModel.time.desc()).limit(2)
+            ohlcv_query = (
+                select(OHLCVModel)
+                .where(
+                    OHLCVModel.symbol == symbol,
+                    OHLCVModel.exchange == 'binance',
+                    OHLCVModel.interval == '1h',
+                    OHLCVModel.time >= start_time,
+                    OHLCVModel.time <= end_time,
+                )
+                .order_by(OHLCVModel.time.asc())
+            )
             ohlcvs = db.execute(ohlcv_query).scalars().all()
             price_change = 0.0
             if len(ohlcvs) >= 2:
-                prev_close = ohlcvs[1].close or 0
-                curr_close = ohlcvs[0].close or 0
+                prev_close = ohlcvs[0].close or 0
+                curr_close = ohlcvs[-1].close or 0
                 price_change = ((curr_close - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
 
             whale_to_exchange_ratio = whale_inflows / 10.0  
@@ -90,10 +95,18 @@ def combine_metrics(
             ).order_by(OnchainMetricModel.time).limit(7)
             flows_7d = [float(row[0]) for row in db.execute(corr_flow_query).all()]
 
-            corr_ohlcv_query = select(OHLCVModel.close).where(
-                OHLCVModel.symbol == symbol,
-                OHLCVModel.time >= corr_start
-            ).order_by(OHLCVModel.time).limit(7)
+            corr_ohlcv_query = (
+                select(OHLCVModel.close)
+                .where(
+                    OHLCVModel.symbol == symbol,
+                    OHLCVModel.exchange == 'binance',
+                    OHLCVModel.interval == '1h',
+                    OHLCVModel.time >= corr_start,
+                    OHLCVModel.time <= end_time,
+                )
+                .order_by(OHLCVModel.time)
+                .limit(7)
+            )
             prices_7d = [row[0] for row in db.execute(corr_ohlcv_query).all()]
 
             # Pad to min len for corrcoef
@@ -152,10 +165,41 @@ def combine_metrics(
                 return Decimal('0')
 
             metrics = [
-                OnchainMetric(time=end_time, chain=chain, metric="market_pressure_index", value=safe_decimal(market_pressure_index), raw={**raw_base, "description": "weighted sum of whale inflow + exchange inflow – price change"}),
-                OnchainMetric(time=end_time, chain=chain, metric="whale_to_exchange_ratio", value=safe_decimal(whale_to_exchange_ratio), raw={**raw_base, "description": "whales → exchanges / total whales"}),
-                OnchainMetric(time=end_time, chain=chain, metric="price_whale_corr_7d", value=safe_decimal(price_whale_corr_7d), raw={**raw_base, "description": "correlation between whale volume and price"}),
-                OnchainMetric(time=end_time, chain=chain, metric="flow_trend_7d", value=safe_decimal(flow_trend_7d), raw={**raw_base, "description": "mean % change in flows over 7d"})
+                OnchainMetric(
+                    time=end_time,
+                    chain=chain,
+                    metric="market_pressure_index",
+                    value=safe_decimal(market_pressure_index),
+                    raw={**raw_base, "description": "weighted sum of whale inflow + exchange inflow – price change"},
+                ),
+                OnchainMetric(
+                    time=end_time,
+                    chain=chain,
+                    metric="whale_to_exchange_ratio",
+                    value=safe_decimal(whale_to_exchange_ratio),
+                    raw={**raw_base, "description": "whales → exchanges / total whales"},
+                ),
+                OnchainMetric(
+                    time=end_time,
+                    chain=chain,
+                    metric="price_whale_corr_7d",
+                    value=safe_decimal(price_whale_corr_7d),
+                    raw={**raw_base, "description": "correlation between whale volume and price"},
+                ),
+                OnchainMetric(
+                    time=end_time,
+                    chain=chain,
+                    metric="flow_trend_7d",
+                    value=safe_decimal(flow_trend_7d),
+                    raw={**raw_base, "description": "mean % change in flows over 7d"},
+                ),
+                OnchainMetric(
+                    time=end_time,
+                    chain=chain,
+                    metric="price_change_pct",
+                    value=safe_decimal(price_change),
+                    raw={**raw_base, "description": "percent price change over window"},
+                ),
             ]
             upsert_onchain_metrics(db, metrics)
 

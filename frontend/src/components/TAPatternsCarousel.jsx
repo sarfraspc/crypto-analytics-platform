@@ -10,6 +10,42 @@ const confidenceWidth = (value) => {
   return Math.min(Math.max(value, 0), 1) * 100
 }
 
+const buildPatternExplanation = (pattern) => {
+  if (!pattern) return 'No strong technical signals detected.'
+
+  const parts = []
+  const rsi = typeof pattern.rsi === 'number' ? pattern.rsi : Number(pattern.rsi)
+  const macd = typeof pattern.macd_hist === 'number' ? pattern.macd_hist : Number(pattern.macd_hist)
+  const patternName = pattern.pattern || pattern.name
+  const signal = (pattern.signal || '').toString().toLowerCase()
+
+  if (!Number.isNaN(rsi)) {
+    if (rsi < 30) {
+      parts.push('RSI below 30 indicates oversold conditions')
+    } else if (rsi > 70) {
+      parts.push('RSI above 70 indicates overbought conditions')
+    } else {
+      parts.push(`RSI around ${Math.round(rsi)} suggests neutral momentum`)
+    }
+  }
+
+  if (!Number.isNaN(macd)) {
+    if (macd > 0) {
+      parts.push('Positive MACD histogram suggests bullish momentum')
+    } else if (macd < 0) {
+      parts.push('Negative MACD histogram suggests bearish momentum')
+    }
+  }
+
+  if (patternName && patternName !== 'none') {
+    const prettyName = patternName.replace(/_/g, ' ')
+    parts.push(`Candlestick pattern ${prettyName} supports the ${signal || 'current'} bias`)
+  }
+
+  if (!parts.length) return 'No strong technical signals detected.'
+  return parts.join('. ') + '.'
+}
+
 const PATTERN_QUERY = {
   exchange: 'binance',
   interval: '1d',
@@ -169,7 +205,9 @@ const TAPatternsCarousel = () => {
                           : 'bg-white border border-gray-200 text-gray-700'
                       }`}
                     >
-                      <p className="text-xs">{pattern.explanation || pattern.details || 'Pattern detected'}</p>
+                      <p className="text-xs">
+                        {pattern.explanation || pattern.details || buildPatternExplanation(pattern)}
+                      </p>
                     </div>
                   </div>
                 </div>

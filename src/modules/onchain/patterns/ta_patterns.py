@@ -110,6 +110,10 @@ def detect_candlestick_patterns(df: pd.DataFrame):
         df['cdl_harami'] = talib.CDLHARAMI(open_prices, high, low, close)
         df['cdl_hammer'] = talib.CDLHAMMER(open_prices, high, low, close)
         df['cdl_shootingstar'] = talib.CDLSHOOTINGSTAR(open_prices, high, low, close)
+        df['cdl_doji'] = talib.CDLDOJI(open_prices, high, low, close)
+        df['cdl_invertedhammer'] = talib.CDLINVERTEDHAMMER(open_prices, high, low, close)
+        df['cdl_spinningtop'] = talib.CDLSPINNINGTOP(open_prices, high, low, close)
+        df['cdl_marubozu'] = talib.CDLMARUBOZU(open_prices, high, low, close)
 
         logger.info("Detected candlestick patterns successfully")
         return df
@@ -118,7 +122,7 @@ def detect_candlestick_patterns(df: pd.DataFrame):
         raise
 
 
-def _generate_signal(rsi: float, macd_hist: float, pattern: str, pattern_direction: Optional[str]):
+def _generate_signal(rsi: float, macd_hist: float, pattern: Optional[str], pattern_direction: Optional[str]):
     signal = "neutral"
     explanation_parts = []
 
@@ -138,7 +142,7 @@ def _generate_signal(rsi: float, macd_hist: float, pattern: str, pattern_directi
             signal = "bearish"
         explanation_parts.append("MACD histogram < 0 suggests bearish bias")
 
-    if pattern != "none" and pattern_direction:
+    if pattern is not None and pattern_direction:
         signal = pattern_direction
         explanation_parts.append(f"{pattern} pattern confirms reversal")
 
@@ -157,10 +161,29 @@ def generate_ta_signal(symbol: str, exchange: str = "binance", interval: str = "
             logger.info(f"Returning cached TA signal for {symbol}")
             return cached
 
-    df = load_recent_ohlcv(symbol, exchange, interval, lookback=100)
+    lookback = 500 if interval == "1d" else 100
+    source_interval = "1h" if interval == "1d" else interval
+    df = load_recent_ohlcv(symbol, exchange, source_interval, lookback=lookback)
     if df is None or len(df) < 30:
         logger.warning(f"Insufficient data for {symbol} ({len(df) if df is not None else 0} candles)")
         return None
+
+    if interval == "1d":
+        df = (
+            df.set_index("time")
+            .resample("1D")
+            .agg(
+                {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                }
+            )
+            .dropna()
+            .reset_index()
+        )
 
     try:
         df = compute_ta_indicators(df)
@@ -171,20 +194,43 @@ def generate_ta_signal(symbol: str, exchange: str = "binance", interval: str = "
         rsi = last_row['rsi']
         macd_hist = last_row['macd_hist']
 
-        pattern = "none"
-        pattern_direction = None
-        if not pd.isna(last_row['cdl_engulfing']) and last_row['cdl_engulfing'] != 0:
-            pattern = "bullish_engulfing" if last_row['cdl_engulfing'] > 0 else "bearish_engulfing"
-            pattern_direction = "bullish" if last_row['cdl_engulfing'] > 0 else "bearish"
-        elif not pd.isna(last_row['cdl_harami']) and last_row['cdl_harami'] != 0:
-            pattern = "bullish_harami" if last_row['cdl_harami'] > 0 else "bearish_harami"
-            pattern_direction = "bullish" if last_row['cdl_harami'] > 0 else "bearish"
-        elif not pd.isna(last_row['cdl_hammer']) and last_row['cdl_hammer'] != 0:
-            pattern = "hammer"
-            pattern_direction = "bullish"
-        elif not pd.isna(last_row['cdl_shootingstar']) and last_row['cdl_shootingstar'] != 0:
-            pattern = "shooting_star"
-            pattern_direction = "bearish"
+        pattern: Optional[str] = None
+        pattern_direction: Optional[str] = None
+        recent_candles = df.iloc[-3:]
+        for idx in range(len(recent_candles) - 1, -1, -1):
+            row = recent_candles.iloc[idx]
+            if not pd.isna(row['cdl_engulfing']) and row['cdl_engulfing'] != 0:
+                pattern = "bullish_engulfing" if row['cdl_engulfing'] > 0 else "bearish_engulfing"
+                pattern_direction = "bullish" if row['cdl_engulfing'] > 0 else "bearish"
+                break
+            if not pd.isna(row['cdl_harami']) and row['cdl_harami'] != 0:
+                pattern = "bullish_harami" if row['cdl_harami'] > 0 else "bearish_harami"
+                pattern_direction = "bullish" if row['cdl_harami'] > 0 else "bearish"
+                break
+            if not pd.isna(row['cdl_hammer']) and row['cdl_hammer'] != 0:
+                pattern = "hammer"
+                pattern_direction = "bullish"
+                break
+            if not pd.isna(row['cdl_shootingstar']) and row['cdl_shootingstar'] != 0:
+                pattern = "shooting_star"
+                pattern_direction = "bearish"
+                break
+            if not pd.isna(row['cdl_invertedhammer']) and row['cdl_invertedhammer'] != 0:
+                pattern = "inverted_hammer"
+                pattern_direction = "bullish"
+                break
+            if not pd.isna(row['cdl_doji']) and row['cdl_doji'] != 0:
+                pattern = "doji"
+                pattern_direction = None
+                break
+            if not pd.isna(row['cdl_spinningtop']) and row['cdl_spinningtop'] != 0:
+                pattern = "spinning_top"
+                pattern_direction = None
+                break
+            if not pd.isna(row['cdl_marubozu']) and abs(row['cdl_marubozu']) == 100:
+                pattern = "marubozu"
+                pattern_direction = "bullish" if row['cdl_marubozu'] > 0 else "bearish"
+                break
 
         signal, explanation = _generate_signal(rsi, macd_hist, pattern, pattern_direction)
 
@@ -197,7 +243,7 @@ def generate_ta_signal(symbol: str, exchange: str = "binance", interval: str = "
                 confidence += 0.15
         if rsi is not None and (rsi < 30 or rsi > 70):
             confidence += 0.2
-        if pattern and pattern != "none":
+        if pattern is not None:
             confidence += 0.25
         confidence = min(1.0, confidence)
 
