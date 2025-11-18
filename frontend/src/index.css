@@ -62,4 +62,172 @@ body {
     overflow-x: hidden;
     max-width: 100vw;
   }
-}
+}/* InsightSummary.jsx Animations */
+@keyframes tilt-3d {
+          0%, 100% {
+            transform: rotateX(15deg) rotateY(-15deg);
+          }
+          25% {
+            transform: rotateX(15deg) rotateY(15deg);
+          }
+          50% {
+            transform: rotateX(-15deg) rotateY(15deg);
+          }
+          75% {
+            transform: rotateX(-15deg) rotateY(-15deg);
+          }
+        }
+        
+        @keyframes spin-3d {
+          from { 
+            transform: translateZ(15px) rotateZ(0deg);
+          }
+          to { 
+            transform: translateZ(15px) rotateZ(360deg);
+          }
+        }
+        
+        @keyframes spin-3d-reverse {
+          from { 
+            transform: translateZ(-10px) rotateX(60deg) rotateZ(360deg);
+          }
+          to { 
+            transform: translateZ(-10px) rotateX(60deg) rotateZ(0deg);
+          }
+        }
+        
+        @keyframes ping-slow {
+          0%, 100% {
+            transform: translateZ(20px) scale(1);
+            opacity: 0.3;
+          }
+          50% {
+            transform: translateZ(20px) scale(1.05);
+            opacity: 0.5;
+          }
+        }
+        
+        @keyframes ping-slower {
+          0%, 100% {
+            transform: translateZ(10px) scale(1);
+            opacity: 0.2;
+          }
+          50% {
+            transform: translateZ(10px) scale(1.08);
+            opacity: 0.4;
+          }
+        }
+        
+        @keyframes pulse-glow-3d {
+          0%, 100% { 
+            transform: translateZ(30px) scale(1);
+            filter: brightness(1) drop-shadow(0 0 20px rgba(99, 102, 241, 0.8));
+          }
+          50% { 
+            transform: translateZ(35px) scale(1.15);
+            filter: brightness(1.2) drop-shadow(0 0 40px rgba(168, 85, 247, 1));
+          }
+        }
+        
+        @keyframes float-3d {
+          0%, 100% {
+            transform: translateZ(20px) scale(1);
+          }
+          50% {
+            transform: translateZ(30px) scale(1.2);
+          }
+        }
+        
+        @keyframes pulse-slow {
+          0%, 100% { 
+            opacity: 0.4;
+          }
+          50% { 
+            opacity: 0.8;
+          }
+        }
+        
+        @keyframes orbit-3d {
+          from { 
+            transform: translateZ(25px) rotateZ(0deg);
+          }
+          to { 
+            transform: translateZ(25px) rotateZ(360deg);
+          }
+        }
+        
+        @keyframes orbit-3d-delayed {
+          from { 
+            transform: translateZ(20px) rotateZ(0deg);
+          }
+          to { 
+            transform: translateZ(20px) rotateZ(360deg);
+          }
+        }
+        
+        @keyframes orbit-3d-more-delayed {
+          from { 
+            transform: translateZ(28px) rotateZ(0deg);
+          }
+          to { 
+            transform: translateZ(28px) rotateZ(360deg);
+          }
+        }
+        
+        .animate-tilt-3d {
+          animation: tilt-3d 8s ease-in-out infinite;
+        }
+        
+        .animate-spin-3d {
+          animation: spin-3d 6s linear infinite;
+        }
+        
+        .animate-spin-3d-reverse {
+          animation: spin-3d-reverse 8s linear infinite;
+        }
+        
+        .animate-ping-slow {
+          animation: ping-slow 3s ease-in-out infinite;
+        }
+        
+        .animate-ping-slower {
+          animation: ping-slower 4s ease-in-out infinite;
+        }
+        
+        .animate-pulse-glow-3d {
+          animation: pulse-glow-3d 3s ease-in-out infinite;
+        }
+        
+        .animate-float-3d {
+          animation: float-3d 2s ease-in-out infinite;
+        }
+        
+        .animate-pulse-slow {
+          animation: pulse-slow 2s ease-in-out infinite;
+        }
+        
+        .animate-orbit-3d {
+          animation: orbit-3d 4s linear infinite;
+        }
+        
+        .animate-orbit-3d-delayed {
+          animation: orbit-3d-delayed 4s linear infinite;
+          animation-delay: 1.3s;
+        }
+        
+        .animate-orbit-3d-more-delayed {
+          animation: orbit-3d-more-delayed 4s linear infinite;
+          animation-delay: 2.6s;
+        }
+        
+        .animation-delay-300 {
+          animation-delay: 0.3s;
+        }
+        
+        .animation-delay-600 {
+          animation-delay: 0.6s;
+        }
+        
+        .animation-delay-900 {
+          animation-delay: 0.9s;
+        }

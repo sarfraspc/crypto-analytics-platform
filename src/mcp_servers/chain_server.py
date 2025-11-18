@@ -15,8 +15,9 @@ from mcp.types import (
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.onchain_client import setup_mlflow
-from data.market_client import get_top_symbols, run_ta_patterns
 from modules.onchain.metrics.pipeline import run_onchain_metrics
+from data.storage.models import TASignal as TASignalModel
+from sqlalchemy import select
 import json
 
 setup_logging()
@@ -67,17 +68,41 @@ class OnchainMCP:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
         input_data = (params.arguments if params and params.arguments is not None else {})
-        exchange = input_data.get('exchange', 'binance')
-        interval = input_data.get('interval', '1d')
-        limit = input_data.get('limit', 50)
+        exchange = input_data.get("exchange", "binance")
+        interval = input_data.get("interval", "1d")
+        limit = input_data.get("limit", 50)
 
         try:
             def execute_patterns():
-                # Use the timescale DB so we select symbols
-                # directly from the OHLCV table for TA patterns.
                 with get_timescale_db() as ts_db:
-                    symbols = get_top_symbols(ts_db, limit=limit)
-                return run_ta_patterns(symbols, exchange=exchange, interval=interval)
+                    stmt = (
+                        select(TASignalModel)
+                        .where(
+                            TASignalModel.exchange == exchange,
+                            TASignalModel.interval == interval,
+                        )
+                        .order_by(TASignalModel.symbol)
+                        .limit(limit)
+                    )
+                    rows = ts_db.execute(stmt).scalars().all()
+
+                patterns = {
+                    row.symbol: {
+                        "exchange": row.exchange,
+                        "interval": row.interval,
+                        "timestamp": row.time.isoformat() if row.time else None,
+                        "signal": row.signal,
+                        "rsi": float(row.rsi) if row.rsi is not None else None,
+                        "macd_hist": float(row.macd_hist) if row.macd_hist is not None else None,
+                        "pattern": row.pattern,
+                    }
+                    for row in rows
+                }
+
+                if patterns:
+                    return {"patterns": patterns, "status": "success"}
+                else:
+                    return {"patterns": {}, "status": "no_data"}
 
             result = await asyncio.to_thread(execute_patterns)
             # Emit pure JSON so downstream parsers see a clean dict.

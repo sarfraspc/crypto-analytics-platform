@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import math
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -29,6 +30,18 @@ def _validate_window(window: str) -> str:
     if window not in ALLOWED_WINDOWS:
         raise HTTPException(status_code=400, detail=f"window must be one of {sorted(ALLOWED_WINDOWS)}")
     return window
+
+
+def _sanitize_numeric(value: Any) -> Any:
+    """Ensure numbers are JSON-safe (no NaN/inf)."""
+    if isinstance(value, (int, float)):
+        return value if math.isfinite(value) else None
+    return value
+
+
+def _sanitize_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply numeric sanitization across the metrics payload."""
+    return {key: _sanitize_numeric(value) for key, value in metrics.items()}
 
 
 def _shape_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -91,6 +104,7 @@ async def get_onchain_metrics(
         raise HTTPException(status_code=502, detail="On-chain metrics unavailable.") from exc
 
     metrics = _shape_metrics(payload)
+    metrics = _sanitize_metrics(metrics)
 
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
     response = {
@@ -120,27 +134,42 @@ async def get_ta_patterns(
     )
 
     try:
-        payload = await call_mcp_tool(
-            "crypto-onchain-server",
-            "run_patterns_only",
-            {"exchange": exchange, "interval": interval, "limit": limit},
-        )
+        with get_timescale_db() as session:
+            stmt = (
+                select(TASignalModel)
+                .where(
+                    TASignalModel.exchange == exchange,
+                    TASignalModel.interval == interval,
+                )
+                .order_by(TASignalModel.symbol)
+                .limit(limit)
+            )
+            rows = session.execute(stmt).scalars().all()
+            formatted: List[Dict[str, Any]] = [
+                {
+                    "symbol": row.symbol,
+                    "exchange": row.exchange,
+                    "interval": row.interval,
+                    "time": row.time.isoformat() if row.time else None,
+                    "signal": row.signal,
+                    "rsi": _sanitize_numeric(float(row.rsi)) if row.rsi is not None else None,
+                    "macd_hist": _sanitize_numeric(float(row.macd_hist)) if row.macd_hist is not None else None,
+                    "pattern": row.pattern,
+                }
+                for row in rows
+            ]
     except Exception as exc:
-        logger.error("[%s] Patterns tool failed: %s", request_id, exc, exc_info=True)
+        logger.error("[%s] Patterns query failed: %s", request_id, exc, exc_info=True)
         raise HTTPException(status_code=502, detail="On-chain patterns unavailable.") from exc
 
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-    patterns: Dict[str, Any] = payload.get("patterns", {}) if isinstance(payload, dict) else {}
-    formatted: List[Dict[str, Any]] = [
-        {"symbol": symbol, **details} for symbol, details in patterns.items()
-    ]
     return {
         "request_id": request_id,
         "duration_ms": duration_ms,
         "exchange": exchange,
         "interval": interval,
         "patterns": formatted,
-        "raw_text": payload.get("raw_text") if isinstance(payload, dict) else None,
+        "raw_text": None,
     }
 
 
