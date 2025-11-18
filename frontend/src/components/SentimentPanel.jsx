@@ -3,12 +3,14 @@ import SentimentGauge from './SentimentGauge'
 import SentimentSourcesCarousel from './SentimentSourcesCarousel'
 import FngGauge from './FngGauge'
 import { useTheme } from '../hooks/useTheme'
+import { useSymbol } from '../hooks/useSymbol'
 import { getSentimentAnalysis, getFngCurrent } from '../services/api'
 import Loader from './Loader'
 import ErrorBox from './ErrorBox'
 
 const SentimentPanel = () => {
   const { isDark } = useTheme()
+  const { symbol } = useSymbol()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -22,7 +24,7 @@ const SentimentPanel = () => {
       setError(null)
       try {
         const [result, fngResult] = await Promise.all([
-          getSentimentAnalysis(),
+          getSentimentAnalysis(symbol),
           getFngCurrent().catch(() => null),
         ])
         if (isMounted) {
@@ -47,7 +49,7 @@ const SentimentPanel = () => {
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [symbol])
 
   const aggregated = data?.aggregated || {}
   const sources = Array.isArray(data?.sources) ? data.sources : []

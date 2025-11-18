@@ -121,6 +121,49 @@ const normalizePatternsList = (input) => {
   return []
 }
 
+const normalizeAggregatedSentiment = (raw = {}) => {
+  if (!raw || typeof raw !== 'object') return {}
+
+  // Support both dashboard-style { top_sentiment, top_confidence, scores: { bullish, ... } }
+  // and asset-style { top_sentiment, top_confidence, bullish_score, ... }.
+  const scores = raw.scores || {}
+
+  const bullish = raw.bullish_score ?? scores.bullish ?? scores.BULLISH ?? 0
+  const bearish = raw.bearish_score ?? scores.bearish ?? scores.BEARISH ?? 0
+  const neutral = raw.neutral_score ?? scores.neutral ?? scores.NEUTRAL ?? 0
+
+  let topSentiment = raw.top_sentiment || raw.sentiment || null
+  let topConfidence = raw.top_confidence ?? raw.confidence
+
+  const scoreMap = {
+    BULLISH: typeof bullish === 'number' ? bullish : 0,
+    BEARISH: typeof bearish === 'number' ? bearish : 0,
+    NEUTRAL: typeof neutral === 'number' ? neutral : 0,
+  }
+
+  if (!topSentiment) {
+    const sorted = Object.entries(scoreMap).sort((a, b) => b[1] - a[1])
+    if (sorted[0] && sorted[0][1] > 0) {
+      const [label, value] = sorted[0]
+      topSentiment = label
+      topConfidence = value
+    }
+  }
+
+  const normalized = {
+    top_sentiment: topSentiment || 'UNKNOWN',
+    top_confidence:
+      typeof topConfidence === 'number'
+        ? topConfidence
+        : scoreMap[(topSentiment || '').toUpperCase()] || 0.5,
+    bullish_score: scoreMap.BULLISH,
+    bearish_score: scoreMap.BEARISH,
+    neutral_score: scoreMap.NEUTRAL,
+  }
+
+  return normalized
+}
+
 export const getPriceForecast = async (symbol, { horizonDays = 3, startDate } = {}) => {
   const response = await request(
     `/price/forecast/${symbol}${buildQuery({ horizon_days: horizonDays, start_date: startDate })}`,
@@ -137,11 +180,28 @@ export const getPriceForecast = async (symbol, { horizonDays = 3, startDate } = 
 }
 
 export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, refresh = false, daysBack = 7 } = {}) =>
-  request(`/sentiment/asset/${symbol}${buildQuery({ k, refresh, days_back: daysBack })}`).then((result) => ({
-    ...result,
-    aggregated: result.aggregated || {},
-    sources: Array.isArray(result.sources) ? result.sources : [],
-  }))
+  request(`/sentiment/asset/${symbol}${buildQuery({ k, refresh, days_back: daysBack })}`).then((result) => {
+    const rawAggregated =
+      result.aggregated ||
+      result.sentiment?.aggregated ||
+      result.sentiment ||
+      result.rag?.aggregated ||
+      {}
+
+    const aggregated = normalizeAggregatedSentiment(rawAggregated)
+
+    const sources =
+      (Array.isArray(result.sources) && result.sources) ||
+      (Array.isArray(result.sentiment?.sources) && result.sentiment.sources) ||
+      (Array.isArray(result.rag?.sources) && result.rag.sources) ||
+      []
+
+    return {
+      ...result,
+      aggregated,
+      sources,
+    }
+  })
 
 export const getRecentSentimentSources = ({ k = 5, refresh = true } = {}) =>
   request(`/sentiment/sources/recent${buildQuery({ k, refresh })}`).then((result) => ({
@@ -157,7 +217,7 @@ export const getFngCurrent = () =>
   }))
 
 export const getOnChainMetrics = (symbol = GENERIC_MARKET_SYMBOL, window = '24h') =>
-  request(`/onchain/metrics${buildQuery({ window })}`).then((result) => ({
+  request(`/onchain/metrics${buildQuery({ window, symbol })}`).then((result) => ({
     ...result,
     metrics: result.metrics || {},
   }))

@@ -295,7 +295,7 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
                 generate_ta_signal,
                 symbol,
                 "binance",
-                "1h",
+                "1d",
                 False,
             )
             for symbol in ta_symbols

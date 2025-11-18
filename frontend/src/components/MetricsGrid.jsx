@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowDownRight, ArrowUpRight, BarChart3, Minus } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
+import { useSymbol } from '../hooks/useSymbol'
 import { getOnChainMetrics } from '../services/api'
 import Loader from './Loader'
 import ErrorBox from './ErrorBox'
@@ -44,6 +45,7 @@ const MetricCard = ({ title, value, trend, isDark }) => {
 
 const MetricsGrid = () => {
   const { isDark } = useTheme()
+  const { symbol } = useSymbol()
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -53,7 +55,7 @@ const MetricsGrid = () => {
     setLoading(true)
     setError(null)
     try {
-      const result = await getOnChainMetrics()
+      const result = await getOnChainMetrics(symbol)
       setMetrics(result.metrics || {})
       setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
     } catch (err) {
@@ -61,7 +63,7 @@ const MetricsGrid = () => {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [symbol])
 
   useEffect(() => {
     fetchMetrics()
