@@ -11,11 +11,38 @@ const formatNumber = (
   { style = 'decimal', maximumFractionDigits = 2, currency = 'USD' } = {},
 ) => {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '--'
-  const options =
-    style === 'currency'
-      ? { style, currency, maximumFractionDigits }
-      : { style, maximumFractionDigits }
-  return Number(value).toLocaleString(undefined, options)
+  
+  const num = Number(value)
+  const absNum = Math.abs(num)
+  
+  // For currency, format with M/B suffixes for large numbers
+  if (style === 'currency') {
+    let formattedValue
+    let suffix = ''
+    
+    if (absNum >= 1_000_000_000) {
+      formattedValue = num / 1_000_000_000
+      suffix = 'B'
+    } else if (absNum >= 1_000_000) {
+      formattedValue = num / 1_000_000
+      suffix = 'M'
+    } else {
+      formattedValue = num
+    }
+    
+    const formatted = formattedValue.toLocaleString(undefined, {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: suffix ? 2 : maximumFractionDigits,
+      minimumFractionDigits: 0,
+    })
+    
+    return suffix ? `${formatted}${suffix}` : formatted
+  }
+  
+  // For regular numbers
+  const options = { style, maximumFractionDigits }
+  return num.toLocaleString(undefined, options)
 }
 
 const MetricCard = ({ title, value, trend, isDark }) => {
@@ -24,19 +51,19 @@ const MetricCard = ({ title, value, trend, isDark }) => {
   const isNA = value === 'N/A'
   return (
     <div
-      className={`rounded-xl p-4 shadow-lg flex flex-col h-full ${
+      className={`rounded-xl p-3 sm:p-4 shadow-lg flex flex-col h-full ${
         isDark ? 'bg-slate-900/40 border border-slate-700' : 'bg-white border border-gray-200'
       }`}
     >
       <p className={`text-xs font-medium mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{title}</p>
       <div className="flex-grow" />
-      <div className="flex items-end justify-between">
-        <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+      <div className="flex items-end justify-between gap-2">
+        <p className={`text-lg font-bold whitespace-nowrap ${isDark ? 'text-white' : 'text-gray-900'}`}>
           {isNA ? <span className="text-sm text-gray-400 dark:text-gray-500">N/A</span> : value}
         </p>
-        <div className={`flex items-center gap-1 ${trendColor}`}>
-          <TrendIcon size={16} />
-          <span className="text-sm font-medium">{trend === 'flat' ? '—' : trend}</span>
+        <div className={`flex items-center gap-1 flex-shrink-0 ${trendColor}`}>
+          <TrendIcon size={14} />
+          <span className="text-xs font-medium whitespace-nowrap">{trend === 'flat' ? '—' : trend}</span>
         </div>
       </div>
     </div>

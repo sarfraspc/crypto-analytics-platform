@@ -87,10 +87,12 @@ class Settings(BaseSettings):
     }
 
     STATIC_TOKEN_METADATA: Dict[str, Dict[str, str]] = {
-        # address (lowercase) -> {coingecko_id, symbol}
+        # address (lowercase) -> {coingecko_id, symbol, decimals}
         "0xdac17f958d2ee523a2206206994597c13d831ec7": {
             "coingecko_id": "tether",
             "symbol": "USDT",
+            # Stored as string for compatibility with Dict[str, str]
+            "decimals": "6",
         },
     }
 

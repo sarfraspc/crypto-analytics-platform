@@ -249,3 +249,80 @@ body {
 .animation-delay-900 {
   animation-delay: 0.9s;
 }
+
+/* Navigation button slide animations */
+@keyframes button-slide-right {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(40px);
+  }
+  50% {
+    transform: translateX(40px);
+  }
+  75% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes button-slide-left {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-40px);
+  }
+  50% {
+    transform: translateX(-40px);
+  }
+  75% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes button-slide-down {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(20px);
+  }
+  50% {
+    transform: translateY(20px);
+  }
+  75% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes button-slide-up {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-20px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+  75% {
+    transform: translateY(0);
+  }
+}
+
+.animate-button-slide-right {
+  animation: button-slide-right 2.5s ease-in-out infinite;
+}
+
+.animate-button-slide-left {
+  animation: button-slide-left 2.5s ease-in-out infinite;
+}
+
+.animate-button-slide-down {
+  animation: button-slide-down 2.5s ease-in-out infinite;
+}
+
+.animate-button-slide-up {
+  animation: button-slide-up 2.5s ease-in-out infinite;
+}

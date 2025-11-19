@@ -85,7 +85,7 @@ def log_pipeline_to_mlflow(
 def run_whale_ingestion(
     db: Session,
     chain: str = "ethereum",
-    threshold_usd: float = 100000.0,
+    threshold_usd: float = 500000.0,
     time_window: str = "24h",
 ):
     """
@@ -160,7 +160,7 @@ def run_metrics_update(
 def run_onchain_pipeline(
     db: Session,
     chain: str = "ethereum",
-    threshold_usd: float = 100000.0,
+    threshold_usd: float = 500000.0,
     time_window: str = "24h",
     run_steps: List[str] = None,
 ):
@@ -208,7 +208,7 @@ def main():
     parser.add_argument(
         "--threshold-usd",
         type=float,
-        default=100000.0,
+        default=500000.0,
         help="Whale USD threshold",
     )
     parser.add_argument(

@@ -9,8 +9,15 @@ const NavBar = ({ currentPage, onPageChange }) => {
   const { symbol, setSymbol, availableSymbols, loadingSymbols, symbolsError } = useSymbol()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [showHintAnimation, setShowHintAnimation] = useState(true)
   const desktopDropdownRef = useRef(null)
   const mobileDropdownRef = useRef(null)
+
+  // Stop hint animation after a few cycles
+  useEffect(() => {
+    const timer = setTimeout(() => setShowHintAnimation(false), 8000) // Stop after 8 seconds
+    return () => clearTimeout(timer)
+  }, [])
   
   const symbolOptions =
     Array.isArray(availableSymbols) && availableSymbols.length > 0
@@ -72,7 +79,7 @@ const NavBar = ({ currentPage, onPageChange }) => {
           <div className="hidden lg:flex items-center gap-3 xl:gap-4">
             {/* Page Toggle Buttons */}
             <div
-              className={`flex gap-2 px-2 py-1 rounded-lg ${
+              className={`relative flex gap-2 px-2 py-1 rounded-lg ${
                 isDark ? 'bg-slate-800' : 'bg-gray-100'
               }`}
             >
@@ -86,7 +93,7 @@ const NavBar = ({ currentPage, onPageChange }) => {
                   onClick={() => onPageChange(item.id)}
                   className={`px-3 xl:px-4 py-2 rounded-md font-medium text-sm transition-all ${
                     currentPage === item.id
-                      ? 'bg-indigo-600 text-white shadow-lg'
+                      ? `bg-indigo-600 text-white shadow-lg ${showHintAnimation ? (currentPage === 'dashboard' ? 'animate-button-slide-right' : 'animate-button-slide-left') : ''}`
                       : isDark
                         ? 'text-gray-400 hover:text-white'
                         : 'text-gray-600 hover:text-gray-900'
@@ -251,18 +258,18 @@ const NavBar = ({ currentPage, onPageChange }) => {
         {/* Mobile Menu Dropdown */}
         {mobileMenuOpen && (
           <div className={`lg:hidden py-4 border-t ${isDark ? 'border-slate-800' : 'border-gray-200'}`}>
-            <div className="flex flex-col space-y-2">
+            <div className="relative flex flex-col space-y-2">
               {[
                 { id: 'dashboard', label: 'Dashboard' },
                 { id: 'advanced', label: 'Advanced Analytics' },
-              ].map((item) => (
+              ].map((item, index) => (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => handlePageChange(item.id)}
                   className={`w-full px-4 py-3 rounded-lg font-medium text-sm text-left transition-all ${
                     currentPage === item.id
-                      ? 'bg-indigo-600 text-white shadow-lg'
+                      ? `bg-indigo-600 text-white shadow-lg ${showHintAnimation ? (currentPage === 'dashboard' ? 'animate-button-slide-down' : 'animate-button-slide-up') : ''}`
                       : isDark
                         ? 'text-gray-300 hover:bg-slate-800'
                         : 'text-gray-700 hover:bg-gray-100'

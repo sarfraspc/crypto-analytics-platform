@@ -94,11 +94,16 @@ const ChatBox = () => {
   const messagesEndRef = useRef(null)
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+    }
   }
 
   useEffect(() => {
-    scrollToBottom()
+    // Only scroll when there are actual messages (not just the intro message)
+    if (messages.length > 1 || isTyping) {
+      scrollToBottom()
+    }
   }, [messages, isTyping])
 
   useEffect(() => {
