@@ -10,6 +10,13 @@ from utils.cache import RedisCache  # Cache signals
 cache = RedisCache(expire_seconds=300)  # 5min
 
 def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Dict, symbol: str = "BTC", query_hash: str = "", days: int = 30) -> Dict[str, Any]:
+    # Use cached result only when we have a query_hash (agent path).
+    cache_key = None
+    if query_hash:
+        cache_key = f"strategy:{symbol}:{query_hash}:{days}"
+        if cached := cache.get_json(cache_key):
+            return cached
+
     # Use precomputed if available (from ohlcv_features)
     if 'sma_7' in df.columns and 'sma_21' in df.columns:
         tech = np.where(df['sma_7'] > df['sma_21'], 1, np.where(df['sma_7'] < df['sma_21'], -1, 0))
@@ -17,6 +24,9 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
         df['sma_short'] = talib.SMA(df['close'], timeperiod=10)
         df['sma_long'] = talib.SMA(df['close'], timeperiod=30)
         tech = np.where(df['sma_short'] > df['sma_long'], 1, np.where(df['sma_short'] < df['sma_long'], -1, 0))
+
+    tech_series = pd.Series(tech, index=df.index)
+    tech_signal = tech_series.iloc[-1]
 
     # Sentiment
     agg = sentiment.get('aggregated', {})
@@ -35,7 +45,7 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
     onch_sig += corr * 0.1  # Leverage full metrics
 
     # Composite (average scores)
-    composite = (pd.Series(tech, index=df.index).iloc[-1] + sent_sig + fc_sig + onch_sig) / 4.0
+    composite = (tech_signal + sent_sig + fc_sig + onch_sig) / 4.0
     signal = "BUY" if composite > 0.3 else "SELL" if composite < -0.3 else "HOLD"
     pos_size = abs(composite) * 0.8  # Cap 80%
 
@@ -45,16 +55,16 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
 
     result = {
         'signal': signal,
-        'position_size': pos_size,
+        'position_size': float(pos_size),
         'composite_score': float(composite),
-        'rationale': f"Hybrid: Tech={tech[-1]}, Sent={sent_sig}, FC={fc_sig}, OnCh={onch_sig} (Corr: {corr:.2f})",
-        'vol_adjusted': vol > 0.05
+        'rationale': f"Hybrid: Tech={tech_signal}, Sent={sent_sig}, FC={fc_sig}, OnCh={onch_sig} (Corr: {corr:.2f})",
+        # Ensure JSON-serializable bool for Redis cache.
+        'vol_adjusted': bool(vol > 0.05),
     }
 
-    # Cache
-    key = f"strategy:{symbol}:{query_hash}:{days}"
-    if cached := cache.get_json(key): return cached
-    cache.set_json(key, result)
+    # Cache only when we have a query_hash (agent path).
+    if cache_key:
+        cache.set_json(cache_key, result)
     return result
 
 def risk_adjust_size(size: float, vol: float, pressure: float) -> float:
