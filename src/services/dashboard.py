@@ -188,8 +188,7 @@ async def get_backtest_summary(
     logger.info("[%s] Dashboard backtest: symbol=%s days=%s", request_id, sanitized_symbol, days)
 
     try:
-        backtest_result = await asyncio.to_thread(
-            BACKTESTER.run_hybrid_backtest,
+        backtest_result = await BACKTESTER.run_hybrid_backtest(
             sanitized_symbol,
             days,
             ["combined"],

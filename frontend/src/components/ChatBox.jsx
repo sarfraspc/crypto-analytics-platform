@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { MessageSquare, Send, Loader2, RefreshCw } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
-import { useSymbol } from '../hooks/useSymbol'
 import { sendChatMessage } from '../services/api'
 import ErrorBox from './ErrorBox'
 
@@ -86,7 +85,6 @@ const AssistantBubble = ({ message, isDark, onChipClick }) => {
 
 const ChatBox = () => {
   const { isDark } = useTheme()
-  const { symbol } = useSymbol()
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const placeholder = 'Ask about forecast, onchain, or sentiment...'
@@ -119,7 +117,7 @@ const ChatBox = () => {
       const [, ...rest] = prev
       return [intro, ...rest]
     })
-  }, [symbol])
+  }, [])
 
   const lastUserQuestion = useMemo(
     () => [...messages].reverse().find((message) => message.role === 'user')?.content || null,
@@ -129,17 +127,17 @@ const ChatBox = () => {
   const buildQuickQuestion = (category) => {
     switch (category) {
       case 'forecast':
-        return `Run a forecast for ${symbol}`
+        return 'Run a forecast for BTC'
       case 'onchain':
-        return `Onchain flows for ${symbol}`
+        return 'Onchain flows for BTC'
       case 'sentiment':
-        return `Market sentiment for ${symbol}`
+        return 'Market sentiment for BTC'
       case 'combined':
-        return `Combined view (forecast/onchain/sentiment)`
+        return 'Combined view (forecast/onchain/sentiment) for BTC'
       case 'backtest':
-        return `Backtest a simple strategy`
+        return 'Backtest a simple strategy for BTC'
       case 'patterns':
-        return `Chart patterns and TA signals`
+        return 'Chart patterns and TA signals for BTC'
       default:
         return `${category} insights`
     }
@@ -148,6 +146,9 @@ const ChatBox = () => {
   const handleSend = async (overrideQuestion, options = {}) => {
     const question = (overrideQuestion ?? input).trim()
     if (!question || isTyping || regenerating) return
+
+    // Delegate symbol inference to the backend; use BTC as a placeholder path param.
+    const symbol = 'BTC'
 
     const nextMessages = [...messages, { role: 'user', content: question }]
     setMessages(nextMessages)
@@ -186,6 +187,10 @@ const ChatBox = () => {
 
   const handleRegenerate = async () => {
     if (!lastUserQuestion || isTyping || regenerating) return
+
+    // Delegate symbol inference to the backend; use BTC as a placeholder path param.
+    const symbol = 'BTC'
+
     setRegenerating(true)
     setError(null)
     const history = messages.filter((_, idx) => idx !== messages.length - 1 || messages[idx].role !== 'assistant')
