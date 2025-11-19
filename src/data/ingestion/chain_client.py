@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.orm import Session
 import logging
-from pycoingecko import CoinGeckoAPI  
 
 from core.config import settings
 from data.validation import WhaleAlert
@@ -13,55 +12,11 @@ from core.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
-CG = CoinGeckoAPI()
 
 TRANSFER_TOPIC = "0x" + Web3.keccak(text="Transfer(address,address,uint256)").hex()
 
 EXCHANGE_ADDRESSES = settings.EXCHANGE_ADDRESSES
 ALL_EXCHANGE_ADDRS = set(addr.lower() for addrs in EXCHANGE_ADDRESSES.values() for addr in addrs)
-
-def _get_static_eth_tokens(limit: int) -> List[Dict[str, str]]:
-    """
-    Fallback list of major ETH ERC-20 tokens with correct CoinGecko IDs.
-    Used when DB metadata is missing or incomplete.
-    """
-    fallback_tokens: List[Dict[str, str]] = []
-    for addr, meta in settings.STATIC_TOKEN_METADATA.items():
-        key = addr.lower()
-        cg_id = meta.get("coingecko_id", "weth")
-        symbol = meta.get("symbol", "WETH")
-        fallback_tokens.append(
-            {
-                "contract_addr": key,
-                "coingecko_id": cg_id,
-                "symbol": symbol,
-            }
-        )
-        if len(fallback_tokens) >= limit:
-            break
-
-    return fallback_tokens
-
-def get_top_eth_tokens(db: Session, limit: int = 20) -> List[Dict[str, str]]:
-    """
-    Return top ETH tokens based purely on STATIC_TOKEN_METADATA / STATIC_KNOWN_TOKENS
-    from settings, without requiring the tokens table.
-    """
-    tokens = _get_static_eth_tokens(limit)
-    logger.info(f"Loaded {len(tokens)} ETH tokens from STATIC_TOKEN_METADATA (limit={limit})")
-    return tokens
-
-def fetch_prices_bulk(coingecko_ids: List[str]) -> Dict[str, float]:
-    if not coingecko_ids:
-        return {}
-    
-    try:
-        ids_str = ','.join(coingecko_ids)
-        prices_data = CG.get_price(ids=ids_str, vs_currencies='usd')
-        return {cg_id: data['usd'] for cg_id, data in prices_data.items()}
-    except Exception as e:
-        logger.warning(f"Failed to bulk fetch prices for {len(coingecko_ids)} IDs: {e}", exc_info=True)
-        return {}
 
 def get_logs_in_chunks(
     w3,
@@ -117,15 +72,6 @@ def get_logs_in_chunks(
     logger.info(f"Total logs fetched across chunks: {len(all_logs)}")
     return all_logs
 
-def is_erc20(w3, address: str) -> bool:
-    SYMBOL_ABI = [{"constant": True, "name": "symbol", "outputs": [{"type": "string"}], "stateMutability": "view", "type": "function"}]
-    try:
-        token = w3.eth.contract(address=Web3.to_checksum_address(address), abi=SYMBOL_ABI)
-        token.functions.symbol().call()
-        return True
-    except Exception:
-        return False
-
 def get_token_decimals(w3, token_address: str) -> Optional[int]:
     if not hasattr(get_token_decimals, "_cache"):
         get_token_decimals._cache = {}
@@ -133,10 +79,15 @@ def get_token_decimals(w3, token_address: str) -> Optional[int]:
     if token_address in get_token_decimals._cache:
         return get_token_decimals._cache[token_address]
 
-    if not is_erc20(w3, token_address):
-        logger.warning(f"Skipping non-ERC20 token: {token_address}")
-        get_token_decimals._cache[token_address] = None
-        return None
+    # First, try static metadata (no network call)
+    meta = settings.STATIC_TOKEN_METADATA.get(token_address.lower())
+    if meta and "decimals" in meta:
+        try:
+            decimals = int(meta["decimals"])
+            get_token_decimals._cache[token_address] = decimals
+            return decimals
+        except (TypeError, ValueError):
+            logger.warning(f"Invalid decimals value in STATIC_TOKEN_METADATA for {token_address}: {meta.get('decimals')}")
 
     DECIMALS_ABI = [{"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "payable": False, "stateMutability": "view", "type": "function"}]
     
@@ -193,16 +144,17 @@ def process_transfer_log(
             logger.debug(f"Skipping internal exchange transfer: {from_addr} -> {to_addr}")
             return None, addresses
 
-        if amount_raw < 10**15:  
-            return None, addresses
-
         decimals = get_token_decimals(w3, token_address)
         if decimals is None:
-            decimals = 18 
-            logger.debug(f"Using fallback decimals=18 for {token_address}")
+            logger.warning(f"Skipping token with unknown decimals: {token_address}")
+            return None, addresses
         amount = Decimal(amount_raw) / Decimal(10**decimals)
 
-        price_usd = prices.get(token_address, 0.0)  
+        price_usd = prices.get(token_address)
+        if not price_usd or price_usd <= 0:
+            logger.warning(f"Skipping token with missing/zero price: {token_address}")
+            return None, addresses
+
         value_usd = float(amount) * price_usd
         if value_usd < threshold_usd:
             return None, addresses
@@ -229,7 +181,7 @@ def process_transfer_log(
         logger.error(f"Error processing transfer log: {e}", exc_info=True)
         return None, set()
 
-def scan_eth_transfers(db: Session, threshold_usd: float = 200000.0):
+def scan_eth_transfers(db: Session, threshold_usd: float = 500000.0):
     """
     Timestamp-based 24h rolling ingestion for Ethereum whale transfers.
 
@@ -270,17 +222,9 @@ def scan_eth_transfers(db: Session, threshold_usd: float = 200000.0):
             f"(avg_seconds_per_block≈{avg_seconds_per_block:.2f})"
         )
 
-        top_eth_tokens = get_top_eth_tokens(db, limit=20)
-        known_tokens = [t["contract_addr"] for t in top_eth_tokens]
-        # If we're only scanning USDT (or other stable tokens with ~1 USD peg),
-        # we can skip CoinGecko and assume 1 token ≈ 1 USD for filtering.
-        if len(top_eth_tokens) == 1:
-            prices = {known_tokens[0]: 1.0}
-            logger.info("Single static token detected; using fixed price 1.0 USD and skipping CoinGecko")
-        else:
-            coingecko_ids = [t["coingecko_id"] for t in top_eth_tokens]
-            prices_dict = fetch_prices_bulk(coingecko_ids)
-            prices = {t["contract_addr"]: prices_dict.get(t["coingecko_id"], 0.0) for t in top_eth_tokens}
+        # Single-token (USDT) setup: use static metadata and assume 1 token ≈ 1 USD.
+        known_tokens = [addr.lower() for addr in settings.STATIC_TOKEN_METADATA.keys()]
+        prices = {addr: 1.0 for addr in known_tokens}
 
         logs = get_logs_in_chunks(
             w3=w3,
