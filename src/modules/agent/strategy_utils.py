@@ -46,7 +46,8 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
 
     # Composite (average scores)
     composite = (tech_signal + sent_sig + fc_sig + onch_sig) / 4.0
-    signal = "BUY" if composite > 0.3 else "SELL" if composite < -0.3 else "HOLD"
+    # This allows Technicals (0.25 contribution) to trigger a trade even if everything else is neutral.
+    signal = "BUY" if composite >= 0.2 else "SELL" if composite <= -0.2 else "HOLD"
     pos_size = abs(composite) * 0.8  # Cap 80%
 
     # Risk adjust (vol/pressure)
