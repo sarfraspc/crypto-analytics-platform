@@ -51,20 +51,24 @@ const MetricCard = ({ title, value, trend, isDark }) => {
   const isNA = value === 'N/A'
   return (
     <div
-      className={`rounded-xl p-3 sm:p-4 shadow-lg flex flex-col h-full ${
+      className={`rounded-xl p-4 shadow-lg flex flex-col justify-between min-h-[110px] ${
         isDark ? 'bg-slate-900/40 border border-slate-700' : 'bg-white border border-gray-200'
       }`}
     >
-      <p className={`text-xs font-medium mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{title}</p>
-      <div className="flex-grow" />
-      <div className="flex items-end justify-between gap-2">
-        <p className={`text-lg font-bold whitespace-nowrap ${isDark ? 'text-white' : 'text-gray-900'}`}>
+      {/* Title at top */}
+      <p className={`text-xs font-medium ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{title}</p>
+      
+      {/* Value in middle with more space */}
+      <div className="flex items-center my-2">
+        <p className={`text-xl font-bold whitespace-nowrap ${isDark ? 'text-white' : 'text-gray-900'}`}>
           {isNA ? <span className="text-sm text-gray-400 dark:text-gray-500">N/A</span> : value}
         </p>
-        <div className={`flex items-center gap-1 flex-shrink-0 ${trendColor}`}>
-          <TrendIcon size={14} />
-          <span className="text-xs font-medium whitespace-nowrap">{trend === 'flat' ? '—' : trend}</span>
-        </div>
+      </div>
+      
+      {/* Trend at bottom */}
+      <div className={`flex items-center justify-end gap-1 ${trendColor}`}>
+        <TrendIcon size={14} />
+        <span className="text-xs font-medium whitespace-nowrap">{trend === 'flat' ? '—' : trend}</span>
       </div>
     </div>
   )
@@ -194,7 +198,7 @@ const MetricsGrid = () => {
       {loading && <Loader label="Fetching on-chain data" />}
       {!loading && error && <ErrorBox message={error} onRetry={handleRetry} />}
       {!loading && !error && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 flex-grow">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 flex-grow">
           {cards.map((card) => (
             <MetricCard key={card.title} {...card} isDark={isDark} />
           ))}
