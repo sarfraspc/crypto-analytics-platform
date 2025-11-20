@@ -123,11 +123,10 @@ async def _call_mcp(server: str, tool: str, args: Optional[Dict[str, Any]] = Non
         cache.delete(cache_key)
 
     server_scripts = {
-        "crypto-sarimax-server": "src/mcp_servers/price_server.py",
+        "crypto-prophet-server": "src/mcp_servers/price_server.py", 
+        
         "crypto-onchain-server": "src/mcp_servers/chain_server.py",
         "crypto-sentiment-server": "src/mcp_servers/sentiment_server.py",
-        # Legacy alias for older callers that still use the previous name
-        "crypto-pipeline-server": "src/mcp_servers/sentiment_server.py",
         "crypto-agent-server": "src/mcp_servers/agent_server.py",
     }
     script_path = server_scripts.get(server)
@@ -210,8 +209,8 @@ async def route_tools(
 
     if any(cat in cats for cat in ("forecast", "combined")):
         tasks["forecast"] = call_mcp_tool(
-            "crypto-sarimax-server",
-            "forecast_sarimax",
+            "crypto-prophet-server",    # CHANGED from crypto-sarimax-server
+            "forecast_prophet",         # CHANGED from forecast_sarimax
             {"symbol": symbol, "horizon": forecast_horizon},
             use_cache=use_cache,
         )

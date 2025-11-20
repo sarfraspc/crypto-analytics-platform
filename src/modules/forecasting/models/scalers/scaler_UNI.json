@@ -1,1 +1,1 @@
-{"cols_order": ["open", "high", "low", "close", "volume", "returns"], "scaler_type": "MinMaxScaler", "saved_at": "2025-11-16T15:16:43.570303+00:00"}
+{"cols_order": ["open", "high", "low", "close", "volume", "returns"], "scaler_type": "MinMaxScaler", "saved_at": "2025-11-20T06:37:35.676032+00:00"}

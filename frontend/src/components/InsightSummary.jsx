@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Brain } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
 import { useSymbol } from '../hooks/useSymbol'
-import { getInsightSummary } from '../services/api'
+import { getInsightSummary, getPriceForecast } from '../services/api'
 
 const Loader = ({ label }) => (
   <div className="flex items-center gap-2">
@@ -155,10 +155,23 @@ const InsightSummary = () => {
     setLoading(true)
     setError(null)
     try {
-      const result = await getInsightSummary(symbol)
+      const [summaryResult, forecastResult] = await Promise.all([
+        getInsightSummary(symbol),
+        getPriceForecast(symbol, { horizonDays: 3 })
+      ])
+      
       if (isMountedRef.current) {
-        setData(result)
-        setLastUpdated(result.generated_at || result.timestamp || new Date().toISOString())
+        // Override forecast data with fresh forecast to get current model and last point
+        const mergedData = {
+          ...summaryResult,
+          forecast: {
+            ...summaryResult.forecast,
+            model_used: forecastResult.model_used,
+            last_point: forecastResult.last_point
+          }
+        }
+        setData(mergedData)
+        setLastUpdated(summaryResult.generated_at || summaryResult.timestamp || new Date().toISOString())
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -192,17 +205,51 @@ const InsightSummary = () => {
     const whaleTx = data.onchain?.whale_transactions
     const flow = data.onchain?.dominant_flow
     const bias = data.onchain?.market_bias
+    
+    // Forecast information
+    const forecastPrice = data.forecast?.last_point?.predicted_close
+    const modelUsed = data.forecast?.model_used
+    const modelName = modelUsed ? modelUsed.match(/^([a-zA-Z]+)/)?.[1] || modelUsed : null
 
-    const pressureText =
-      typeof pressure === 'number' ? pressure.toFixed(2) : pressure
+    const pressureText = typeof pressure === 'number' ? pressure.toFixed(2) : pressure
+    
+    // Build summary in logical order: Forecast -> Sentiment -> On-chain activity -> Technical analysis
+    const parts = []
+    
+    // 1. Price Forecast (most important for traders)
+    if (forecastPrice && modelName) {
+      const modelDisplay = modelName.charAt(0).toUpperCase() + modelName.slice(1)
+      const priceDisplay = forecastPrice.toLocaleString(undefined, { 
+        style: 'currency', 
+        currency: 'USD', 
+        maximumFractionDigits: 2 
+      })
+      parts.push(`${modelDisplay} forecasts ${symbol} reaching ${priceDisplay} in 10 days.`)
+    }
+    
+    // 2. Market Sentiment
+    parts.push(`Market sentiment is ${sentimentLabel.toLowerCase()}.`)
+    
+    // 3. On-chain Activity
+    if (whaleTx) {
+      parts.push(`Detected ${whaleTx} whale transactions.`)
+    }
+    
+    if (flow) {
+      const flowText = flow.includes('dominated') ? flow : `${flow}-dominated flow`
+      parts.push(`On-chain activity shows ${flowText}.`)
+    }
+    
+    if (pressure != null) {
+      parts.push(`Market pressure index is at ${pressureText}.`)
+    }
+    
+    // 4. Technical Analysis
+    if (bias) {
+      parts.push(`Technical indicators show ${bias} bias.`)
+    }
 
-    const computed = `Market mood for ${symbol} is ${sentimentLabel.toLowerCase()} with ${
-      whaleTx ? `${whaleTx} whale transactions` : 'limited whale data'
-    }. ${flow ? `Dominant flow is ${flow}.` : ''} ${
-      pressure != null ? `Market pressure index stands at ${pressureText}.` : ''
-    } ${
-      bias ? `TA bias is ${bias}.` : ''
-    }`.trim()
+    const computed = parts.join(' ')
 
     if (computed.trim().length < 50 || !computed.toLowerCase().includes(symbol.toLowerCase())) {
       return data.response || `Limited dashboard data for ${symbol}. Sentiment: ${sentimentLabel}.`
@@ -220,7 +267,10 @@ const InsightSummary = () => {
       result.push({ label: `${data.onchain.dominant_flow} flow`, tone: 'blue' })
     }
     if (data.forecast?.model_used) {
-      result.push({ label: data.forecast.model_used, tone: 'purple' })
+      // Extract first part of model name before underscore or version number
+      // e.g., "prophet_v1_stochastic" -> "prophet", "sarimax_v3" -> "sarimax"
+      const modelName = data.forecast.model_used.match(/^([a-zA-Z]+)/)?.[1] || data.forecast.model_used
+      result.push({ label: modelName, tone: 'purple' })
     }
     return result
   }, [data])

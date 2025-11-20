@@ -4,31 +4,41 @@ import argparse
 from typing import List
 from pathlib import Path
 
-import importlib.util
 import pandas as pd
-
+import mlflow # Added explicitly
 from sqlalchemy import func
 from sqlalchemy.orm import sessionmaker
 
-from core.database import get_timescale_engine, get_metadata_db, get_timescale_db
+# Core imports
+from core.database import get_timescale_engine
+from core.config import settings # Needed for MLflow URI
+
+# Preprocessors
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
+
+# Models
 from modules.forecasting.models.sarimax import train_and_forecast as sarimax_train_and_forecast
 from modules.forecasting.models.prophet import train_and_forecast as prophet_train_and_forecast
+from modules.forecasting.models.prophet import ProphetModel # Added import
 from modules.forecasting.models.cnn_lstm import train_and_forecast_cnn_lstm
 from modules.forecasting.models.tft import train_and_forecast_tft
-from data.storage.models import OHLCVFeature
 
-_INGESTION_MODULE_PATH = Path(__file__).resolve().parents[2] / "data" / "market_client.py"
-_INGESTION_SPEC = importlib.util.spec_from_file_location("data.market_client", _INGESTION_MODULE_PATH)
-_INGESTION_MODULE = importlib.util.module_from_spec(_INGESTION_SPEC)
-_INGESTION_SPEC.loader.exec_module(_INGESTION_MODULE)
-setup_mlflow = _INGESTION_MODULE.setup_mlflow
-run_ingestion_cycle = _INGESTION_MODULE.run_ingestion_cycle
+# Data Models
+from data.storage.models import OHLCVFeature
 
 logger = logging.getLogger(__name__)
 
+def setup_mlflow():
+    """Configure MLflow tracking URI from settings."""
+    if hasattr(settings, 'MLFLOW_TRACKING_URI') and settings.MLFLOW_TRACKING_URI:
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        logger.info(f"MLflow configured with: {settings.MLFLOW_TRACKING_URI}")
+    else:
+        logger.warning("MLFLOW_TRACKING_URI not set in settings")
+
 def get_all_symbols(exchange: str = "binance", min_data_points: int = 100):
+    """Fetch symbols that already exist in the OHLCV table."""
     engine = get_timescale_engine()
     query = """
         SELECT DISTINCT symbol 
@@ -41,7 +51,7 @@ def get_all_symbols(exchange: str = "binance", min_data_points: int = 100):
     """
     df = pd.read_sql(query, engine, params={"exchange": exchange, "min_data_points": min_data_points})
     symbols = df["symbol"].tolist()
-    logger.info(f"Found {len(symbols)} symbols with sufficient data")
+    logger.info(f"Found {len(symbols)} symbols in DB with sufficient data")
     return symbols
 
 def ensure_features(
@@ -49,12 +59,14 @@ def ensure_features(
     exchange: str = "binance",
     interval: str = "1h",
 ):
+    """Verify that features exist in the DB for the given symbols."""
     coin_pre = CoinPreprocessor()
-    
     successful_symbols = []
     
     for symbol in symbols:
         try:
+            # Just a quick check if data exists (we limit query in logic usually, here we check existence)
+            # Using a lightweight check or loading head is better, but load_features_series works
             df_features = coin_pre.load_features_series(symbol, exchange, interval)
             if df_features is not None and not df_features.empty:
                 successful_symbols.append(symbol)
@@ -66,9 +78,6 @@ def ensure_features(
             continue
 
     logger.info(f"Features verified for {len(successful_symbols)}/{len(symbols)} symbols")
-    
-    logger.info("Panel data already exists in database - skipping panel creation")
-    
     return successful_symbols
 
 def refresh_coin_features(
@@ -78,6 +87,10 @@ def refresh_coin_features(
     target_freq: str = "h",
     refit_scaler: bool = False,
 ):
+    """
+    Reads raw OHLCV from DB, calculates technical indicators/features,
+    and writes to ohlcv_features table.
+    """
     if not symbols:
         logger.warning("No symbols provided for coin feature generation")
         return []
@@ -101,6 +114,7 @@ def refresh_coin_features(
                 target_freq=target_freq,
                 refit_scaler=refit_scaler,
             )
+            # Optional: Log latest timestamp to confirm write
             Session = sessionmaker(bind=coin_pre.engine)
             with Session() as session:
                 max_date = (
@@ -133,6 +147,7 @@ def refresh_panel_features(
     exchange: str = "binance",
     interval: str = "1h",
 ):
+    """Generates panel data structure for Deep Learning models."""
     if not symbols:
         logger.warning("No symbols provided for panel feature generation")
         return None
@@ -152,39 +167,6 @@ def refresh_panel_features(
     except Exception as e:
         logger.error("Failed to refresh panel features: %s", e)
         return None
-
-def ingest_before_retraining(
-    symbols: List[str],
-    exchange: str = "binance",
-    pipeline_name: str = "forecasting_retrain",
-):
-    if not symbols:
-        logger.warning("No symbols provided for ingestion; skipping ingestion step.")
-        return
-    
-    ingestion_symbols = [
-        {
-            "label": symbol,
-            "use_ccxt_symbol": f"{symbol}/USDT",
-            "exchange": exchange
-        }
-        for symbol in symbols
-    ]
-    
-    logger.info("Running ingestion cycle for %d symbols before retraining...", len(ingestion_symbols))
-    setup_mlflow()
-    
-    with get_metadata_db() as db_metadata, get_timescale_db() as db_timescale:
-        asyncio.run(
-            run_ingestion_cycle(
-                db_metadata,
-                db_timescale,
-                pipeline=pipeline_name,
-                symbols=ingestion_symbols,
-                delta_only=True
-            )
-        )
-    logger.info("Ingestion step completed.")
 
 def retrain_individual_models(
     symbols: List[str],
@@ -222,8 +204,9 @@ def retrain_individual_models(
                             retrain_if_exists=retrain_if_exists
                         )
                     elif model_name == "prophet":
+                        model_instance = ProphetModel(symbol)
                         result = prophet_train_and_forecast(
-                            symbol=symbol,
+                            model=model_instance,
                             exchange=exchange,
                             interval=interval,
                             forecast_steps=forecast_steps,
@@ -303,30 +286,30 @@ def retrain_all_models(
     min_data_points: int = 100,
     force_feature_update: bool = True,
     individual_batch_size: int = 50,  
-    max_panel_symbols: int = 50,
-    ingest_before_training: bool = True,
-    ingestion_pipeline_name: str = "forecasting_retrain"
+    max_panel_symbols: int = 50
 ):
+    """
+    Main orchestration function.
+    1. Fetches available symbols from DB.
+    2. Runs preprocessing (updates ohlcv_features table).
+    3. Trains models on the preprocessed data.
+    """
+    setup_mlflow()
     logger.info("Starting comprehensive model retraining for ALL symbols...")
     
+    # 1. Get Symbols (FROM DB ONLY)
     all_symbols = get_all_symbols(
         exchange=exchange, 
         min_data_points=min_data_points
     )
     
     if not all_symbols:
-        logger.error("No symbols found for training")
+        logger.error("No symbols found in DB for training")
         return {}
-    
-    if ingest_before_training:
-        ingest_before_retraining(
-            symbols=all_symbols,
-            exchange=exchange,
-            pipeline_name=ingestion_pipeline_name
-        )
     
     logger.info(f"Processing {len(all_symbols)} total symbols")
     
+    # 2. Preprocessing (OHLCV -> OHLCV_Features)
     need_coin_features = any(m in ["sarimax", "prophet"] for m in models)
     need_panel_features = any(m in ["cnn_lstm", "tft"] for m in models)
     feature_target_freq = "h" if "h" in interval.lower() else "d"
@@ -337,7 +320,7 @@ def retrain_all_models(
     if need_panel_features:
         feature_symbols.extend(all_symbols[:max_panel_symbols])
 
-    if feature_symbols:
+    if feature_symbols and force_feature_update:
         refresh_coin_features(
             feature_symbols,
             exchange=exchange,
@@ -366,6 +349,7 @@ def retrain_all_models(
         }
     }
     
+    # 3. Train Individual Models (SARIMAX, Prophet)
     individual_models = [m for m in models if m in ["sarimax", "prophet"]]
     if individual_models:
         logger.info(f"Training individual models for {len(successful_symbols)} symbols...")
@@ -379,6 +363,7 @@ def retrain_all_models(
             batch_size=individual_batch_size
         )
     
+    # 4. Train Panel Models (CNN-LSTM, TFT)
     panel_models = [m for m in models if m in ["cnn_lstm", "tft"]]
     if panel_models and successful_symbols:
         panel_symbols = successful_symbols[:max_panel_symbols]
@@ -393,6 +378,7 @@ def retrain_all_models(
             retrain_if_exists=retrain_if_exists
         )
     
+    # Summary logging
     successful_individual = 0
     failed_individual = 0
     
@@ -426,24 +412,22 @@ def retrain_all_models(
     return results
 
 def main():
-    parser = argparse.ArgumentParser(description='Retrain all forecasting models for ALL symbols')
+    parser = argparse.ArgumentParser(description='Retrain all forecasting models (Preprocessing & Training ONLY)')
     parser.add_argument('--exchange', default='binance', help='Exchange name')
     parser.add_argument('--interval', default='1h', help='Data interval')
     parser.add_argument('--forecast-steps', type=int, default=24, help='Forecast horizon')
     parser.add_argument('--models', nargs='+', default=['sarimax', 'prophet', 'cnn_lstm', 'tft'], 
-                       help='Models to retrain')
+                        help='Models to retrain')
     parser.add_argument('--min-data-points', type=int, default=100, 
-                       help='Minimum data points required')
+                        help='Minimum data points required in DB')
     parser.add_argument('--individual-batch-size', type=int, default=50,
-                       help='Batch size for individual model training')
+                        help='Batch size for individual model training')
     parser.add_argument('--max-panel-symbols', type=int, default=50,
-                       help='Maximum symbols for panel models')
+                        help='Maximum symbols for panel models')
     parser.add_argument('--retrain-if-exists', action='store_true', 
-                       help='Retrain even if model exists')
+                        help='Retrain even if model exists')
     parser.add_argument('--skip-feature-update', action='store_true', 
-                       help='Skip feature update')
-    parser.add_argument('--skip-ingestion', action='store_true',
-                       help='Skip ingestion step before retraining')
+                        help='Skip feature generation (use existing features in DB)')
     
     args = parser.parse_args()
     
@@ -474,8 +458,7 @@ def main():
             min_data_points=args.min_data_points,
             force_feature_update=not args.skip_feature_update,
             individual_batch_size=args.individual_batch_size,
-            max_panel_symbols=args.max_panel_symbols,
-            ingest_before_training=not args.skip_ingestion
+            max_panel_symbols=args.max_panel_symbols
         )
         
         print("\n" + "="*60)
@@ -508,7 +491,7 @@ if __name__ == "__main__":
         
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         
-        print("Running retraining for ALL symbols with default parameters...")
+        print("Running preprocessing and training for ALL symbols...")
         results = retrain_all_models(
             exchange="binance",
             interval="1h", 
@@ -518,7 +501,7 @@ if __name__ == "__main__":
             min_data_points=100,
             individual_batch_size=50,
             max_panel_symbols=15,
-            ingest_before_training=True
+            # force_feature_update=True is default
         )
         
         if results:
