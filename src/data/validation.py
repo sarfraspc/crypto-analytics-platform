@@ -77,11 +77,6 @@ class IngestionJob(BaseModel):
     last_success: Optional[datetime] = None
     details: Optional[Dict[str, Any]] = None
 
-class ChainState(BaseModel):
-    chain: str
-    last_block: Optional[int] = None
-    last_updated: Optional[datetime] = None
-
 class TASignal(BaseModel):
     symbol: str
     exchange: str

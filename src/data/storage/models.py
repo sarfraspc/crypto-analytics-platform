@@ -94,13 +94,6 @@ class IngestionJob(Base):
     last_success = Column(DateTime(timezone=True))  
     details = Column(JSON)
 
-class ChainState(Base):
-    __tablename__ = "chain_state"
-
-    chain = Column(String, primary_key=True)
-    last_block = Column(BIGINT)
-    last_updated = Column(DateTime(timezone=True), server_default=func.now())  
-
 class OHLCVFeature(Base):
     __tablename__ = "ohlcv_features"
 

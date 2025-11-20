@@ -13,7 +13,7 @@ const AppContent = () => {
   return (
     <div className={`${isDark ? 'bg-slate-950 text-white' : 'bg-gray-50 text-gray-900'} min-h-screen`}> 
       <NavBar currentPage={currentPage} onPageChange={setCurrentPage} />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-8">
         {currentPage === 'dashboard' ? <Dashboard /> : <AdvancedAnalytics />}
       </main>
       <Footer />

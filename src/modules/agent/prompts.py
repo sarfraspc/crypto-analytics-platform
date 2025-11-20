@@ -149,25 +149,49 @@ def build_sentiment_ctx(sentiment: Dict[str, Any]) -> str:
 
 def build_onchain_ctx(onchain: Dict[str, Any]) -> str:
     onchain = _robust_parse(onchain)
-    if not onchain: return "ON-CHAIN: N/A"
-    bias = onchain.get('market_bias', 'neutral')
-    pressure = onchain.get('market_pressure_index', 0)
+    if not onchain:
+        return "ON-CHAIN: N/A"
+    bias = onchain.get("market_bias", "neutral")
+    pressure = onchain.get("market_pressure_index", 0)
     return f"ON-CHAIN: {bias.upper()} Bias (Pressure: {pressure:.2f}, Net Flow: ${onchain.get('net_flow_usd', 0):,.0f})"
 
 def build_backtest_ctx(backtest: Dict[str, Any]) -> str:
-    if not backtest: return "BACKTEST: N/A"
-    m = backtest.get('metrics', {})
-    return f"BACKTEST: Return {m.get('total_return', 0):+.1%} | Sharpe {m.get('sharpe_ratio', 0):.2f} | DD {m.get('max_drawdown', 0):+.1%} | Trades {m.get('trades_count', 0)}"
+    if not backtest:
+        return "BACKTEST: N/A"
+    m = backtest.get("metrics", {})
+    total_ret = m.get("total_return")
+    if total_ret is None and "total_return_pct" in m:
+        total_ret = m.get("total_return_pct", 0) / 100.0
+    max_dd = m.get("max_drawdown")
+    if max_dd is None and "max_drawdown_pct" in m:
+        max_dd = m.get("max_drawdown_pct", 0) / 100.0
+    total_ret = float(total_ret or 0.0)
+    max_dd = float(max_dd or 0.0)
+    return (
+        f"BACKTEST: Return {total_ret:+.1%} | "
+        f"Sharpe {m.get('sharpe_ratio', 0):.2f} | "
+        f"DD {max_dd:+.1%} | "
+        f"Trades {m.get('trades_count', 0)}"
+    )
 
-def construct_prompt(query: str, data: Dict[str, Any], qtype: str, current_date: str) -> str:
+def construct_prompt(query: str, data: Dict[str, Any], qtype: str, current_date: str, categories: list[str] | None = None) -> str:
     # Dynamic UTC date
     utc_now = datetime.now(pytz.UTC).strftime("%Y-%m-%d") if current_date is None else current_date
+    cats = set(categories or [])
+
+    # Only include contextual blocks that the classifier actually requested,
+    # so the LLM doesn't focus on missing data the user never asked for.
+    include_forecast = ("forecast" in cats or "combined" in cats) and "forecast" in data
+    include_sentiment = ("sentiment" in cats or "combined" in cats) and "sentiment" in data
+    include_onchain = ("onchain" in cats or "combined" in cats) and "onchain" in data
+    include_backtest = ("backtest" in cats) and "backtest" in data
+
     parts = {
         "current_date": utc_now,
-        "forecast_ctx": build_forecast_ctx(data.get('forecast', {})),
-        "sentiment_ctx": build_sentiment_ctx(data.get('sentiment', {})),
-        "onchain_ctx": build_onchain_ctx(data.get('onchain', {})),
-        "backtest_ctx": build_backtest_ctx(data.get('backtest', {})),
+        "forecast_ctx": build_forecast_ctx(data.get('forecast', {})) if include_forecast else "",
+        "sentiment_ctx": build_sentiment_ctx(data.get('sentiment', {})) if include_sentiment else "",
+        "onchain_ctx": build_onchain_ctx(data.get('onchain', {})) if include_onchain else "",
+        "backtest_ctx": build_backtest_ctx(data.get('backtest', {})) if include_backtest else "",
         "query": query,
         "type_instructions": TYPE_INSTRUCTIONS.get(qtype, TYPE_INSTRUCTIONS['reasoning'])
     }

@@ -10,10 +10,60 @@ const confidenceWidth = (value) => {
   return Math.min(Math.max(value, 0), 1) * 100
 }
 
+const buildPatternExplanation = (pattern) => {
+  if (!pattern) return 'No strong technical signals detected.'
+
+  const parts = []
+  const rsi = typeof pattern.rsi === 'number' ? pattern.rsi : Number(pattern.rsi)
+  const macd = typeof pattern.macd_hist === 'number' ? pattern.macd_hist : Number(pattern.macd_hist)
+  const patternName = pattern.pattern || pattern.name
+  const signal = (pattern.signal || '').toString().toLowerCase()
+
+  if (!Number.isNaN(rsi)) {
+    if (rsi < 30) {
+      parts.push('RSI below 30 indicates oversold conditions')
+    } else if (rsi > 70) {
+      parts.push('RSI above 70 indicates overbought conditions')
+    } else {
+      parts.push(`RSI around ${Math.round(rsi)} suggests neutral momentum`)
+    }
+  }
+
+  if (!Number.isNaN(macd)) {
+    if (macd > 0) {
+      parts.push('Positive MACD histogram suggests bullish momentum')
+    } else if (macd < 0) {
+      parts.push('Negative MACD histogram suggests bearish momentum')
+    }
+  }
+
+  if (patternName && patternName !== 'none') {
+    const prettyName = patternName.replace(/_/g, ' ')
+    parts.push(`Candlestick pattern ${prettyName} supports the ${signal || 'current'} bias`)
+  }
+
+  if (!parts.length) return 'No strong technical signals detected.'
+  return parts.join('. ') + '.'
+}
+
 const PATTERN_QUERY = {
   exchange: 'binance',
   interval: '1d',
   limit: 100,
+}
+
+const MAIN_SYMBOLS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'AVAX', 'DOGE', 'MATIC', 'LTC', 'DOT']
+
+const sortByPriority = (items) => {
+  const priorityIndex = new Map(MAIN_SYMBOLS.map((symbol, index) => [symbol, index]))
+  return [...items].sort((a, b) => {
+    const aSymbol = (a.symbol || '').toUpperCase()
+    const bSymbol = (b.symbol || '').toUpperCase()
+    const aPriority = priorityIndex.has(aSymbol) ? priorityIndex.get(aSymbol) : MAIN_SYMBOLS.length
+    const bPriority = priorityIndex.has(bSymbol) ? priorityIndex.get(bSymbol) : MAIN_SYMBOLS.length
+    if (aPriority !== bPriority) return aPriority - bPriority
+    return aSymbol.localeCompare(bSymbol)
+  })
 }
 
 const TAPatternsCarousel = () => {
@@ -89,11 +139,14 @@ const TAPatternsCarousel = () => {
 
   const filteredPatterns = useMemo(() => {
     if (!patterns.length) return []
-    if (!taSymbols.length) return patterns
+    if (!taSymbols.length) return sortByPriority(patterns)
     const allowSet = new Set(
       taSymbols.map((item) => (item?.toUpperCase?.() || '').trim()).filter(Boolean),
     )
-    return patterns.filter((pattern) => allowSet.has((pattern.symbol || '').toUpperCase()))
+    const filtered = patterns.filter((pattern) =>
+      allowSet.has((pattern.symbol || '').toUpperCase()),
+    )
+    return sortByPriority(filtered)
   }, [patterns, taSymbols])
 
   return (
@@ -152,12 +205,15 @@ const TAPatternsCarousel = () => {
                           : 'bg-white border border-gray-200 text-gray-700'
                       }`}
                     >
-                      <p className="text-xs">{pattern.explanation || pattern.details || 'Pattern detected'}</p>
+                      <p className="text-xs">
+                        {pattern.explanation || pattern.details || buildPatternExplanation(pattern)}
+                      </p>
                     </div>
                   </div>
                 </div>
                 <p className={`text-sm mt-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                   {pattern.pattern || pattern.name}
+                  {pattern.signal ? ` (${String(pattern.signal).toLowerCase()})` : ''}
                 </p>
               </div>
               <div className="flex-grow" />

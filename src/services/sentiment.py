@@ -111,29 +111,23 @@ async def analyze_text_batch(request: SentimentBatchRequest):
 async def get_asset_sentiment(
     symbol: str,
     k: int = Query(5, ge=1, le=20, description="Number of RAG contexts to retrieve."),
-    refresh: bool = Query(False, description="Trigger ingestion before fetching sentiment."),
-    days_back: int = Query(7, ge=1, le=90, description="Days of history to ingest when refresh=true."),
+    refresh: bool = Query(
+        False,
+        description="When true, bypass sentiment caches to force fresh RAG + sentiment.",
+    ),
 ):
     sanitized_symbol = _validate_symbol(symbol)
     request_id = str(uuid.uuid4())
     start_time = datetime.utcnow()
     logger.info(
-        "[%s] Asset sentiment request: symbol=%s k=%s refresh=%s days_back=%s",
+        "[%s] Asset sentiment request: symbol=%s k=%s refresh=%s",
         request_id,
         sanitized_symbol,
         k,
         refresh,
-        days_back,
     )
 
     try:
-        if refresh:
-            await call_mcp_tool(
-                "crypto-sentiment-server",
-                "ingest_documents",
-                {"days_back": days_back},
-                use_cache=False,
-            )
         sentiment_payload = await call_mcp_tool(
             "crypto-sentiment-server",
             "analyze_with_sources",
@@ -141,7 +135,9 @@ async def get_asset_sentiment(
                 "query": f"Market sentiment for {sanitized_symbol} from recent crypto news and on-chain headlines",
                 "k": k,
                 "include_sources": True,
+                "refresh": refresh,
             },
+            use_cache=not refresh,
         )
     except Exception as exc:
         logger.error("[%s] Asset sentiment failed: %s", request_id, exc, exc_info=True)
@@ -160,6 +156,59 @@ async def get_asset_sentiment(
             "bullish_score": aggregated.get("bullish_score"),
             "neutral_score": aggregated.get("neutral_score"),
         },
+        "sources": sentiment_payload.get("sources") if isinstance(sentiment_payload, dict) else None,
+        "response": sentiment_payload.get("response") if isinstance(sentiment_payload, dict) else sentiment_payload,
+    }
+    return response
+
+
+@router.get("/sources/recent")
+async def get_recent_sources(
+    k: int = Query(5, ge=1, le=20, description="Number of recent sentiment sources to retrieve."),
+    refresh: bool = Query(
+        False,
+        description="When true, bypass caches to force fresh RAG + sentiment for recent sources.",
+    ),
+):
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+    logger.info(
+        "[%s] Recent sentiment sources request: k=%s refresh=%s",
+        request_id,
+        k,
+        refresh,
+    )
+
+    try:
+        sentiment_payload = await call_mcp_tool(
+            "crypto-sentiment-server",
+            "analyze_with_sources",
+            {
+                "query": "Recent crypto market sentiment and news across all assets from the last few days",
+                "k": k,
+                "include_sources": True,
+                "refresh": refresh,
+            },
+            use_cache=not refresh,
+        )
+    except Exception as exc:
+        logger.error("[%s] Recent sentiment sources failed: %s", request_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Recent sentiment sources service unavailable.") from exc
+
+    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    aggregated = sentiment_payload.get("aggregated", {}) if isinstance(sentiment_payload, dict) else {}
+    response = {
+        "request_id": request_id,
+        "duration_ms": duration_ms,
+        "aggregated": {
+            "top_sentiment": aggregated.get("top_sentiment") or aggregated.get("sentiment"),
+            "top_confidence": aggregated.get("top_confidence") or aggregated.get("confidence"),
+            "bearish_score": aggregated.get("bearish_score"),
+            "bullish_score": aggregated.get("bullish_score"),
+            "neutral_score": aggregated.get("neutral_score"),
+        }
+        if aggregated
+        else None,
         "sources": sentiment_payload.get("sources") if isinstance(sentiment_payload, dict) else None,
         "response": sentiment_payload.get("response") if isinstance(sentiment_payload, dict) else sentiment_payload,
     }
@@ -189,5 +238,38 @@ async def query_sentiment_rag(request: RagQueryRequest):
         "query": request.query,
         "answer": rag_payload.get("response") if isinstance(rag_payload, dict) else rag_payload,
         "contexts": rag_payload.get("contexts") if isinstance(rag_payload, dict) else [],
+    }
+    return response
+
+
+@router.get("/fng/current")
+async def get_fng_current():
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+    logger.info("[%s] FNG current request", request_id)
+
+    try:
+        payload = await call_mcp_tool(
+            "crypto-sentiment-server",
+            "get_fng_current",
+            use_cache=False,
+        )
+    except Exception as exc:
+        logger.error("[%s] FNG fetch failed: %s", request_id, exc, exc_info=True)
+        payload = {"error": f"MCP error: {exc}"}
+
+    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    data = payload if isinstance(payload, dict) else {"raw": payload}
+    if isinstance(data, dict) and data.get("error"):
+        data.setdefault("message", "Fear & Greed data unavailable")
+
+    response = {
+        "request_id": request_id,
+        "duration_ms": duration_ms,
+        "fng": data,
+        "value": data.get("current_value") if isinstance(data, dict) else None,
+        "sentiment": data.get("sentiment") or data.get("classification") if isinstance(data, dict) else None,
+        "market_bias": data.get("market_bias"),
+        "last_updated": data.get("last_updated") or data.get("timestamp"),
     }
     return response

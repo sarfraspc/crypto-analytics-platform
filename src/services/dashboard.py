@@ -12,6 +12,7 @@ from core.logging_config import setup_logging
 from data.storage.models import WhaleAlert as WhaleAlertModel
 from modules.agent.agent_client import call_mcp_tool
 from modules.agent.backtester import PortfolioBacktester
+from .onchain import _shape_metrics as _shape_raw_onchain_metrics
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -56,12 +57,31 @@ def _shape_sentiment(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return {"raw": payload}
+    flattened = _shape_raw_onchain_metrics(payload)
+    flow_trend = flattened.get("flow_trend_24h")
+    # Map numeric flow trend into a human-readable dominant flow label.
+    dominant_flow_label: str | None = None
+    try:
+        if flow_trend is not None:
+            val = float(flow_trend)
+            if val > 5:
+                dominant_flow_label = "inflow-dominated"
+            elif val < -5:
+                dominant_flow_label = "outflow-dominated"
+            else:
+                dominant_flow_label = "balanced"
+    except Exception:
+        dominant_flow_label = None
+
     return {
-        "whale_transactions": payload.get("whale_transactions"),
-        "inflow_usd": payload.get("inflow_usd"),
-        "outflow_usd": payload.get("outflow_usd"),
-        "market_pressure_index": payload.get("market_pressure_index"),
-        "dominant_flow": payload.get("dominant_flow"),
+        "whale_transactions": flattened.get("whale_transactions"),
+        "inflow_usd": flattened.get("exchange_inflow_usd"),
+        "outflow_usd": flattened.get("exchange_outflow_usd"),
+        "market_pressure_index": flattened.get("market_pressure_index"),
+        "market_bias": flattened.get("market_bias"),
+        # Use short-term flow trend as a proxy for dominant flow direction.
+        "dominant_flow": dominant_flow_label,
+        "flow_trend_24h": flow_trend,
     }
 
 
@@ -84,7 +104,7 @@ async def _gather_overview(symbol: str, horizon_hours: int, window: str, k_docs:
         "onchain": call_mcp_tool(
             "crypto-onchain-server",
             "run_metrics_only",
-            {"symbol": symbol, "window": window},
+            {"window": window},
         ),
     }
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -132,6 +152,28 @@ async def get_dashboard_overview(
         "onchain": _shape_onchain_metrics(shaped.get("onchain", {})),
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+    # Optional plain-text summary for frontend fallbacks (InsightSummary).
+    try:
+        sent = response["sentiment"]
+        onchain = response["onchain"]
+        sentiment_label = (sent.get("top_sentiment") or "mixed").lower()
+        whale_tx = onchain.get("whale_transactions")
+        flow = onchain.get("dominant_flow")
+        pressure = onchain.get("market_pressure_index")
+
+        parts = [f"Market mood for {sanitized_symbol} is {sentiment_label}."]
+        if whale_tx:
+            parts.append(f"{whale_tx} whale transactions observed in the recent window.")
+        if flow:
+            parts.append(f"Dominant flow is {flow}.")
+        if pressure is not None:
+            parts.append(f"Market pressure index is {pressure}.")
+
+        response["response"] = " ".join(parts)
+    except Exception as e:
+        logger.warning("Failed to build overview summary: %s", e)
+
     return response
 
 
@@ -146,8 +188,7 @@ async def get_backtest_summary(
     logger.info("[%s] Dashboard backtest: symbol=%s days=%s", request_id, sanitized_symbol, days)
 
     try:
-        backtest_result = await asyncio.to_thread(
-            BACKTESTER.run_hybrid_backtest,
+        backtest_result = await BACKTESTER.run_hybrid_backtest(
             sanitized_symbol,
             days,
             ["combined"],

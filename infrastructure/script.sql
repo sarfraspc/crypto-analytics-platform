@@ -191,12 +191,4 @@ CREATE TABLE IF NOT EXISTS ingestion_jobs (
 ALTER TABLE IF EXISTS ingestion_jobs OWNER TO crypto_user;
 GRANT ALL PRIVILEGES ON TABLE ingestion_jobs TO crypto_user;
 
--- Chain state (last scanned block per chain)
-CREATE TABLE IF NOT EXISTS chain_state (
-  chain TEXT PRIMARY KEY,
-  last_block BIGINT,
-  last_updated TIMESTAMPTZ DEFAULT now()
-);
 
-ALTER TABLE IF EXISTS chain_state OWNER TO crypto_user;
-GRANT ALL PRIVILEGES ON TABLE chain_state TO crypto_user;

@@ -1,6 +1,7 @@
 import logging
 import re
 import uuid
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -91,6 +92,19 @@ def _get_preprocessor() -> CoinPreprocessor:
 def _denormalize_forecast_points(symbol: str, points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not points:
         return points
+
+    # NEW SAFETY CHECK
+    # If the first predicted price is greater than 1.0, assume it is
+    # ALREADY a real price (not a 0-1 scaled value).
+    # This allows the API to handle both old models (0-1) and new models (Real Prices)
+    first_val = points[0].get("predicted_close", 0)
+    try:
+        if float(first_val) > 1.0:
+            logger.info(f"[{symbol}] Forecast appears to be real prices ({first_val}), skipping denormalization.")
+            return points
+    except (ValueError, TypeError):
+        pass
+    # ------------------------
 
     preprocessor = _get_preprocessor()
     scaler_path = _scaler_path_for(preprocessor.scaler_dir, symbol.upper(), None)
@@ -220,24 +234,40 @@ async def get_price_forecast(
 
     try:
         forecast_payload = await call_mcp_tool(
-            "crypto-sarimax-server",
-            "forecast_sarimax",
+            "crypto-prophet-server", 
+            "forecast_prophet",      
             {"symbol": sanitized_symbol, "horizon": horizon_hours, "start_date": start_date} if start_date else {"symbol": sanitized_symbol, "horizon": horizon_hours},
         )
+        
+        # CRITICAL RESTORATION: JSON PARSING 
+        # The MCP server sends a String. We must convert it to a Dict.
+        if isinstance(forecast_payload, str):
+            try:
+                forecast_payload = json.loads(forecast_payload)
+            except json.JSONDecodeError:
+                logger.error("[%s] Failed to parse MCP response as JSON: %s", request_id, forecast_payload[:100])
+        # ---------------------------------------------
+
     except Exception as exc:
         logger.error("[%s] Forecast MCP call failed: %s", request_id, exc, exc_info=True)
         raise HTTPException(status_code=502, detail="Forecast service unavailable.") from exc
 
     points = _normalize_forecast_points(forecast_payload or {}, horizon_hours)
+    
+    # The safety check inside _denormalize_forecast_points handles the real prices from Prophet
     points = _denormalize_forecast_points(sanitized_symbol, points)
+    
     raw_text = forecast_payload.get("raw_text") if isinstance(forecast_payload, dict) else None
-    model_used = forecast_payload.get("model_used", "sarimax_v3") if isinstance(forecast_payload, dict) else "sarimax_v3"
+    
+    # Updated default model name to match reality
+    model_used = forecast_payload.get("model_used", "prophet_v1") if isinstance(forecast_payload, dict) else "prophet_v1"
 
     if not points and not raw_text:
         logger.warning("[%s] Forecast payload missing usable data", request_id)
         raise HTTPException(status_code=502, detail="Forecast data unavailable.")
 
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    
     response = {
         "request_id": request_id,
         "symbol": sanitized_symbol,

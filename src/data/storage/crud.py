@@ -4,14 +4,27 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from data.validation import (
-    OHLCV, Trade, NewsArticle, RedditPost, WhaleAlert, OnchainMetric, IngestionJob, ChainState, 
-    TASignal, TASignalHistory
+    OHLCV,
+    Trade,
+    NewsArticle,
+    RedditPost,
+    WhaleAlert,
+    OnchainMetric,
+    IngestionJob,
+    TASignal,
+    TASignalHistory,
 )
 from data.storage.models import (
-    Token as TokenModel, OHLCV as OHLCVModel, Trade as TradeModel, WhaleAlert as WhaleAlertModel,
-    OnchainMetric as OnchainMetricModel, NewsArticle as NewsArticleModel,
-    RedditPost as RedditPostModel, IngestionJob as IngestionJobModel, ChainState as ChainStateModel,
-    TASignal as TASignalModel, TASignalHistory as TASignalHistoryModel
+    Token as TokenModel,
+    OHLCV as OHLCVModel,
+    Trade as TradeModel,
+    WhaleAlert as WhaleAlertModel,
+    OnchainMetric as OnchainMetricModel,
+    NewsArticle as NewsArticleModel,
+    RedditPost as RedditPostModel,
+    IngestionJob as IngestionJobModel,
+    TASignal as TASignalModel,
+    TASignalHistory as TASignalHistoryModel,
 )
 
 import logging
@@ -227,19 +240,6 @@ def update_ingestion_job(db: Session, job: IngestionJob):
         db.rollback()
         logger.error(f"Error updating ingestion job: {e}")
         raise
-
-
-def update_chain_state(db: Session, state: ChainState):
-    try:
-        chain_state = ChainStateModel(
-            chain=state.chain, last_block=state.last_block, last_updated=state.last_updated
-        )
-        db.merge(chain_state)
-        db.commit()  # Commit
-        logger.info(f"Committed chain state for {state.chain}")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error updating chain state: {e}")
 
 
 def upsert_ta_signals(db: Session, signals: List[TASignal]):

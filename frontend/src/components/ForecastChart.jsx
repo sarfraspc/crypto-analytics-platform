@@ -10,7 +10,7 @@ import ErrorBox from './ErrorBox'
 const ForecastChart = () => {
   const { isDark } = useTheme()
   const { symbol } = useSymbol()
-  const HORIZON_DAYS = 30
+  const HORIZON_DAYS = 10
   const [points, setPoints] = useState([])
   const [meta, setMeta] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -69,11 +69,16 @@ const ForecastChart = () => {
       const low = Math.min(...prices)
       
       const timestamp = new Date(candlePoints[0].timestamp)
-      const label = timestamp.toLocaleDateString(undefined, { 
-        month: 'short', 
-        day: 'numeric',
-        hour: '2-digit'
+      const timePart = timestamp.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
       })
+      const datePart = timestamp.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric'
+      })
+      const label = `${datePart} ${timePart}`
 
       candles.push({
         timestamp: candlePoints[0].timestamp,

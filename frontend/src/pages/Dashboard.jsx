@@ -5,7 +5,7 @@ import SentimentPanel from '../components/SentimentPanel'
 import TAPatternsCarousel from '../components/TAPatternsCarousel'
 
 const Dashboard = () => (
-  <div className="space-y-6">
+  <div className="space-y-4 sm:space-y-6">
     {/* Row 1: InsightSummary (full width) */}
     <div className="grid grid-cols-1">
       <InsightSummary />
@@ -17,7 +17,7 @@ const Dashboard = () => (
     </div>
 
     {/* Row 3: ForecastChart and MetricsGrid (side-by-side) */}
-    <div className="grid gap-6 lg:grid-cols-3 lg:items-stretch">
+    <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-3 lg:items-stretch">
       <div className="lg:col-span-2">
         <ForecastChart />
       </div>

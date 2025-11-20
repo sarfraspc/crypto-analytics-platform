@@ -6,31 +6,32 @@ import asyncio
 import hashlib
 import json
 import logging
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-import io
-import pandas as pd
 import os  # Added by agent
+import re
 import sys  # Added by agent
 import traceback
 from contextlib import AsyncExitStack
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+import io
 
-from mcp import ClientSession
-from mcp.client.stdio import stdio_client, StdioServerParameters
-from mcp.types import CallToolRequest  # Imported per MCP client spec (unused but kept for parity)
-from httpx import AsyncClient
 import google.generativeai as genai
+import pandas as pd
+from httpx import AsyncClient
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.types import CallToolRequest  # Imported per MCP client spec (unused but kept for parity)
 
 from core.config import settings
 from core.logging_config import setup_logging
-from utils.cache import RedisCache
-from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.explainers.xai import explain_model_predictions 
+from modules.agent.backtester import PortfolioBacktester
+from modules.agent.constants import LLM_REGISTRY
 from modules.agent.prompts import construct_prompt
 from modules.agent.query_classifier import HybridClassifier
-from modules.agent.backtester import PortfolioBacktester
 from modules.agent.strategy_utils import hybrid_signal
-from modules.agent.constants import LLM_REGISTRY
+from modules.forecasting.data.preprocess_coin import CoinPreprocessor
+from modules.forecasting.explainers.xai import explain_model_predictions
+from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -122,11 +123,10 @@ async def _call_mcp(server: str, tool: str, args: Optional[Dict[str, Any]] = Non
         cache.delete(cache_key)
 
     server_scripts = {
-        "crypto-sarimax-server": "src/mcp_servers/price_server.py",
+        "crypto-prophet-server": "src/mcp_servers/price_server.py", 
+        
         "crypto-onchain-server": "src/mcp_servers/chain_server.py",
         "crypto-sentiment-server": "src/mcp_servers/sentiment_server.py",
-        # Legacy alias for older callers that still use the previous name
-        "crypto-pipeline-server": "src/mcp_servers/sentiment_server.py",
         "crypto-agent-server": "src/mcp_servers/agent_server.py",
     }
     script_path = server_scripts.get(server)
@@ -197,8 +197,6 @@ async def route_tools(
     forecast_horizon = max(1, horizon_days * 24)
     window = str(options.get("window") or "24h")
     k_docs = max(1, _safe_int(options.get("k_docs"), 5))
-    ingest_days = max(1, _safe_int(options.get("ingest_days"), 7))
-    refresh_sentiment = bool(options.get("refresh_sentiment"))
     explain_forecast = bool(options.get("explain_forecast"))
 
     logger.info(
@@ -211,41 +209,39 @@ async def route_tools(
 
     if any(cat in cats for cat in ("forecast", "combined")):
         tasks["forecast"] = call_mcp_tool(
-            "crypto-sarimax-server",
-            "forecast_sarimax",
+            "crypto-prophet-server",    # CHANGED from crypto-sarimax-server
+            "forecast_prophet",         # CHANGED from forecast_sarimax
             {"symbol": symbol, "horizon": forecast_horizon},
             use_cache=use_cache,
         )
 
-    if any(cat in cats for cat in ("onchain", "combined")):
-        onchain_args = {"symbol": symbol, "window": window}
-        if any(word in query_lower for word in ['pattern', 'rsi', 'macd', 'ta', 'technical']):
-            onchain_args.update({"limit": 20})
+    wants_onchain = any(cat in cats for cat in ("onchain", "combined", "patterns"))
+    if wants_onchain:
+        base_onchain_args = {"window": window}
+        wants_patterns = "patterns" in cats or any(
+            word in query_lower for word in ["pattern", "rsi", "macd", "ta", "technical"]
+        )
+        if wants_patterns:
+            pattern_args = {
+                "exchange": "binance",
+                "interval": "1d",
+                "limit": 20,
+            }
             tasks["onchain"] = call_mcp_tool(
                 "crypto-onchain-server",
                 "run_patterns_only",
-                onchain_args,
+                pattern_args,
                 use_cache=use_cache,
             )
         else:
-            onchain_args.update({"run_steps": "all"})
             tasks["onchain"] = call_mcp_tool(
                 "crypto-onchain-server",
-                "run_onchain_pipeline",
-                onchain_args,
+                "run_metrics_only",
+                base_onchain_args,
                 use_cache=use_cache,
             )
 
     if any(cat in cats for cat in ("sentiment", "combined")):
-        if refresh_sentiment:
-            await call_mcp_tool(
-                "crypto-sentiment-server",
-                "ingest_documents",
-                {"days_back": ingest_days},
-                use_cache=False,
-            )
-            logger.info("Sentiment refresh requested; ingestion triggered")
-
         sentiment_query = f"Current market sentiment and news about {symbol}"
         if any(token in query_lower for token in ['pattern', 'technical', 'ta']):
             sentiment_query += " including technical impact"
@@ -460,7 +456,7 @@ class CryptoAgentV2:
         provider, model, temperature = LLM_REGISTRY.get(qtype, LLM_REGISTRY["combined"])
         logger.info("Using %s/%s for %s query (temp=%s)", provider, model, qtype, temperature)
 
-        prompt_text = construct_prompt(sanitized_query, data, qtype, self.current_date)
+        prompt_text = construct_prompt(sanitized_query, data, qtype, self.current_date, categories)
         response = await synthesize(provider, model, temperature, prompt_text)
 
         result = {
@@ -498,6 +494,86 @@ def _get_agent() -> CryptoAgentV2:
     return _AGENT_SINGLETON
 
 
+_SYMBOL_STOPWORDS = {
+    "RUN",
+    "PRICE",
+    "FORECAST",
+    "ONCHAIN",
+    "SENTIMENT",
+    "MARKET",
+    "BACKTEST",
+    "REPORT",
+    "OVERVIEW",
+    "HISTORY",
+    "PAST",
+    "LAST",
+    "DAYS",
+    "DAY",
+    "WEEK",
+    "WEEKS",
+    "MONTH",
+    "MONTHS",
+    "YEAR",
+    "YEARS",
+    "SIMPLE",
+    "STRATEGY",
+    "FOR",
+    "THE",
+    "AND",
+    "OR",
+    "OF",
+    "TO",
+    "IN",
+}
+
+_SYMBOL_ALIASES = {
+    "BITCOIN": "BTC",
+    "ETHEREUM": "ETH",
+}
+
+
+def _infer_symbol_from_text(question: str, fallback: str = "BTC") -> str:
+    """
+    Lightweight symbol extractor that uses the natural-language question
+    as the primary source of truth for the asset ticker.
+
+    - Detects common asset names like 'bitcoin'/'ethereum'.
+    - Then looks for ticker-like tokens (2–10 uppercase letters).
+    - Ignores obvious non-symbol words via a small stopword set.
+    - Falls back to the provided fallback (or BTC) if nothing is found.
+    """
+    base = (question or "").strip()
+    if not base:
+        return (fallback or "BTC").upper()
+
+    upper = base.upper()
+
+    # Name-based aliases first (e.g., "bitcoin" -> BTC).
+    for name, sym in _SYMBOL_ALIASES.items():
+        if name in upper:
+            return sym
+
+    # Then look for ticker-like tokens, normalizing to base symbols:
+    # - Split pairs like "BTC/USDT" -> "BTC"
+    # - Strip common quote suffixes like "BTCUSDT" -> "BTC"
+    matches = re.findall(r"\\b[A-Z]{2,10}\\b", upper)
+    for token in matches:
+        if token in _SYMBOL_STOPWORDS:
+            continue
+
+        base_token = token
+        if "/" in base_token:
+            base_token = base_token.split("/", 1)[0]
+        for suffix in ("USDT", "USD", "USDC", "BUSD", "PERP"):
+            if base_token.endswith(suffix) and len(base_token) > len(suffix) + 1:
+                base_token = base_token[: -len(suffix)]
+                break
+
+        return base_token
+
+    return (fallback or "BTC").upper()
+
+
 async def orchestrate_query(
     symbol: str,
     question: str,
@@ -507,8 +583,12 @@ async def orchestrate_query(
 ) -> Dict[str, Any]:
     """Entry point used by the Agent MCP server."""
 
-    safe_symbol = (symbol or "BTC").upper()
-    safe_question = (question or "").strip() or f"{safe_symbol} market overview"
+    raw_question = (question or "").strip()
+    # Use the question text as the primary source of truth for the asset,
+    # falling back to the provided symbol or BTC when nothing is detected.
+    inferred_symbol = _infer_symbol_from_text(raw_question, fallback=(symbol or "BTC"))
+    safe_symbol = inferred_symbol.upper()
+    safe_question = raw_question or f"{safe_symbol} market overview"
     safe_options = options or {}
 
     horizon_hint = _safe_int(safe_options.get("horizon"), 30)

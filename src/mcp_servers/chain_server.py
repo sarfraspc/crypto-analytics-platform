@@ -12,11 +12,11 @@ from mcp.types import (
     Tool,
     TextContent,
 )
-from core.database import get_timescale_db, get_metadata_db
+from core.database import get_timescale_db
 from core.logging_config import setup_logging
-from modules.onchain.pipeline import run_onchain_pipeline, setup_mlflow, get_top_symbols, run_ta_patterns
-from modules.onchain.metrics.pipeline import run_onchain_metrics
-from utils.cache import RedisCache
+from data.onchain_client import setup_mlflow
+from data.storage.models import TASignal as TASignalModel, OnchainMetric as OnchainMetricModel
+from sqlalchemy import select
 import json
 
 setup_logging()
@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 class OnchainMCP:
     def __init__(self):
         self.is_initialized = False
-        self.cache = RedisCache()
 
     async def initialize(self):
         try:
@@ -36,112 +35,94 @@ class OnchainMCP:
             logger.exception("Onchain MCP initialization failed")
             raise e
 
-    async def run_pipeline(self, request: CallToolRequest) -> CallToolResult:
-        if not self.is_initialized:
-            raise Exception("Server not initialized")
-        params = request.params if hasattr(request, "params") else None
-        input_data = (params.arguments if params and params.arguments is not None else {})
-        chain = input_data.get('chain', 'ethereum')
-        batch_size = input_data.get('batch_size', 100)
-        threshold_usd = input_data.get('threshold_usd', 500000.0)
-        time_window = input_data.get('window', '24h')
-        symbol = input_data.get('symbol', 'BTC')
-        run_steps_str = input_data.get('run_steps', 'all')
-        run_steps = run_steps_str.split(',') if run_steps_str != 'all' else None
-
-        try:
-            def execute_pipeline():
-                with get_timescale_db() as db:
-                    return run_onchain_pipeline(
-                        db=db,
-                        chain=chain,
-                        batch_size=batch_size,
-                        threshold_usd=threshold_usd,
-                        time_window=time_window,
-                        symbol=symbol,
-                        run_steps=run_steps
-                    )
-            result = await asyncio.to_thread(execute_pipeline)
-            
-            # Centralized cache invalidation
-            logger.info(f"Invalidating cache for symbol '{symbol}' and global keys.")
-            await asyncio.to_thread(self.cache.delete_by_pattern, f"{symbol}:*")
-            await asyncio.to_thread(self.cache.delete_by_pattern, "ohlcv_features:*")
-            await asyncio.to_thread(self.cache.delete_by_pattern, "strategy:*")
-            
-            result_str = json.dumps(result, default=str, indent=2) 
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Onchain Pipeline Result:\n\n{result_str}"
-                )]
-            )
-        except Exception as e:
-            err = f"Error: {type(e).__name__} - {str(e)}"
-            logger.error(err, exc_info=True)
-            return CallToolResult(
-                isError=True,
-                content=[TextContent(type="text", text=err)]
-            )
-
-    async def run_ingestion_only(self, request: CallToolRequest) -> CallToolResult:
-        if not self.is_initialized:
-            raise Exception("Server not initialized")
-        params = request.params if hasattr(request, "params") else None
-        input_data = (params.arguments if params and params.arguments is not None else {})
-        chain = input_data.get('chain', 'ethereum')
-        batch_size = input_data.get('batch_size', 100)
-        threshold_usd = input_data.get('threshold_usd', 500000.0)
-        symbol = input_data.get('symbol', 'BTC')
-
-        try:
-            def execute_ingestion():
-                with get_timescale_db() as db:
-                    return run_onchain_pipeline(
-                        db=db,
-                        chain=chain,
-                        batch_size=batch_size,
-                        threshold_usd=threshold_usd,
-                        run_steps=['ingestion']
-                    )
-            result = await asyncio.to_thread(execute_ingestion)
-            # Ensure downstream caches are cleared even for manual ingestions
-            logger.info("Invalidating cache after ingestion for chain=%s symbol=%s", chain, symbol)
-            await asyncio.to_thread(self.cache.delete_by_pattern, f"{symbol}:*")
-            await asyncio.to_thread(self.cache.delete_by_pattern, "ohlcv_features:*")
-            await asyncio.to_thread(self.cache.delete_by_pattern, "strategy:*")
-
-            result_str = json.dumps(result, default=str, indent=2)
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Ingestion Result:\n\n{result_str}"
-                )]
-            )
-        except Exception as e:
-            err = f"Error: {type(e).__name__} - {str(e)}"
-            logger.error(err, exc_info=True)
-            return CallToolResult(
-                isError=True,
-                content=[TextContent(type="text", text=err)]
-            )
-
     async def run_metrics_only(self, request: CallToolRequest) -> CallToolResult:
         if not self.is_initialized:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
         input_data = (params.arguments if params and params.arguments is not None else {})
-        chain = input_data.get('chain', 'ethereum')
-        time_window = input_data.get('window', '24h')
-        symbol = input_data.get('symbol', 'BTC')
+        chain = input_data.get("chain", "ethereum")
+        time_window = input_data.get("window", "24h")
 
         try:
-            result = await asyncio.to_thread(run_onchain_metrics, chain, time_window, symbol)
-            result_str = json.dumps(result, default=str, indent=2)
+            def execute_metrics():
+                with get_timescale_db() as ts_db:
+                    def latest(metric_name: str):
+                        stmt = (
+                            select(OnchainMetricModel.value)
+                            .where(
+                                OnchainMetricModel.chain == chain,
+                                OnchainMetricModel.metric == metric_name,
+                                OnchainMetricModel.raw.op("->>")("window") == time_window,
+                            )
+                            .order_by(OnchainMetricModel.time.desc())
+                            .limit(1)
+                        )
+                        value = ts_db.execute(stmt).scalar_one_or_none()
+                        return float(value) if value is not None else None
+
+                    flows = {
+                        "exchange_inflow_usd": latest("exchange_inflow_usd"),
+                        "exchange_outflow_usd": latest("exchange_outflow_usd"),
+                        "net_flow_usd": latest("net_flow_usd"),
+                        "exchange_flow_ratio": latest("exchange_flow_ratio"),
+                        "flow_trend_24h": latest("flow_trend_24h"),
+                    }
+
+                    whales = {
+                        "whale_count": latest("whale_count"),
+                        "total_whale_volume_usd": latest("total_whale_volume_usd"),
+                        "avg_whale_tx_size_usd": latest("avg_whale_tx_size_usd"),
+                        "whale_exchange_inflow": latest("whale_exchange_inflow"),
+                        "whale_exchange_outflow": latest("whale_exchange_outflow"),
+                        "whale_exchange_ratio": latest("whale_exchange_ratio"),
+                        "unique_whale_addresses": latest("unique_whale_addresses"),
+                    }
+
+                    aggregated_metrics = {
+                        "market_pressure_index": latest("market_pressure_index"),
+                        "whale_to_exchange_ratio": latest("whale_to_exchange_ratio"),
+                        "price_whale_corr_7d": latest("price_whale_corr_7d"),
+                        "flow_trend_7d": latest("flow_trend_7d"),
+                        "price_change_pct": latest("price_change_pct"),
+                    }
+
+                # Derive market_bias on the fly from stored metrics.
+                net_flow = flows.get("net_flow_usd") or 0.0
+                price_change = aggregated_metrics.get("price_change_pct") or 0.0
+                whale_ratio = aggregated_metrics.get("whale_to_exchange_ratio") or 0.0
+
+                flow_bias = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
+                price_bias = 1 if price_change > 0 else -1 if price_change < 0 else 0
+                ratio_bias = 1 - whale_ratio
+
+                bias_score = (flow_bias * 0.4) + (price_bias * 0.3) + (ratio_bias * 0.3)
+                if bias_score > 0.3:
+                    market_bias = "bullish"
+                elif bias_score < -0.3:
+                    market_bias = "bearish"
+                else:
+                    market_bias = "neutral"
+
+                aggregated = {
+                    **aggregated_metrics,
+                    "market_bias": market_bias,
+                }
+
+                return {
+                    "flows": flows,
+                    "whales": whales,
+                    "aggregated": aggregated,
+                    "errors": [],
+                }
+
+            result = await asyncio.to_thread(execute_metrics)
+            # Emit pure JSON so upstream callers receive a structured payload,
+            # avoiding any \"Metrics Result:\" wrappers that break dict parsing.
+            result_str = json.dumps(result, default=str)
             return CallToolResult(
                 content=[TextContent(
                     type="text",
-                    text=f"Metrics Result:\n\n{result_str}"
+                    text=result_str,
                 )]
             )
         except Exception as e:
@@ -157,21 +138,49 @@ class OnchainMCP:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
         input_data = (params.arguments if params and params.arguments is not None else {})
-        exchange = input_data.get('exchange', 'binance')
-        interval = input_data.get('interval', '1d')
-        limit = input_data.get('limit', 50)
+        exchange = input_data.get("exchange", "binance")
+        interval = input_data.get("interval", "1d")
+        limit = input_data.get("limit", 50)
 
         try:
             def execute_patterns():
-                with get_metadata_db() as meta_db:
-                    symbols = get_top_symbols(meta_db, limit=limit)
-                return run_ta_patterns(symbols, exchange=exchange, interval=interval)
+                with get_timescale_db() as ts_db:
+                    stmt = (
+                        select(TASignalModel)
+                        .where(
+                            TASignalModel.exchange == exchange,
+                            TASignalModel.interval == interval,
+                        )
+                        .order_by(TASignalModel.symbol)
+                        .limit(limit)
+                    )
+                    rows = ts_db.execute(stmt).scalars().all()
+
+                patterns = {
+                    row.symbol: {
+                        "exchange": row.exchange,
+                        "interval": row.interval,
+                        "timestamp": row.time.isoformat() if row.time else None,
+                        "signal": row.signal,
+                        "rsi": float(row.rsi) if row.rsi is not None else None,
+                        "macd_hist": float(row.macd_hist) if row.macd_hist is not None else None,
+                        "pattern": row.pattern,
+                    }
+                    for row in rows
+                }
+
+                if patterns:
+                    return {"patterns": patterns, "status": "success"}
+                else:
+                    return {"patterns": {}, "status": "no_data"}
+
             result = await asyncio.to_thread(execute_patterns)
-            result_str = json.dumps(result, default=str, indent=2)
+            # Emit pure JSON so downstream parsers see a clean dict.
+            result_str = json.dumps(result, default=str)
             return CallToolResult(
                 content=[TextContent(
                     type="text",
-                    text=f"Patterns Result:\n\n{result_str}"
+                    text=result_str,
                 )]
             )
         except Exception as e:
@@ -192,35 +201,6 @@ mcp = OnchainMCP()
 async def list_tools():
     return [
         Tool(
-            name="run_onchain_pipeline",
-            description="Run the full on-chain analytics pipeline: whale alerts ingestion + exchange flows + TA patterns (Ethereum default)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "chain": {"type": "string", "default": "ethereum"},
-                    "batch_size": {"type": "integer", "default": 100},
-                    "threshold_usd": {"type": "number", "default": 500000.0},
-                    "window": {"type": "string", "default": "24h", "enum": ["1h", "24h"]},
-                    "symbol": {"type": "string", "default": "BTC"},
-                    "run_steps": {"type": "string", "description": "Comma-separated steps (e.g., 'ingestion,metrics') or 'all'"}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="run_ingestion_only",
-            description="Run only whale alert ingestion (fetches and processes recent transfers > threshold USD)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "chain": {"type": "string", "default": "ethereum"},
-                    "batch_size": {"type": "integer", "default": 100},
-                    "threshold_usd": {"type": "number", "default": 500000.0}
-                },
-                "required": []
-            }
-        ),
-        Tool(
             name="run_metrics_only",
             description="Run only metrics computation (exchange flows, whale summaries, market pressure index)",
             inputSchema={
@@ -228,10 +208,9 @@ async def list_tools():
                 "properties": {
                     "chain": {"type": "string", "default": "ethereum"},
                     "window": {"type": "string", "default": "24h", "enum": ["1h", "24h"]},
-                    "symbol": {"type": "string", "default": "BTC"}
                 },
-                "required": []
-            }
+                "required": [],
+            },
         ),
         Tool(
             name="run_patterns_only",
@@ -251,18 +230,6 @@ async def list_tools():
 
 @server.call_tool()
 async def call_tool(name: str, arguments: Dict[str, Any]):
-    if name == "run_onchain_pipeline":
-        return await mcp.run_pipeline(
-            CallToolRequest(
-                params=CallToolRequestParams(name=name, arguments=arguments)
-            )
-        )
-    if name == "run_ingestion_only":
-        return await mcp.run_ingestion_only(
-            CallToolRequest(
-                params=CallToolRequestParams(name=name, arguments=arguments)
-            )
-        )
     if name == "run_metrics_only":
         return await mcp.run_metrics_only(
             CallToolRequest(

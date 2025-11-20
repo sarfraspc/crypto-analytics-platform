@@ -1,10 +1,12 @@
 import asyncio
 import logging
-from typing import Dict, Any
+import json
 from pathlib import Path
+from typing import Dict, Any, Optional
 import pandas as pd
 import numpy as np
 
+# MCP Imports
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.server.lowlevel import NotificationOptions
@@ -17,113 +19,173 @@ from mcp.types import (
     TextContent,
 )
 
-from modules.forecasting.models.sarimax import SarimaxModel
+# Core Modules
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
+from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
 from modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics
 from core.logging_config import setup_logging
+
+# Import the model class
+from modules.forecasting.models.prophet import ProphetModel
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
-
-MODEL_DIR = Path("src/modules/forecasting/models/saved")
-SARIMAX_BASE_DIR = MODEL_DIR / "sarimax"
-
-class SarimaxMCP:
+class ProphetMCP:
     def __init__(self):
         self.coin_pre = CoinPreprocessor()
-        self.default_model = None
+        self.model_cache: Dict[str, Any] = {}
         self.is_initialized = False
 
     async def initialize(self):
-        try:
-            self.default_model = SarimaxModel('BTC')
-            path = SARIMAX_BASE_DIR / "sarimax_BTC.pkl"
-            if path.exists():
-                await asyncio.to_thread(self.default_model.load)
-                logger.info("Loaded default SARIMAX for BTC")
-            else:
-                logger.warning("No default model found; will train on demand")
-            self.is_initialized = True
-        except Exception as e:
-            logger.exception("Initialization failed")
-            raise e
+        self.is_initialized = True
+        logger.info("ProphetMCP Initialized.")
 
-    async def get_model_for_symbol(self, symbol: str):
-        path = SARIMAX_BASE_DIR / f"sarimax_{symbol}.pkl"
-        model = SarimaxModel(symbol)
-        if path.exists():
-            await asyncio.to_thread(model.load)
-            logger.info(f"Loaded SARIMAX for {symbol}")
-        else:
-            logger.info(f"Training new SARIMAX model for {symbol}")
-            df = await asyncio.to_thread(self.coin_pre.load_features_series, symbol)
-            await asyncio.to_thread(model.train, df, target_col='close')
-            await asyncio.to_thread(model.save)
-            logger.info(f"SARIMAX model saved for {symbol}")
+    def _get_real_price_df(self, symbol: str, lookback_days: int = 90) -> pd.DataFrame:
+        """
+        Helper to get REAL prices. 
+        CRITICAL FIX: Checks if data exists, and generates it if missing.
+        """
+        start_date = pd.Timestamp.utcnow() - pd.Timedelta(days=lookback_days)
+        
+        # 1. Try loading existing features
+        try:
+            df = self.coin_pre.load_features_series(symbol, interval="1h", start=start_date)
+        except ValueError:
+            df = pd.DataFrame()
+
+        # 2. If empty, FORCE an update (Fetch OHLCV -> Calculate Features -> Save to DB)
+        if df.empty:
+            logger.info(f"Features missing for {symbol}. Generarting now...")
+            # This pulls raw OHLCV from DB and calculates indicators
+            self.coin_pre.update_features(symbol, exchange="binance", interval="1h", target_freq="h")
+            # Try loading again
+            df = self.coin_pre.load_features_series(symbol, interval="1h", start=start_date)
+            
+        if df.empty:
+            raise ValueError(f"Could not find or generate data for {symbol}. Is the Raw OHLCV data in the database?")
+
+        # 3. Inverse Transform to get Real Prices ($90k instead of 0.85)
+        scaler_path = _scaler_path_for(self.coin_pre.scaler_dir, symbol, None)
+        scaler, cols = load_scaler_with_meta(scaler_path)
+        
+        if not scaler or 'close' not in cols:
+            # If no scaler exists, assume data is already raw/real
+            return df
+        
+        close_idx = cols.index('close')
+        matrix = np.zeros((len(df), len(cols)))
+        for i, c in enumerate(cols):
+            if c in df.columns:
+                matrix[:, i] = df[c].values
+                
+        real_close = scaler.inverse_transform(matrix)[:, close_idx]
+        df['close'] = real_close
+        
+        return df
+
+    async def get_or_train_model(self, symbol: str) -> ProphetModel:
+        symbol = symbol.upper()
+        
+        if symbol in self.model_cache:
+            return self.model_cache[symbol]
+            
+        model = ProphetModel(symbol)
+        
+        # Try loading existing model from disk
+        if model.load():
+            self.model_cache[symbol] = model
+            return model
+            
+        logger.info(f"Model for {symbol} not found on disk. Training new one...")
+        
+        # Train on the fly
+        # Run _get_real_price_df in a thread because it does DB I/O
+        df_real = await asyncio.to_thread(self._get_real_price_df, symbol, lookback_days=180)
+        
+        await asyncio.to_thread(model.train, df_real, target_col='close')
+        await asyncio.to_thread(model.save)
+        
+        self.model_cache[symbol] = model
         return model
 
     async def run(self, request: CallToolRequest) -> CallToolResult:
         if not self.is_initialized:
-            raise Exception("Server not initialized")
+            await self.initialize()
+
         try:
             params = request.params if hasattr(request, "params") else None
-            input_data = (params.arguments if params and params.arguments is not None else {})  # type: ignore[attr-defined]
-            symbol = input_data.get('symbol', 'BTC')
-            horizon = input_data.get('horizon', 7)
-            start_date = input_data.get('start_date')
+            input_data = (params.arguments if params and params.arguments is not None else {})
+            symbol = input_data.get('symbol', 'BTC').upper()
+            horizon = int(input_data.get('horizon', 24))
+            
+            logger.info(f"Processing Prophet forecast for {symbol} (horizon={horizon})")
 
-            model = await self.get_model_for_symbol(symbol)
+            # 1. Get Model (Load or Train)
+            model = await self.get_or_train_model(symbol)
 
-            df = await asyncio.to_thread(self.coin_pre.load_features_series, symbol)
-            if start_date:
-                try:
-                    df = df[df.index >= pd.to_datetime(start_date)]
-                except ValueError:
-                    logger.warning(f"Invalid start_date format: {start_date}. Ignoring date filter.")
+            # 2. Generate Base Forecast
+            forecast_df = await asyncio.to_thread(model.forecast, steps=horizon, freq='h')
+            
+            # 3. Calculate Volatility
+            df_recent = await asyncio.to_thread(self._get_real_price_df, symbol, lookback_days=7)
+            
+            if 'close' in df_recent.columns and len(df_recent) > 1:
+                recent_returns = np.log(df_recent['close'] / df_recent['close'].shift(1))
+                volatility = recent_returns.std()
+            else:
+                volatility = 0.002 
 
-            last_date = df.index[-1]
-            forecast = await asyncio.to_thread(model.forecast, steps=horizon, last_date=last_date, freq='h')
-            forecast_df = pd.DataFrame({
-                'timestamp': pd.date_range(start=last_date + pd.Timedelta(hours=1), periods=horizon, freq='h'),
-                'predicted_close': forecast.values
-            })
+            if np.isnan(volatility) or volatility == 0:
+                volatility = 0.002
 
-            metrics = {'mae_forecast': np.mean(np.abs(forecast.values))}
-            await asyncio.to_thread(
-                log_model_params_and_metrics,
-                'SARIMAX-Forecast',
-                symbol,
-                {'horizon': horizon},
-                metrics
-            )
+            # 4. Apply Stochastic Noise
+            predicted_prices = []
+            timestamps = []
+            
+            base_trend = forecast_df['yhat'].values
+            base_dates = forecast_df['ds'].tolist()
+
+            for i, price in enumerate(base_trend):
+                noise_pct = np.random.normal(0, volatility)
+                noisy_price = price * (1 + noise_pct)
+                predicted_prices.append(noisy_price)
+                timestamps.append(str(base_dates[i]))
+
+            # 5. Format Response
+            df_view = pd.DataFrame({'timestamp': timestamps, 'predicted_close': predicted_prices})
+            raw_text = f"Prophet Forecast for {symbol} (Stochastic)\n{df_view.head(24).to_string(index=False)}"
+
+            response_data = {
+                "symbol": symbol,
+                "model_used": "prophet_v1_stochastic",
+                "timestamps": timestamps,
+                "predicted_close": predicted_prices,
+                "raw_text": raw_text
+            }
 
             return CallToolResult(
                 content=[TextContent(
                     type="text",
-                    text=f"SARIMAX Forecast for {symbol}\nNext {horizon} hours:\n{forecast_df.to_string(index=False)}"
+                    text=json.dumps(response_data)
                 )]
             )
+
         except Exception as exc:
-            err = f"Error: {type(exc).__name__} - {exc}"
-            logger.error(err, exc_info=True)
-            return CallToolResult(
-                isError=True,
-                content=[TextContent(type="text", text=err)]
-            )
+            # Capture full traceback in logs
+            logger.error(f"Forecast Error for {symbol}: {exc}", exc_info=True)
+            # Return simple error to client
+            return CallToolResult(isError=True, content=[TextContent(type="text", text=f"Error: {str(exc)}")])
 
-# === START OF STRUCTURAL FIX ===
-# Definitions must be at module scope so decorators run on import.
-server = Server("crypto-sarimax-server")
-mcp = SarimaxMCP()
-
+server = Server("crypto-prophet-server")
+mcp = ProphetMCP()
 
 @server.list_tools()
 async def list_tools():
     return [
         Tool(
-            name="forecast_sarimax",
-            description="Generate SARIMAX forecast for any crypto symbol",
+            name="forecast_prophet",
+            description="Generate Prophet forecast for any crypto symbol (Trend + Seasonality + Noise)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -136,31 +198,26 @@ async def list_tools():
         )
     ]
 
-
 @server.call_tool()
 async def call_tool(name: str, arguments: Dict[str, Any]):
-    if name == "forecast_sarimax":
-        return await mcp.run(
-            CallToolRequest(
-                params=CallToolRequestParams(name=name, arguments=arguments)
-            )
+    if name == "forecast_prophet":
+        request = CallToolRequest(
+            params=CallToolRequestParams(name=name, arguments=arguments),
+            method="tools/call" 
         )
+        return await mcp.run(request)
     else:
         raise Exception(f"Unknown tool: {name}")
-
 
 @server.list_resources()
 async def list_resources():
     return []
 
-
 @server.read_resource()
 async def read_resource(name: str):
     raise Exception(f"Unknown resource: {name}")
 
-
 async def main():
-    """This is the main coroutine that runs the server."""
     await mcp.initialize()
     logger.info(f"Starting {server.name}...")
     init_options = InitializationOptions(
@@ -171,11 +228,8 @@ async def main():
             experimental_capabilities={},
         ),
     )
-    logger.info(f"Init options: {init_options}")
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, init_options)
-# === END OF STRUCTURAL FIX ===
-
 
 if __name__ == "__main__":
     try:

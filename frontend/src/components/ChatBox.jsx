@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { MessageSquare, Send, Loader2, RefreshCw } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
-import { useSymbol } from '../hooks/useSymbol'
 import { sendChatMessage } from '../services/api'
 import ErrorBox from './ErrorBox'
 
@@ -86,13 +85,26 @@ const AssistantBubble = ({ message, isDark, onChipClick }) => {
 
 const ChatBox = () => {
   const { isDark } = useTheme()
-  const { symbol } = useSymbol()
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const placeholder = 'Ask about forecast, onchain, or sentiment...'
   const [isTyping, setIsTyping] = useState(false)
   const [error, setError] = useState(null)
   const [regenerating, setRegenerating] = useState(false)
+  const messagesEndRef = useRef(null)
+
+  const scrollToBottom = () => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+    }
+  }
+
+  useEffect(() => {
+    // Only scroll when there are actual messages (not just the intro message)
+    if (messages.length > 1 || isTyping) {
+      scrollToBottom()
+    }
+  }, [messages, isTyping])
 
   useEffect(() => {
     setMessages((prev) => {
@@ -110,27 +122,27 @@ const ChatBox = () => {
       const [, ...rest] = prev
       return [intro, ...rest]
     })
-  }, [symbol])
+  }, [])
 
-	  const lastUserQuestion = useMemo(
-	    () => [...messages].reverse().find((message) => message.role === 'user')?.content || null,
-	    [messages],
-	  )
+  const lastUserQuestion = useMemo(
+    () => [...messages].reverse().find((message) => message.role === 'user')?.content || null,
+    [messages],
+  )
 
   const buildQuickQuestion = (category) => {
     switch (category) {
       case 'forecast':
-        return `Run a forecast for ${symbol}`
+        return 'Run a forecast for BTC'
       case 'onchain':
-        return `Onchain flows for ${symbol}`
+        return 'Onchain flows for BTC'
       case 'sentiment':
-        return `Market sentiment for ${symbol}`
+        return 'Market sentiment for BTC'
       case 'combined':
-        return `Combined view (forecast/onchain/sentiment)`
+        return 'Combined view (forecast/onchain/sentiment) for BTC'
       case 'backtest':
-        return `Backtest a simple strategy`
+        return 'Backtest a simple strategy for BTC'
       case 'patterns':
-        return `Chart patterns and TA signals`
+        return 'Chart patterns and TA signals for BTC'
       default:
         return `${category} insights`
     }
@@ -139,6 +151,9 @@ const ChatBox = () => {
   const handleSend = async (overrideQuestion, options = {}) => {
     const question = (overrideQuestion ?? input).trim()
     if (!question || isTyping || regenerating) return
+
+    // Delegate symbol inference to the backend; use BTC as a placeholder path param.
+    const symbol = 'BTC'
 
     const nextMessages = [...messages, { role: 'user', content: question }]
     setMessages(nextMessages)
@@ -175,8 +190,12 @@ const ChatBox = () => {
     }
   }
 
-	  const handleRegenerate = async () => {
+  const handleRegenerate = async () => {
     if (!lastUserQuestion || isTyping || regenerating) return
+
+    // Delegate symbol inference to the backend; use BTC as a placeholder path param.
+    const symbol = 'BTC'
+
     setRegenerating(true)
     setError(null)
     const history = messages.filter((_, idx) => idx !== messages.length - 1 || messages[idx].role !== 'assistant')
@@ -207,29 +226,29 @@ const ChatBox = () => {
     } finally {
       setRegenerating(false)
     }
-	  }
-	
-	  const handleChipClick = (chip) => {
-	    const prompt = buildQuickQuestion(chip)
-	    setInput(prompt)
-	    const forceType = QUERY_CATEGORIES.includes(chip) ? chip : chip.toLowerCase()
-	    handleSend(prompt, { force_query_type: forceType })
+  }
+
+  const handleChipClick = (chip) => {
+    const prompt = buildQuickQuestion(chip)
+    setInput(prompt)
+    const forceType = QUERY_CATEGORIES.includes(chip) ? chip : chip.toLowerCase()
+    handleSend(prompt, { force_query_type: forceType })
   }
 
   return (
     <div
-      className={`rounded-xl shadow-lg overflow-hidden h-full flex flex-col ${
+      className={`rounded-xl shadow-lg flex flex-col h-[500px] sm:h-[600px] lg:h-[650px] ${
         isDark ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700' : 'bg-white border border-gray-200'
       }`}
     >
-      <div className={`px-6 py-4 border-b ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
+      <div className={`px-4 sm:px-6 py-3 sm:py-4 border-b flex-shrink-0 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
         <div className="flex items-center gap-2">
           <MessageSquare className="text-indigo-500" size={20} />
           <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>AI Assistant</h3>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 min-h-0">
         {messages.map((message, index) => (
           <div
             key={`${message.role}-${index}`}
@@ -262,9 +281,10 @@ const ChatBox = () => {
             </button>
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
-      <div className={`p-4 border-t space-y-3 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
+      <div className={`p-3 sm:p-4 border-t space-y-3 flex-shrink-0 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
         {error && <ErrorBox message={error} />}
         <div className="flex gap-2">
           <input
@@ -283,7 +303,7 @@ const ChatBox = () => {
           />
           <button
             type="button"
-            onClick={handleSend}
+            onClick={() => handleSend()}
             className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all"
           >
             <Send size={20} />
