@@ -6,10 +6,11 @@ from pathlib import Path
 from prophet import Prophet
 from typing import Optional, Dict
 
-# --- CRITICAL: Suppress Prophet/Stan Logging ---
 logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
 logging.getLogger("prophet").setLevel(logging.WARNING)
 
+from modules.forecasting.data.preprocess_coin import CoinPreprocessor
+from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
 
@@ -116,11 +117,6 @@ def _get_real_price_data(symbol: str, days: int = 60):
         df['real_close'] = df['close'] # Fallback
         
     return df[['real_close']].rename(columns={'real_close': 'close'})
-
-# --- ADD THIS SECTION TO THE BOTTOM OF THE FILE ---
-
-from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
 
 def train_and_forecast(
     model: ProphetModel, # Accept model instance
