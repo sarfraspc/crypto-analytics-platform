@@ -1,0 +1,60 @@
+FROM python:3.10-slim-bookworm AS base
+
+# Prevents Python from writing pyc files to disc
+# Ensures stdout and stderr are sent straight to terminal (no buffering)
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Install System Dependencies 
+# Essential for: numpy, pandas, prophet, psycopg2 (postgres), and git
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gfortran \
+    git \
+    curl \
+    libpq-dev \
+    libopenblas-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install TA-Lib C-Library (CRITICAL for ta-lib python package)
+# download the source, compile it, and install it to /usr/lib
+RUN curl -L http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz -o ta-lib-0.4.0-src.tar.gz && \
+    tar xzvf ta-lib-0.4.0-src.tar.gz && \
+    cd ta-lib && \
+    ./configure --prefix=/usr && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
+
+# Create a non-root user for security
+RUN useradd -ms /bin/bash appuser
+
+# 2. Install Python Dependencies 
+COPY requirements.txt ./requirements.txt
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy Application Code
+COPY pyproject.toml ./
+COPY src ./src
+
+# Set Python path so it can find 'src' modules
+ENV PYTHONPATH=/app:/app/src
+
+# Point to where the secret key will be mounted at runtime
+ENV GOOGLE_APPLICATION_CREDENTIALS="/secrets/service-account.json"
+
+# Expose the FastAPI port
+EXPOSE 8000
+
+# Switch to non-root user
+USER appuser
+
+# Start FastAPI
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

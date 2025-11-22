@@ -69,3 +69,6 @@ google-generativeai==0.8.5
 langchain==1.0.5
 langchain-openai==1.0.2
 langchain-groq==1.0.0  
+
+#gcp
+google-cloud-storage>=2.0.0
