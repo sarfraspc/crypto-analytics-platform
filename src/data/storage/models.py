@@ -70,7 +70,7 @@ class NewsArticle(Base):
     title = Column(String)
     source = Column(String)
     url = Column(String)
-    published = Column(DateTime(timezone=True)) 
+    published = Column(DateTime(timezone=True), primary_key=True) 
     text = Column(TEXT)
     raw = Column(JSON)
 
@@ -83,7 +83,7 @@ class RedditPost(Base):
     title = Column(String)
     body = Column(TEXT)
     score = Column(Integer)
-    created = Column(DateTime(timezone=True)) 
+    created = Column(DateTime(timezone=True), primary_key=True) 
     raw = Column(JSON)
 
 class IngestionJob(Base):

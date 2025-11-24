@@ -1,0 +1,92 @@
+version: "3.9"
+services:
+  # 1. Backend
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.backend
+    container_name: cap-backend
+    env_file: .env.docker
+    depends_on:
+      db:
+        condition: service_healthy  
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      mlflow:
+        condition: service_started
+    volumes:
+      - ./secrets:/secrets:ro
+    ports:
+      - "8000:8000"
+
+  # 2. Database (TimescaleDB)
+  db:
+    image: timescale/timescaledb:latest-pg14
+    container_name: cap-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/script.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. Redis
+  redis:
+    image: redis:7
+    container_name: cap-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # 4. Qdrant
+  qdrant:
+    image: qdrant/qdrant:v1.11.0
+    container_name: cap-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  # 5. MLflow 
+  mlflow:
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.mlflow
+    container_name: cap-mlflow
+    env_file: .env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/service-account.json
+    entrypoint: ["mlflow"]
+    command:
+      [
+        "server",
+        "--backend-store-uri", "postgresql://metadata_user:123@db:5432/metadata_db",
+        "--default-artifact-root", "gs://crypto-mlflow-artifacts-sarfras",
+        "--host", "0.0.0.0",
+        "--port", "5000",
+        "--allowed-hosts", "*",
+        "--cors-allowed-origins", "*"
+      ]
+    volumes:
+      - ./secrets:/secrets:ro
+    ports:
+      - "5000:5000"
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_storage:
