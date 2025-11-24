@@ -50,11 +50,12 @@ ENV PYTHONPATH=/app:/app/src
 # Point to where the secret key will be mounted at runtime
 ENV GOOGLE_APPLICATION_CREDENTIALS="/secrets/service-account.json"
 
-# Expose the FastAPI port
+# Expose the application port (Cloud Run will override PORT)
 EXPOSE 8000
 
 # Switch to non-root user
 USER appuser
 
 # Start FastAPI
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use PORT env var if set (Cloud Run), otherwise default to 8000.
+CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

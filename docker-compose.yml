@@ -86,6 +86,20 @@ services:
     ports:
       - "5000:5000"
 
+  # 6. Frontend (React + Vite, served by Nginx)
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.frontend
+      args:
+        VITE_API_URL: /api
+    container_name: cap-frontend
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "3000:80"
+
 volumes:
   postgres_data:
   redis_data:
