@@ -20,6 +20,7 @@ env/
 .env
 .env.*
 !.env.example
+secrets/
 
 # Data
 mlruns/
@@ -28,7 +29,8 @@ mlflow_data/
 src/data/datasets/
 src/modules/sentiment/models/saved/
 data/panel_cache/
-panel_wide.csv
+src/modules/forecasting/models/saved/
+src/modules/forecasting/models/scalers/
 
 # IDE
 .vscode/

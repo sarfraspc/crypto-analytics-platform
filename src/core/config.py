@@ -5,6 +5,12 @@ except ImportError:
 from typing import Dict, List
 
 class Settings(BaseSettings):
+    ENVIRONMENT: str = "local"
+
+    # GCS model loading
+    GCS_MODEL_BUCKET: str | None = None
+    GOOGLE_APPLICATION_CREDENTIALS: str | None = None
+
     # Postgres (metadata DB)
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
@@ -97,6 +103,6 @@ class Settings(BaseSettings):
     }
 
     class Config:
-        env_file = ".env"
-
+        env_file = ".env.local"   # for local only
+        env_file_encoding = "utf-8"
 settings = Settings()

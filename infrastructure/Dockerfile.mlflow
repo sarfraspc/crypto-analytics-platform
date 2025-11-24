@@ -1,0 +1,7 @@
+# Start from the official MLflow image
+FROM ghcr.io/mlflow/mlflow:latest
+
+# Install the drivers needed for Production
+# - psycopg2-binary: To talk to Postgres/TimescaleDB
+# - google-cloud-storage: To write artifacts to GCS
+RUN pip install --no-cache-dir psycopg2-binary google-cloud-storage

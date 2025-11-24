@@ -4,7 +4,7 @@
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'metadata_user') THEN
-      CREATE ROLE metadata_user LOGIN PASSWORD ''; -- password here
+      CREATE ROLE metadata_user LOGIN PASSWORD '123'; -- password here
    END IF;
 END
 $$;
@@ -46,7 +46,7 @@ GRANT ALL PRIVILEGES ON TABLE tokens TO metadata_user;
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'crypto_user') THEN
-      CREATE ROLE crypto_user LOGIN PASSWORD ''; -- password here
+      CREATE ROLE crypto_user LOGIN PASSWORD '123'; -- password here
    END IF;
 END
 $$;
@@ -147,13 +147,14 @@ SELECT add_retention_policy('onchain_metrics', INTERVAL '90 days');
 
 -- News articles
 CREATE TABLE IF NOT EXISTS news_articles (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     title TEXT,
     source TEXT,
     url TEXT,
-    published TIMESTAMPTZ,
+    published TIMESTAMPTZ NOT NULL,
     text TEXT,
-    raw JSONB
+    raw JSONB,
+    PRIMARY KEY (id, published)
 );
 SELECT create_hypertable('news_articles', 'published', if_not_exists => TRUE);
 
@@ -164,14 +165,15 @@ SELECT add_retention_policy('news_articles', INTERVAL '90 days');
 
 -- Reddit posts
 CREATE TABLE IF NOT EXISTS reddit_posts (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     subreddit TEXT,
     author TEXT,
     title TEXT,
     body TEXT,
     score INT,
-    created TIMESTAMPTZ,
-    raw JSONB
+    created TIMESTAMPTZ NOT NULL,
+    raw JSONB,
+    PRIMARY KEY (id, created)
 );
 SELECT create_hypertable('reddit_posts', 'created', if_not_exists => TRUE);
 
@@ -191,4 +193,88 @@ CREATE TABLE IF NOT EXISTS ingestion_jobs (
 ALTER TABLE IF EXISTS ingestion_jobs OWNER TO crypto_user;
 GRANT ALL PRIVILEGES ON TABLE ingestion_jobs TO crypto_user;
 
+
+CREATE TABLE IF NOT EXISTS ohlcv_features (
+  time TIMESTAMP NOT NULL,
+  symbol TEXT NOT NULL,
+  exchange TEXT NOT NULL,
+  interval TEXT NOT NULL,
+  open DOUBLE PRECISION,
+  high DOUBLE PRECISION,
+  low DOUBLE PRECISION,
+  close DOUBLE PRECISION,
+  volume DOUBLE PRECISION,
+  returns DOUBLE PRECISION,
+  close_lag1 DOUBLE PRECISION,
+  volatility DOUBLE PRECISION,
+  log_return DOUBLE PRECISION,
+  vol_7 DOUBLE PRECISION,
+  vol_30 DOUBLE PRECISION,
+  sma_7 DOUBLE PRECISION,
+  sma_21 DOUBLE PRECISION,
+  ema_8 DOUBLE PRECISION,
+  ema_20 DOUBLE PRECISION,
+  volume_pct_change DOUBLE PRECISION,
+  volume_zscore_30 DOUBLE PRECISION,
+  hour INT,
+  dayofweek INT,
+  month INT,
+  is_month_start INT,
+  PRIMARY KEY (time, symbol, exchange, interval)
+);
+SELECT create_hypertable('ohlcv_features', 'time', if_not_exists => TRUE);
+
+ALTER TABLE IF EXISTS ohlcv_features OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE ohlcv_features TO crypto_user;
+
+
+CREATE TABLE IF NOT EXISTS ohlcv_features_panel (
+  time TIMESTAMP NOT NULL,
+  symbol TEXT NOT NULL,
+  exchange TEXT NOT NULL,
+  interval TEXT NOT NULL,
+  feature_name TEXT NOT NULL,
+  feature_value DOUBLE PRECISION,
+  PRIMARY KEY (time, symbol, exchange, interval, feature_name)
+);
+SELECT create_hypertable('ohlcv_features_panel', 'time', if_not_exists => TRUE);
+
+ALTER TABLE IF EXISTS ohlcv_features_panel OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE ohlcv_features_panel TO crypto_user;
+
+
+CREATE TABLE IF NOT EXISTS ta_signals (
+    time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    interval TEXT NOT NULL,
+    signal TEXT,                       
+    rsi DOUBLE PRECISION,
+    macd_hist DOUBLE PRECISION,
+    pattern TEXT,                     
+    PRIMARY KEY (symbol, exchange, interval)
+);
+
+ALTER TABLE IF EXISTS ta_signals OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE ta_signals TO crypto_user;
+
+
+CREATE TABLE IF NOT EXISTS ta_signals_history (
+    time TIMESTAMPTZ NOT NULL,
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    interval TEXT NOT NULL,
+    signal TEXT,
+    rsi DOUBLE PRECISION,
+    macd_hist DOUBLE PRECISION,
+    pattern TEXT,
+    PRIMARY KEY (time, symbol, exchange, interval)
+);
+
+SELECT create_hypertable('ta_signals_history', 'time', if_not_exists => TRUE);
+
+ALTER TABLE IF EXISTS ta_signals_history OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE ta_signals_history TO crypto_user;
+
+SELECT add_retention_policy('ta_signals_history', INTERVAL '180 days', if_not_exists => TRUE);
 

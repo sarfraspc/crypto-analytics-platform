@@ -35,7 +35,7 @@ jobs:
 
       - name: Set up environment for tests
         run: |
-          echo "${{ secrets.APP_ENV_FILE }}" > .env
+          echo "${{ secrets.APP_ENV_FILE }}" > .env.local
 
       - name: Run tests
         run: pytest -v
