@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     MLFLOW_TRACKING_URI: str
     MLFLOW_ARTIFACT_ROOT: str
 
+    # Sentiment model 
+    SENTIMENT_MODEL_ID: str | None = None
+
     # API Keys 
     COINGECKO_API_KEY: str | None = None
     BINANCE_API_KEY: str | None = None
