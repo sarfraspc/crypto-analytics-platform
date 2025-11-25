@@ -5,10 +5,28 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-class SentimentClassifier:    
+DEFAULT_SENTIMENT_MODEL_ID = "sarfras/crypto-sentiment-distilroberta"
+
+
+class SentimentClassifier:
     def __init__(self, model_path: str = None):
+        """
+        model_path can be either:
+          - a local directory with a saved HF model, or
+          - a Hugging Face repo ID (e.g. 'sarfras/crypto-sentiment-distilroberta').
+
+        If None, we resolve in this order:
+          1) local './saved/finetuned_model' if it exists
+          2) env var SENTIMENT_MODEL_ID
+          3) default HF repo DEFAULT_SENTIMENT_MODEL_ID
+        """
         if model_path is None:
-            model_path = os.path.join(os.path.dirname(__file__), "saved", "finetuned_model")
+            local_dir = os.path.join(os.path.dirname(__file__), "saved", "finetuned_model")
+            if os.path.isdir(local_dir):
+                model_path = local_dir
+            else:
+                model_path = os.getenv("SENTIMENT_MODEL_ID", DEFAULT_SENTIMENT_MODEL_ID)
+
         self.model_path = model_path
         self.classifier = None
         self._load_model()
