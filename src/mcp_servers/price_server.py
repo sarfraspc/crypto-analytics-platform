@@ -20,6 +20,7 @@ from mcp.types import (
 )
 
 # Core Modules
+from core.config import settings
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
 from modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics
@@ -47,20 +48,21 @@ class ProphetMCP:
         CRITICAL FIX: Checks if data exists, and generates it if missing.
         """
         start_date = pd.Timestamp.utcnow() - pd.Timedelta(days=lookback_days)
+        exchange = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         
         # 1. Try loading existing features
         try:
-            df = self.coin_pre.load_features_series(symbol, interval="1h", start=start_date)
+            df = self.coin_pre.load_features_series(symbol, exchange=exchange, interval="1h", start=start_date)
         except ValueError:
             df = pd.DataFrame()
 
         # 2. If empty, FORCE an update (Fetch OHLCV -> Calculate Features -> Save to DB)
         if df.empty:
-            logger.info(f"Features missing for {symbol}. Generarting now...")
+            logger.info(f"Features missing for {symbol} on {exchange}. Generating now...")
             # This pulls raw OHLCV from DB and calculates indicators
-            self.coin_pre.update_features(symbol, exchange="binance", interval="1h", target_freq="h")
+            self.coin_pre.update_features(symbol, exchange=exchange, interval="1h", target_freq="h")
             # Try loading again
-            df = self.coin_pre.load_features_series(symbol, interval="1h", start=start_date)
+            df = self.coin_pre.load_features_series(symbol, exchange=exchange, interval="1h", start=start_date)
             
         if df.empty:
             raise ValueError(f"Could not find or generate data for {symbol}. Is the Raw OHLCV data in the database?")

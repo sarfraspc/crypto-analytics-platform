@@ -88,8 +88,8 @@ def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
 async def _gather_overview(symbol: str, horizon_hours: int, window: str, k_docs: int):
     tasks = {
         "forecast": call_mcp_tool(
-            "crypto-sarimax-server",
-            "forecast_sarimax",
+            "crypto-prophet-server",
+            "forecast_prophet",
             {"symbol": symbol, "horizon": horizon_hours},
         ),
         "sentiment": call_mcp_tool(

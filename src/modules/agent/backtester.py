@@ -212,9 +212,10 @@ class PortfolioBacktester:
         5. Simulates Trading.
         """
         pre = CoinPreprocessor()
+        exchange = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         
-        # 1. Load Data from DB
-        df_features = pre.load_features_series(symbol)
+        # 1. Load Data from DB (respect configured exchange)
+        df_features = pre.load_features_series(symbol, exchange=exchange)
         
         if df_features.empty:
              logger.error("No data found in database for backtest.")
