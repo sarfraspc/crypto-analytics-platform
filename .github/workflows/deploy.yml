@@ -24,6 +24,6 @@ jobs:
             cd /home/${USER}/crypto-analytics-platform || cd /home/${USERNAME}/crypto-analytics-platform || cd /home/${{ secrets.GCE_USER }}/crypto-analytics-platform
             git fetch origin main
             git reset --hard origin/main
+            docker compose down --remove-orphans || true
             docker compose pull || true
             docker compose up -d --build
-
