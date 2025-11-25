@@ -53,6 +53,9 @@ ENV GOOGLE_APPLICATION_CREDENTIALS="/secrets/service-account.json"
 # Expose the application port (Cloud Run will override PORT)
 EXPOSE 8000
 
+# Ensure application directory (incl. logs) is writable by appuser
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
 # Switch to non-root user
 USER appuser
 
