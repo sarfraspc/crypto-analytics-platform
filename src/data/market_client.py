@@ -293,12 +293,13 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
         else:
             logger.info("Starting TA generation for symbols after OHLCV backfill")
         ta_start = datetime.now()
+        exchange_name = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         ta_tasks = [
             loop.run_in_executor(
                 None,
                 generate_ta_signal,
                 symbol,
-                "binance",
+                exchange_name,
                 "1d",
                 False,
             )
