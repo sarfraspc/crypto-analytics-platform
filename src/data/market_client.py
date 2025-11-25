@@ -26,6 +26,8 @@ def setup_mlflow():
 
 def get_symbols_from_tokens(db: Session, limit: int = 50):
     try:
+        quote = getattr(settings, "MARKET_QUOTE_SYMBOL", "USDT")
+        exchange_id = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         result = db.execute(
             select(Token).where(func.jsonb_extract_path_text(Token.token_metadata, 'market_cap_rank').isnot(None))  
             .order_by(func.cast(func.jsonb_extract_path_text(Token.token_metadata, 'market_cap_rank'), Integer)) 
@@ -34,8 +36,8 @@ def get_symbols_from_tokens(db: Session, limit: int = 50):
         symbols = [
             {
                 'label': row.symbol,
-                'use_ccxt_symbol': f"{row.symbol}/USDT",
-                'exchange': 'binance'
+                'use_ccxt_symbol': f"{row.symbol}/{quote}",
+                'exchange': exchange_id
             }
             for row in result
         ]
@@ -52,11 +54,12 @@ def get_top_symbols(db: Session, limit: int = 50):
     lookup or hardcoded fallback list.
     """
     try:
+        exchange_id = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         result = (
             db.execute(
                 select(OHLCVModel.symbol)
                 .where(
-                    OHLCVModel.exchange == "binance",
+                    OHLCVModel.exchange == exchange_id,
                     OHLCVModel.interval == "1h",
                 )
                 .group_by(OHLCVModel.symbol)

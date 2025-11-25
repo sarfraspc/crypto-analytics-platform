@@ -14,15 +14,19 @@ import ccxt
 from data.validation import OHLCV, Trade
 from data.storage.crud import upsert_ohlcv, upsert_trades, get_token
 from core.logging_config import setup_logging
+from core.config import settings
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
-def get_valid_ccxt_pairs(exchange_id: str = 'binance'):
-    exchange = ccxt.binance({'enableRateLimit': True})
+def get_valid_ccxt_pairs(exchange_id: str | None = None):
+    exchange_id = exchange_id or settings.MARKET_EXCHANGE_ID
+    ExchangeClass = getattr(ccxt, exchange_id)
+    exchange = ExchangeClass({'enableRateLimit': True})
     markets = exchange.load_markets()
-    usdt_pairs = [s for s in markets if s.endswith('/USDT') and markets[s]['active']]
+    quote = settings.MARKET_QUOTE_SYMBOL
+    usdt_pairs = [s for s in markets if s.endswith(f'/{quote}') and markets[s]['active']]
     return usdt_pairs
 
 def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id: str, symbol: str, timeframe: str = '1m', since_ts_ms: Optional[int] = None, limit: int = 1000):

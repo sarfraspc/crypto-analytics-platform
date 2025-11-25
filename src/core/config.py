@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     MLFLOW_TRACKING_URI: str
     MLFLOW_ARTIFACT_ROOT: str
 
+    # Market ingestion defaults
+    MARKET_EXCHANGE_ID: str = "binance"
+    MARKET_QUOTE_SYMBOL: str = "USDT"
+
     # Sentiment model 
     SENTIMENT_MODEL_ID: str | None = None
 
