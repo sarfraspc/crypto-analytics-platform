@@ -12,12 +12,26 @@ def _client():
     # Uses GOOGLE_APPLICATION_CREDENTIALS automatically from your .env
     return storage.Client()
 
+def upload_to_gcs(local_path: str | Path, remote_path: str) -> None:
+    """
+    Upload a local model file to GCS under the configured GCS_MODEL_BUCKET.
+
+    Args:
+        local_path: local filesystem path to the file to upload
+        remote_path: path inside bucket (ex: forecasting/prophet/binanceus/1h/prophet_BTC.pkl)
+    """
+    bucket_name = _bucket()
+    client = _client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(remote_path)
+    blob.upload_from_filename(str(local_path))
+
 def load_from_gcs(remote_path: str, local_name: str = None) -> Path:
     """
     Downloads a model file from GCS into a fast local path.
     
     Args:
-        remote_path: path inside bucket (ex: forecasting/prophet/BTC.pkl)
+        remote_path: path inside bucket (ex: forecasting/prophet/prophet_BTC.pkl)
         local_name: filename after download (optional)
     
     Returns:

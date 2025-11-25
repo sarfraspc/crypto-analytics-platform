@@ -11,8 +11,7 @@ logging.getLogger("prophet").setLevel(logging.WARNING)
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
-from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
+from utils.gcs_loader import upload_to_gcs, load_from_gcs
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +82,22 @@ class ProphetModel:
             logger.info(f"Saved Prophet model -> {self.model_path}")
 
     def load(self):
+        # Prefer local file if present
         if self.model_path.exists():
             self.model = joblib.load(self.model_path)
-            logger.info(f"Loaded Prophet model -> {self.model_path}")
+            logger.info("Loaded Prophet model -> %s", self.model_path)
             return True
-        return False
+
+        # Fallback: try to pull from GCS into a local path
+        try:
+            remote_key = f"forecasting/prophet/prophet_{self.symbol}.pkl"
+            local_path = load_from_gcs(remote_key, local_name=self.model_path.name)
+            self.model = joblib.load(local_path)
+            logger.info("Loaded Prophet model for %s from GCS path %s", self.symbol, remote_key)
+            return True
+        except Exception as e:
+            logger.warning("Failed to load Prophet model for %s from GCS: %s", self.symbol, e)
+            return False
 
 # --- Helper to get REAL prices before training ---
 def _get_real_price_data(symbol: str, days: int = 60):
@@ -164,16 +174,27 @@ def train_and_forecast(
         return {'forecast': None, 'history': None}
 
     # 2. Train or Load based on retrain_if_exists
-    if retrain_if_exists: # Case A: Training mode
+    remote_key = f"forecasting/prophet/prophet_{symbol}.pkl"
+    if retrain_if_exists:  # Case A: Training mode
         model.train(df, target_col='close')
         model.save()
-    else: # Case B: Inference mode (load if exists, otherwise train and save)
-        if model.model_path.exists():
-            model.load()
+        try:
+            upload_to_gcs(model.model_path, remote_key)
+            logger.info("Uploaded Prophet model for %s to GCS path %s", symbol, remote_key)
+        except Exception as e:
+            logger.warning("Failed to upload Prophet model for %s to GCS: %s", symbol, e)
+    else:  # Case B: Inference mode (load if exists locally or in GCS, otherwise train and save)
+        if model.load():
+            logger.info("Using existing Prophet model for %s", symbol)
         else:
-            logger.warning(f"Model not found for {symbol}, training new one.")
+            logger.warning("Model not found for %s, training new one.", symbol)
             model.train(df, target_col='close')
             model.save()
+            try:
+                upload_to_gcs(model.model_path, remote_key)
+                logger.info("Uploaded Prophet model for %s to GCS path %s", symbol, remote_key)
+            except Exception as e:
+                logger.warning("Failed to upload Prophet model for %s to GCS: %s", symbol, e)
     
     # 3. Forecast
     # freq='h' assumes hourly data
