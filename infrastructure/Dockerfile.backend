@@ -40,6 +40,10 @@ COPY requirements.txt ./requirements.txt
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install NLTK tokenizer data needed for RAG sentence splitting
+RUN python -m nltk.downloader -d /usr/local/share/nltk_data punkt punkt_tab
+ENV NLTK_DATA=/usr/local/share/nltk_data
+
 # Copy Application Code
 COPY pyproject.toml ./
 COPY src ./src
