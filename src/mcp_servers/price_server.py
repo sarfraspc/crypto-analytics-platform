@@ -3,8 +3,15 @@ import logging
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional
+import os
+import sys
 import pandas as pd
 import numpy as np
+
+# Ensure project root is on sys.path for imports like `core` and `modules`
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 # MCP Imports
 from mcp.server import Server

@@ -1,6 +1,10 @@
 import asyncio
 import logging
 from typing import Dict, Any
+from pathlib import Path
+import os
+import sys
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.server.lowlevel import NotificationOptions
@@ -12,6 +16,12 @@ from mcp.types import (
     Tool,
     TextContent,
 )
+
+# Ensure project root is on sys.path for imports like `core` and `data`
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.onchain_client import setup_mlflow

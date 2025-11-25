@@ -2,7 +2,10 @@ import asyncio
 import json
 import logging
 import hashlib
+from pathlib import Path
 from typing import Dict, Any, List
+import os
+import sys
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -15,6 +18,11 @@ from mcp.types import (
     Tool,
     TextContent,
 )
+
+# Ensure project root is on sys.path so imports like `modules` and `core` work
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from modules.sentiment.rag.embedder import Embedder
 from modules.sentiment.rag.vector_store import QdrantVectorStore
