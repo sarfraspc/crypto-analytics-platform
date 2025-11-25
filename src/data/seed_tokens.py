@@ -18,12 +18,16 @@ def seed_top_n(n=200):
 
     with get_metadata_db() as db:
         try:
+            seen_symbols = set()
             updated_count = 0
             inserted_count = 0
             for c in coins[:n]:
                 if 'symbol' in c and 'id' in c and 'name' in c:
                     try:
                         symbol = c['symbol'].upper()
+                        if symbol in seen_symbols:
+                            continue
+                        seen_symbols.add(symbol)
                         existing_token = db.execute(
                             select(TokenModel).where(TokenModel.symbol == symbol)
                         ).scalar_one_or_none()
