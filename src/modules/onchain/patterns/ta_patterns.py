@@ -24,7 +24,8 @@ redis_cache = RedisCache(
 )
 
 
-def load_recent_ohlcv(symbol: str, exchange: str = "binance", interval: str = "1h", lookback: int = 100):
+def load_recent_ohlcv(symbol: str, exchange: str | None = None, interval: str = "1h", lookback: int = 100):
+    exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
     with get_timescale_db() as db:
         try:
             query = select(
@@ -153,7 +154,8 @@ def _generate_signal(rsi: float, macd_hist: float, pattern: Optional[str], patte
     return signal, explanation
 
 
-def generate_ta_signal(symbol: str, exchange: str = "binance", interval: str = "1h", use_cache: bool = True):
+def generate_ta_signal(symbol: str, exchange: str | None = None, interval: str = "1h", use_cache: bool = True):
+    exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
     key = f"ta_signal:{symbol}:{exchange}:{interval}"
     if use_cache:
         cached = redis_cache.get_json(key)

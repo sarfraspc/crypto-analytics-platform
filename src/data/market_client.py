@@ -78,7 +78,7 @@ def get_top_symbols(db: Session, limit: int = 50):
 
 def run_ta_patterns(
     symbols: List[str],
-    exchange: str = "binance",
+    exchange: str = None,
     interval: str = "1d",
 ):
     """
@@ -86,15 +86,16 @@ def run_ta_patterns(
     Used by ingestion and the MCP onchain TA tool.
     """
     try:
+        exchange_name = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         logger.info(
             "Starting TA patterns for %d symbols on %s (%s)",
             len(symbols),
-            exchange,
+            exchange_name,
             interval,
         )
         signals = {}
         for symbol in symbols:
-            signal = generate_ta_signal(symbol, exchange, interval)
+            signal = generate_ta_signal(symbol, exchange_name, interval)
             if signal:
                 signals[symbol] = signal
 
