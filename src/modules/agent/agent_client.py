@@ -426,11 +426,20 @@ class CryptoAgentV2:
         logger.info("Query classified as: %s, categories: %s", qtype, categories)
 
         preprocessor = CoinPreprocessor()
-        df = await asyncio.to_thread(preprocessor.load_features_series, symbol)
-        if df.index.tz is None:
-            df.index = df.index.tz_localize('UTC')
-        else:
-            df.index = df.index.tz_convert('UTC')
+        try:
+            df = await asyncio.to_thread(
+                preprocessor.load_features_series,
+                symbol,
+                getattr(settings, "MARKET_EXCHANGE_ID", "binance"),
+                "1h",
+            )
+            if df.index.tz is None:
+                df.index = df.index.tz_localize("UTC")
+            else:
+                df.index = df.index.tz_convert("UTC")
+        except Exception as exc:
+            logger.warning("Feature load failed for %s: %s", symbol, exc)
+            df = None
 
         data = await route_tools(classification, symbol, df, sanitized_query, options, no_cache)
 
@@ -442,7 +451,7 @@ class CryptoAgentV2:
             data["backtest"] = backtest
 
         strategy = None
-        if qtype in ["combined", "reasoning", "patterns"]:
+        if df is not None and qtype in ["combined", "reasoning", "patterns"]:
             query_hash = hashlib.sha256(sanitized_query.encode()).hexdigest()
             strategy = hybrid_signal(
                 df,

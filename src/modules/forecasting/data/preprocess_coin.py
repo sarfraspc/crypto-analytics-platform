@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from core.database import get_timescale_engine
+from core.config import settings
 from data.storage.models import OHLCV, OHLCVFeature
 from modules.forecasting.data.preprocess_utils import (
     normalize_time,
@@ -44,7 +45,8 @@ class CoinPreprocessor:
         self.global_scaler_name = global_scaler_name
         self.default_target_freq = default_target_freq
 
-    def get_coin_start(self, symbol: str, exchange: str = "binance", interval: str = "1h"):
+    def get_coin_start(self, symbol: str, exchange: str = None, interval: str = "1h"):
+        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         Session = sessionmaker(bind=self.engine)
         with Session() as session:
             start_time = session.query(func.min(OHLCV.time)).filter(
@@ -60,10 +62,11 @@ class CoinPreprocessor:
     def load_data(
         self,
         symbol: str,
-        exchange: str = "binance",
+        exchange: str = None,
         interval: str = "1h",
         lookback_days: Optional[int] = None,
     ):
+        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         base_symbol = (
             symbol.split("/")[0].upper() if "/" in symbol else symbol.upper()
         )
@@ -171,9 +174,10 @@ class CoinPreprocessor:
                 "exchange": satypes.Text(), "interval": satypes.Text()}
         )
 
-    def update_features(self, symbol: str, exchange: str = "binance",
+    def update_features(self, symbol: str, exchange: str = None,
                         interval: str = "1h", target_freq: str = "D",
                         refit_scaler: bool = False):
+        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         freq_type = "D" if str(target_freq).upper().startswith("D") else "H"
         windows = DEFAULT_FEATURE_WINDOWS[freq_type]
         all_windows = windows['sma'] + windows['ema'] + windows['vol'] + (windows.get('z_score', 30),)
@@ -268,7 +272,8 @@ class CoinPreprocessor:
 
             return df_proc
     
-    def load_features_series(self, symbol: str, exchange: str = 'binance', interval: str = '1h', start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
+    def load_features_series(self, symbol: str, exchange: str = None, interval: str = '1h', start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
+        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         Session = sessionmaker(bind=self.engine)
         with Session() as session:
             # NEW LOGS
