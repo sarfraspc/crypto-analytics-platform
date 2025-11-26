@@ -142,6 +142,8 @@ const AnimatedCryptoSymbol = () => {
   )
 }
 
+const HORIZON_DAYS = 10
+
 const InsightSummary = () => {
   const { isDark } = useTheme()
   const { symbol } = useSymbol()
@@ -156,8 +158,8 @@ const InsightSummary = () => {
     setError(null)
     try {
       const [summaryResult, forecastResult] = await Promise.all([
-        getInsightSummary(symbol),
-        getPriceForecast(symbol, { horizonDays: 3 })
+        getInsightSummary(symbol, { horizonDays: HORIZON_DAYS }),
+        getPriceForecast(symbol, { horizonDays: HORIZON_DAYS }),
       ])
       
       if (isMountedRef.current) {
@@ -224,7 +226,7 @@ const InsightSummary = () => {
         currency: 'USD', 
         maximumFractionDigits: 2 
       })
-      parts.push(`${modelDisplay} forecasts ${symbol} reaching ${priceDisplay} in 10 days.`)
+      parts.push(`${modelDisplay} forecasts ${symbol} reaching ${priceDisplay} in ${HORIZON_DAYS} days.`)
     }
     
     // 2. Market Sentiment
@@ -281,16 +283,16 @@ const InsightSummary = () => {
       : null
 
   return (
-    <div className="relative rounded-xl p-6 shadow-lg bg-gray-900 border border-indigo-700 overflow-hidden">
+    <div className="relative rounded-xl p-6 shadow-lg bg-dark-900 border border-accent-500/30 overflow-hidden">
       {/* Gradient and blur overlay */}
-      <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-indigo-900/50 to-purple-900/50 backdrop-blur-xl"></div>
+      <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-accent-600/20 via-dark-900/80 to-highlight-600/20 backdrop-blur-xl"></div>
 
       {/* Content */}
       <div className="relative z-10">
         <div className="flex items-start justify-between mb-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-4">
-              <Brain className="text-indigo-500" size={24} />
+              <Brain className="text-accent-400" size={24} />
               <h3 className="text-lg font-semibold text-white">
                 AI Insight Summary
               </h3>
@@ -324,10 +326,10 @@ const InsightSummary = () => {
                 key={badge.label}
                 className={`px-3 py-1 rounded-full text-xs font-medium ${
                   badge.tone === 'green'
-                    ? 'bg-green-500/20 text-green-300'
+                    ? 'bg-success-500/20 text-success-400 border border-success-500/30'
                     : badge.tone === 'blue'
-                      ? 'bg-blue-500/20 text-blue-300'
-                      : 'bg-purple-500/20 text-purple-300'
+                      ? 'bg-accent-500/20 text-accent-300 border border-accent-500/30'
+                      : 'bg-highlight-500/20 text-highlight-400 border border-highlight-500/30'
                 }`}
               >
                 {badge.label}

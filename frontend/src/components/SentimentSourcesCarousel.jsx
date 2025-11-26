@@ -44,17 +44,17 @@ const SentimentSourcesCarousel = ({ sources }) => {
         {sources.map((source, index) => (
           <div
             key={source.metadata?.doc_id || index}
-            className={`flex-shrink-0 w-72 h-40 p-4 rounded-lg border flex flex-col ${
+            className={`flex-shrink-0 w-72 h-40 p-4 rounded-lg border flex flex-col transition-all hover:scale-[1.02] ${
               isDark
-                ? 'bg-slate-800 border-slate-700'
-                : 'bg-white border-gray-200'
+                ? 'bg-dark-900/60 border-accent-500/10 hover:border-accent-500/30'
+                : 'bg-white border-slate-200 hover:border-accent-500/30'
             }`}
           >
             <div className="flex-shrink-0">
               <div className="flex items-center gap-2 mb-2">
                 <span
                   className={`text-xs px-2 py-0.5 rounded-full ${
-                    isDark ? 'bg-slate-600 text-gray-300' : 'bg-gray-200 text-gray-700'
+                    isDark ? 'bg-dark-700 text-gray-300' : 'bg-slate-100 text-gray-700'
                   }`}
                 >
                   {source.metadata?.source || 'source'}
@@ -63,7 +63,7 @@ const SentimentSourcesCarousel = ({ sources }) => {
                   <span
                     className={`text-xs font-medium ${
                       source.score > 0.7
-                        ? 'text-green-400'
+                        ? 'text-success-400'
                         : source.score < 0.4
                           ? 'text-red-400'
                           : 'text-yellow-400'

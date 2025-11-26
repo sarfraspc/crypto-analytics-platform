@@ -8,7 +8,7 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -16,35 +16,61 @@ body {
 }
 
 .logo-glow {
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  text-shadow: 0 0 20px rgba(6, 182, 212, 0.5), 0 0 40px rgba(6, 182, 212, 0.3);
 }
 
-/* Custom scrollbar */
+/* Modern gradient backgrounds */
+.bg-mesh-dark {
+  background: linear-gradient(135deg, #0a0f1a 0%, #1e1b4b 25%, #0f172a 50%, #134e4a 75%, #0a0f1a 100%);
+  background-size: 400% 400%;
+  animation: gradient-shift 15s ease infinite;
+}
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* Glass morphism effect */
+.glass {
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(6, 182, 212, 0.1);
+}
+
+.glass-light {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(6, 182, 212, 0.15);
+}
+
+/* Custom scrollbar - modern cyan accent */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #6366F1; /* indigo-500 */
+  background: linear-gradient(180deg, #06b6d4, #8b5cf6);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4f46e5; /* indigo-600 */
+  background: linear-gradient(180deg, #22d3ee, #a78bfa);
 }
 
-/* Dark mode scrollbar */
-.dark ::-webkit-scrollbar-thumb {
-  background: #374151;
+/* Light mode scrollbar */
+.light-scrollbar::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.8);
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+.light-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #0891b2, #7c3aed);
 }
 
 /* Smooth transitions */

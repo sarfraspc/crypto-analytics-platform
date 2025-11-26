@@ -191,7 +191,7 @@ const ForecastChart = () => {
     return (
       <div
         className={`rounded-lg border px-3 py-2 shadow-xl ${
-          isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'
+          isDark ? 'bg-dark-900 border-dark-700' : 'bg-white border-slate-200'
         }`}
       >
         <p className={`text-xs font-semibold mb-2 ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
@@ -222,9 +222,9 @@ const ForecastChart = () => {
               ${data.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
-          <div className={`flex justify-between gap-4 pt-1 mt-1 border-t ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+          <div className={`flex justify-between gap-4 pt-1 mt-1 border-t ${isDark ? 'border-dark-700' : 'border-slate-200'}`}>
             <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Change:</span>
-            <span className={`font-mono font-semibold ${data.isPositive ? 'text-green-500' : 'text-red-500'}`}>
+            <span className={`font-mono font-semibold ${data.isPositive ? 'text-success-400' : 'text-red-400'}`}>
               {data.isPositive ? '+' : ''}{change.toFixed(2)} ({changePercent}%)
             </span>
           </div>
@@ -237,13 +237,13 @@ const ForecastChart = () => {
     <div
       className={`rounded-xl p-6 shadow-lg ${
         isDark
-          ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700'
-          : 'bg-white border border-gray-200'
+          ? 'bg-dark-800/50 backdrop-blur-xl border border-accent-500/10'
+          : 'bg-white/80 backdrop-blur-xl border border-slate-200'
       }`}
     >
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
-          <TrendingUp className="text-indigo-500" size={24} />
+          <TrendingUp className="text-accent-500" size={24} />
           <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
             Price Forecast
           </h3>
@@ -254,7 +254,7 @@ const ForecastChart = () => {
               Model: {meta.model || 'SARIMAX'}
             </p>
             {headline && (
-              <p className={`text-lg font-bold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+              <p className={`text-lg font-bold ${isDark ? 'text-success-400' : 'text-success-600'}`}>
                 {headline}
               </p>
             )}
@@ -323,7 +323,7 @@ const ForecastChart = () => {
       )}
       {!loading && !error && chartData.length === 0 && (
         <div className={`rounded-lg border px-4 py-3 text-sm ${
-          isDark ? 'border-slate-700 text-gray-300' : 'border-gray-200 text-gray-600'
+          isDark ? 'border-dark-700 text-gray-300' : 'border-slate-200 text-gray-600'
         }`}>
           <p className="font-medium mb-2">No valid forecast data available.</p>
           <p className="text-xs">

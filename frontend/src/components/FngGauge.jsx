@@ -12,16 +12,16 @@ const FngGauge = ({ fng }) => {
 
   const score = value / 100
   const gaugeColor = useMemo(() => {
-    if (bias === 'BULLISH' || bias === 'OPPORTUNITY') return 'text-green-500'
-    if (bias === 'BEARISH') return 'text-red-500'
-    if (bias === 'CAUTION') return 'text-yellow-500'
-    return score > 0.6 ? 'text-green-500' : score < 0.4 ? 'text-red-500' : 'text-yellow-500'
+    if (bias === 'BULLISH' || bias === 'OPPORTUNITY') return 'text-success-400'
+    if (bias === 'BEARISH') return 'text-red-400'
+    if (bias === 'CAUTION') return 'text-yellow-400'
+    return score > 0.6 ? 'text-success-400' : score < 0.4 ? 'text-red-400' : 'text-yellow-400'
   }, [bias, score])
 
   return (
     <div className="flex flex-col items-center">
       <div className="flex items-center gap-2 mb-6">
-        <Gauge className="text-indigo-500" size={24} />
+        <Gauge className="text-accent-500" size={24} />
         <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Fear &amp; Greed</h3>
       </div>
 
@@ -32,7 +32,7 @@ const FngGauge = ({ fng }) => {
               cx="96"
               cy="96"
               r="80"
-              stroke={isDark ? '#334155' : '#e5e7eb'}
+              stroke={isDark ? '#1e293b' : '#e5e7eb'}
               strokeWidth="12"
               fill="none"
             />
@@ -40,7 +40,7 @@ const FngGauge = ({ fng }) => {
               cx="96"
               cy="96"
               r="80"
-              stroke={score > 0.6 ? '#10b981' : score < 0.4 ? '#ef4444' : '#eab308'}
+              stroke={score > 0.6 ? '#22c55e' : score < 0.4 ? '#ef4444' : '#eab308'}
               strokeWidth="12"
               fill="none"
               strokeDasharray={`${Math.min(score, 1) * 502.4} 502.4`}

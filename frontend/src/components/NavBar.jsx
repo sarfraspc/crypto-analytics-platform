@@ -65,7 +65,7 @@ const NavBar = ({ currentPage, onPageChange }) => {
   return (
     <nav
       className={`sticky top-0 z-50 backdrop-blur-xl border-b ${
-        isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-gray-200'
+        isDark ? 'bg-dark-900/80 border-accent-500/20' : 'bg-white/80 border-accent-500/20'
       }`}
     >
       <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8">
@@ -80,7 +80,7 @@ const NavBar = ({ currentPage, onPageChange }) => {
             {/* Page Toggle Buttons */}
             <div
               className={`relative flex gap-2 px-2 py-1 rounded-lg ${
-                isDark ? 'bg-slate-800' : 'bg-gray-100'
+                isDark ? 'bg-dark-800/80' : 'bg-slate-100'
               }`}
             >
               {[
@@ -93,10 +93,10 @@ const NavBar = ({ currentPage, onPageChange }) => {
                   onClick={() => onPageChange(item.id)}
                   className={`px-3 xl:px-4 py-2 rounded-md font-medium text-sm transition-all ${
                     currentPage === item.id
-                      ? `bg-indigo-600 text-white shadow-lg ${showHintAnimation ? (currentPage === 'dashboard' ? 'animate-button-slide-right' : 'animate-button-slide-left') : ''}`
+                      ? `bg-gradient-to-r from-accent-500 to-highlight-500 text-white shadow-lg shadow-accent-500/25 ${showHintAnimation ? (currentPage === 'dashboard' ? 'animate-button-slide-right' : 'animate-button-slide-left') : ''}`
                       : isDark
-                        ? 'text-gray-400 hover:text-white'
-                        : 'text-gray-600 hover:text-gray-900'
+                        ? 'text-gray-400 hover:text-accent-400'
+                        : 'text-gray-600 hover:text-accent-600'
                   }`}
                 >
                   {item.label}
@@ -109,10 +109,10 @@ const NavBar = ({ currentPage, onPageChange }) => {
               <button
                 type="button"
                 onClick={() => !dropdownDisabled && setDropdownOpen((prev) => !prev)}
-                className={`w-36 xl:w-40 px-3 xl:px-4 py-2 text-sm rounded-lg font-medium border focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center justify-between ${
+                className={`w-36 xl:w-40 px-3 xl:px-4 py-2 text-sm rounded-lg font-medium border focus:outline-none focus:ring-2 focus:ring-accent-500 flex items-center justify-between ${
                   isDark
-                    ? 'bg-slate-800 text-white border-slate-700 disabled:bg-slate-800/60'
-                    : 'bg-white text-gray-900 border-gray-200 disabled:bg-gray-50'
+                    ? 'bg-dark-800/80 text-white border-dark-700 disabled:bg-dark-800/60'
+                    : 'bg-white text-gray-900 border-slate-200 disabled:bg-slate-50'
                 } ${dropdownDisabled ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
                 aria-haspopup="listbox"
                 aria-expanded={dropdownOpen}
@@ -121,12 +121,12 @@ const NavBar = ({ currentPage, onPageChange }) => {
                 <span className="truncate">
                   {loadingSymbols ? 'Loading...' : symbol || 'Select symbol'}
                 </span>
-                {loadingSymbols ? <Loader2 size={16} className="animate-spin" /> : <ChevronDown size={18} />}
+                {loadingSymbols ? <Loader2 size={16} className="animate-spin text-accent-400" /> : <ChevronDown size={18} />}
               </button>
               {dropdownOpen && (
                 <div
-                  className={`absolute right-0 mt-2 w-48 rounded-lg border shadow-lg z-50 ${
-                    isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'
+                  className={`absolute right-0 mt-2 w-48 rounded-lg border shadow-xl z-50 ${
+                    isDark ? 'bg-dark-900 border-dark-700' : 'bg-white border-slate-200'
                   }`}
                 >
                   <div className="max-h-64 overflow-y-auto py-1">
@@ -137,12 +137,12 @@ const NavBar = ({ currentPage, onPageChange }) => {
                         onClick={() => handleSymbolSelect(option)}
                         className={`w-full flex items-center justify-between px-4 py-2 text-sm ${
                           isDark
-                            ? 'text-gray-100 hover:bg-slate-800'
-                            : 'text-gray-800 hover:bg-gray-100'
+                            ? 'text-gray-100 hover:bg-dark-800'
+                            : 'text-gray-800 hover:bg-slate-100'
                         } ${option === symbol ? 'font-semibold' : ''}`}
                       >
                         <span>{option}</span>
-                        {option === symbol && <Check size={14} className="text-indigo-500" />}
+                        {option === symbol && <Check size={14} className="text-accent-500" />}
                       </button>
                     ))}
                     {symbolOptions.length === 0 && (
@@ -164,8 +164,8 @@ const NavBar = ({ currentPage, onPageChange }) => {
               onClick={toggleTheme}
               className={`p-2 rounded-lg transition-all ${
                 isDark
-                  ? 'bg-slate-800 text-yellow-400 hover:bg-slate-700'
-                  : 'bg-gray-100 text-indigo-600 hover:bg-gray-200'
+                  ? 'bg-dark-800/80 text-accent-400 hover:bg-dark-700 hover:text-accent-300'
+                  : 'bg-slate-100 text-accent-600 hover:bg-slate-200'
               }`}
               aria-label="Toggle color theme"
             >
@@ -180,10 +180,10 @@ const NavBar = ({ currentPage, onPageChange }) => {
               <button
                 type="button"
                 onClick={() => !dropdownDisabled && setDropdownOpen((prev) => !prev)}
-                className={`w-20 sm:w-24 px-2 sm:px-3 py-2 text-xs sm:text-sm rounded-lg font-medium border focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center justify-between ${
+                className={`w-20 sm:w-24 px-2 sm:px-3 py-2 text-xs sm:text-sm rounded-lg font-medium border focus:outline-none focus:ring-2 focus:ring-accent-500 flex items-center justify-between ${
                   isDark
-                    ? 'bg-slate-800 text-white border-slate-700 disabled:bg-slate-800/60'
-                    : 'bg-white text-gray-900 border-gray-200 disabled:bg-gray-50'
+                    ? 'bg-dark-800/80 text-white border-dark-700 disabled:bg-dark-800/60'
+                    : 'bg-white text-gray-900 border-slate-200 disabled:bg-slate-50'
                 } ${dropdownDisabled ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
                 aria-haspopup="listbox"
                 aria-expanded={dropdownOpen}
@@ -193,15 +193,15 @@ const NavBar = ({ currentPage, onPageChange }) => {
                   {loadingSymbols ? '...' : symbol || 'Symbol'}
                 </span>
                 {loadingSymbols ? (
-                  <Loader2 size={14} className="animate-spin flex-shrink-0" />
+                  <Loader2 size={14} className="animate-spin flex-shrink-0 text-accent-400" />
                 ) : (
                   <ChevronDown size={14} className="flex-shrink-0" />
                 )}
               </button>
               {dropdownOpen && (
                 <div
-                  className={`absolute right-0 mt-2 w-40 sm:w-48 rounded-lg border shadow-lg z-50 ${
-                    isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'
+                  className={`absolute right-0 mt-2 w-40 sm:w-48 rounded-lg border shadow-xl z-50 ${
+                    isDark ? 'bg-dark-900 border-dark-700' : 'bg-white border-slate-200'
                   }`}
                 >
                   <div className="max-h-64 overflow-y-auto py-1">
@@ -212,12 +212,12 @@ const NavBar = ({ currentPage, onPageChange }) => {
                         onClick={() => handleSymbolSelect(option)}
                         className={`w-full flex items-center justify-between px-3 sm:px-4 py-2 text-sm ${
                           isDark
-                            ? 'text-gray-100 hover:bg-slate-800'
-                            : 'text-gray-800 hover:bg-gray-100'
+                            ? 'text-gray-100 hover:bg-dark-800'
+                            : 'text-gray-800 hover:bg-slate-100'
                         } ${option === symbol ? 'font-semibold' : ''}`}
                       >
                         <span>{option}</span>
-                        {option === symbol && <Check size={14} className="text-indigo-500" />}
+                        {option === symbol && <Check size={14} className="text-accent-500" />}
                       </button>
                     ))}
                   </div>
@@ -231,8 +231,8 @@ const NavBar = ({ currentPage, onPageChange }) => {
               onClick={toggleTheme}
               className={`p-2 rounded-lg transition-all ${
                 isDark
-                  ? 'bg-slate-800 text-yellow-400 hover:bg-slate-700'
-                  : 'bg-gray-100 text-indigo-600 hover:bg-gray-200'
+                  ? 'bg-dark-800/80 text-accent-400 hover:bg-dark-700'
+                  : 'bg-slate-100 text-accent-600 hover:bg-slate-200'
               }`}
               aria-label="Toggle color theme"
             >
@@ -245,8 +245,8 @@ const NavBar = ({ currentPage, onPageChange }) => {
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className={`p-2 rounded-lg transition-all ${
                 isDark
-                  ? 'bg-slate-800 text-white hover:bg-slate-700'
-                  : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                  ? 'bg-dark-800/80 text-white hover:bg-dark-700'
+                  : 'bg-slate-100 text-gray-900 hover:bg-slate-200'
               }`}
               aria-label="Toggle menu"
             >
@@ -257,7 +257,7 @@ const NavBar = ({ currentPage, onPageChange }) => {
 
         {/* Mobile Menu Dropdown */}
         {mobileMenuOpen && (
-          <div className={`lg:hidden py-4 border-t ${isDark ? 'border-slate-800' : 'border-gray-200'}`}>
+          <div className={`lg:hidden py-4 border-t ${isDark ? 'border-dark-700' : 'border-slate-200'}`}>
             <div className="relative flex flex-col space-y-2">
               {[
                 { id: 'dashboard', label: 'Dashboard' },
@@ -269,10 +269,10 @@ const NavBar = ({ currentPage, onPageChange }) => {
                   onClick={() => handlePageChange(item.id)}
                   className={`w-full px-4 py-3 rounded-lg font-medium text-sm text-left transition-all ${
                     currentPage === item.id
-                      ? `bg-indigo-600 text-white shadow-lg ${showHintAnimation ? (currentPage === 'dashboard' ? 'animate-button-slide-down' : 'animate-button-slide-up') : ''}`
+                      ? `bg-gradient-to-r from-accent-500 to-highlight-500 text-white shadow-lg shadow-accent-500/25 ${showHintAnimation ? (currentPage === 'dashboard' ? 'animate-button-slide-down' : 'animate-button-slide-up') : ''}`
                       : isDark
-                        ? 'text-gray-300 hover:bg-slate-800'
-                        : 'text-gray-700 hover:bg-gray-100'
+                        ? 'text-gray-300 hover:bg-dark-800'
+                        : 'text-gray-700 hover:bg-slate-100'
                   }`}
                 >
                   {item.label}

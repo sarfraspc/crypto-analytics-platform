@@ -152,13 +152,13 @@ const TAPatternsCarousel = () => {
     <div
       className={`rounded-xl p-6 shadow-lg ${
         isDark
-          ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700'
-          : 'bg-white border border-gray-200'
+          ? 'bg-dark-800/50 backdrop-blur-xl border border-accent-500/10'
+          : 'bg-white/80 backdrop-blur-xl border border-slate-200'
       }`}
     >
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-2">
-          <Target className="text-indigo-500" size={24} />
+          <Target className="text-accent-500" size={24} />
           <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
             Technical Patterns
           </h3>
@@ -186,10 +186,10 @@ const TAPatternsCarousel = () => {
           {filteredPatterns.map((pattern, index) => (
             <div
               key={`${pattern.symbol}-${pattern.pattern}-${index}`}
-              className={`flex-shrink-0 w-44 h-36 p-4 rounded-lg border flex flex-col ${
+              className={`flex-shrink-0 w-44 h-36 p-4 rounded-lg border flex flex-col transition-all hover:scale-[1.02] ${
                 isDark
-                  ? 'bg-slate-800 border-slate-700'
-                  : 'bg-white border-gray-200'
+                  ? 'bg-dark-900/60 border-accent-500/10 hover:border-accent-500/30'
+                  : 'bg-white border-slate-200 hover:border-accent-500/30'
               }`}
             >
               <div>
@@ -200,8 +200,8 @@ const TAPatternsCarousel = () => {
                     <div
                       className={`absolute top-full left-0 mt-2 w-64 p-3 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 ${
                         isDark
-                          ? 'bg-slate-900 border border-slate-700 text-gray-300'
-                          : 'bg-white border border-gray-200 text-gray-700'
+                          ? 'bg-dark-900 border border-dark-700 text-gray-300'
+                          : 'bg-white border border-slate-200 text-gray-700'
                       }`}
                     >
                       <p className="text-xs">
@@ -218,9 +218,9 @@ const TAPatternsCarousel = () => {
               <div className="flex-grow" />
               <div className="mt-3">
                 <div className="flex items-center gap-2">
-                  <div className={`flex-1 h-2 ${isDark ? 'bg-slate-700' : 'bg-gray-200'} rounded-full overflow-hidden`}>
+                  <div className={`flex-1 h-2 ${isDark ? 'bg-dark-700' : 'bg-slate-200'} rounded-full overflow-hidden`}>
                     <div
-                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full"
+                      className="h-full bg-gradient-to-r from-accent-500 to-highlight-500 rounded-full"
                       style={{
                         width: `${confidenceWidth(
                           pattern.confidence ?? (pattern.rsi ? pattern.rsi / 100 : 0.5),

@@ -64,8 +64,8 @@ const SentimentPanel = () => {
     <div
       className={`rounded-xl p-6 shadow-lg ${
         isDark
-          ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700'
-          : 'bg-white border border-gray-200'
+          ? 'bg-dark-800/50 backdrop-blur-xl border border-accent-500/10'
+          : 'bg-white/80 backdrop-blur-xl border border-slate-200'
       }`}
     >
       {loading && <Loader label="Analyzing sentiment" />}

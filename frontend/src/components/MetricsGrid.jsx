@@ -47,12 +47,14 @@ const formatNumber = (
 
 const MetricCard = ({ title, value, trend, isDark }) => {
   const TrendIcon = trend === 'up' ? ArrowUpRight : trend === 'down' ? ArrowDownRight : Minus
-  const trendColor = trend === 'up' ? 'text-green-500' : trend === 'down' ? 'text-red-500' : 'text-gray-500'
+  const trendColor = trend === 'up' ? 'text-success-400' : trend === 'down' ? 'text-red-400' : 'text-gray-500'
   const isNA = value === 'N/A'
   return (
     <div
-      className={`rounded-xl p-4 shadow-lg flex flex-col justify-between min-h-[110px] ${
-        isDark ? 'bg-slate-900/40 border border-slate-700' : 'bg-white border border-gray-200'
+      className={`rounded-xl p-4 shadow-lg flex flex-col justify-between min-h-[110px] transition-all hover:scale-[1.02] ${
+        isDark 
+          ? 'bg-dark-900/60 border border-accent-500/10 hover:border-accent-500/30' 
+          : 'bg-white border border-slate-200 hover:border-accent-500/30'
       }`}
     >
       {/* Title at top */}
@@ -177,13 +179,13 @@ const MetricsGrid = () => {
     <div
       className={`rounded-xl p-6 shadow-lg flex flex-col flex-grow ${
         isDark
-          ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700'
-          : 'bg-white border border-gray-200'
+          ? 'bg-dark-800/50 backdrop-blur-xl border border-accent-500/10'
+          : 'bg-white/80 backdrop-blur-xl border border-slate-200'
       }`}
     >
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-2">
-          <BarChart3 className="text-indigo-500" size={24} />
+          <BarChart3 className="text-accent-500" size={24} />
           <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
             On-Chain Metrics
           </h3>

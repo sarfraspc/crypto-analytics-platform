@@ -16,6 +16,13 @@ services:
         condition: service_started
       mlflow:
         condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
       - ./secrets:/secrets:ro
     ports:
@@ -39,6 +46,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # 3. Redis
   redis:
@@ -48,6 +56,7 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    restart: unless-stopped
 
   # 4. Qdrant
   qdrant:
@@ -57,6 +66,7 @@ services:
       - "6333:6333"
     volumes:
       - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
 
   # 5. MLflow 
   mlflow:
@@ -85,6 +95,7 @@ services:
       - ./secrets:/secrets:ro
     ports:
       - "5000:5000"
+    restart: unless-stopped
 
   # 6. Frontend (React + Vite, served by Nginx)
   frontend:
@@ -99,6 +110,7 @@ services:
         condition: service_started
     ports:
       - "3000:80"
+    restart: unless-stopped
 
 volumes:
   postgres_data:

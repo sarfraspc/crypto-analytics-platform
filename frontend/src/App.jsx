@@ -11,7 +11,7 @@ const AppContent = () => {
   const [currentPage, setCurrentPage] = useState('dashboard')
 
   return (
-    <div className={`${isDark ? 'bg-slate-950 text-white' : 'bg-gray-50 text-gray-900'} min-h-screen`}> 
+    <div className={`${isDark ? 'bg-dark-950 text-white bg-mesh-dark' : 'bg-gradient-to-br from-slate-50 via-cyan-50/30 to-violet-50/30 text-gray-900'} min-h-screen`}> 
       <NavBar currentPage={currentPage} onPageChange={setCurrentPage} />
       <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-8">
         {currentPage === 'dashboard' ? <Dashboard /> : <AdvancedAnalytics />}

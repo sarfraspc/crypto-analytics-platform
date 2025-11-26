@@ -16,16 +16,16 @@ const SentimentGauge = ({ aggregated }) => { // Removed lastUpdated prop
   const confidence = aggregated.top_confidence ?? score ?? 0.5
   
   const gaugeColor = useMemo(() => {
-    if (score > 0.6) return 'text-green-500'
-    if (score < 0.4) return 'text-red-500'
-    return 'text-yellow-500'
+    if (score > 0.6) return 'text-success-400'
+    if (score < 0.4) return 'text-red-400'
+    return 'text-yellow-400'
   }, [score])
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6 gap-3">
         <div className="flex items-center gap-2">
-          <Activity className="text-indigo-500" size={24} />
+          <Activity className="text-accent-500" size={24} />
           <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
             Market Sentiment
           </h3>
@@ -35,12 +35,12 @@ const SentimentGauge = ({ aggregated }) => { // Removed lastUpdated prop
       <div className="flex items-center justify-center">
         <div className="relative w-48 h-48">
           <svg className="transform -rotate-90 w-48 h-48">
-            <circle cx="96" cy="96" r="80" stroke={isDark ? '#334155' : '#e5e7eb'} strokeWidth="12" fill="none" />
+            <circle cx="96" cy="96" r="80" stroke={isDark ? '#1e293b' : '#e5e7eb'} strokeWidth="12" fill="none" />
             <circle
               cx="96"
               cy="96"
               r="80"
-              stroke={score > 0.6 ? '#10b981' : score < 0.4 ? '#ef4444' : '#eab308'}
+              stroke={score > 0.6 ? '#22c55e' : score < 0.4 ? '#ef4444' : '#eab308'}
               strokeWidth="12"
               fill="none"
               strokeDasharray={`${Math.min(score, 1) * 502.4} 502.4`}

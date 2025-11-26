@@ -5,16 +5,16 @@ const Logo = () => {
   const { isDark } = useTheme()
   return (
     <div className="flex items-center gap-2 sm:gap-3">
-      <img src={logo} alt="Novum Crypto Logo" className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0" />
+      <img src={logo} alt="Novum Crypto Logo" className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0 ring-2 ring-accent-500/30" />
       <div className="hidden sm:block">
         <span
-          className={`font-semibold uppercase tracking-[0.12em] text-base sm:text-lg leading-tight ${
-            isDark ? 'text-indigo-100' : 'text-indigo-800'
+          className={`font-semibold uppercase tracking-[0.12em] text-base sm:text-lg leading-tight logo-glow ${
+            isDark ? 'text-accent-100' : 'text-accent-700'
           }`}
         >
           Novum Crypto
         </span>
-        <span className="block text-xs text-gray-500 dark:text-gray-400">
+        <span className={`block text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
           AI Powered Crypto Analysis Platform
         </span>
       </div>
@@ -22,7 +22,7 @@ const Logo = () => {
       <div className="block sm:hidden">
         <span
           className={`font-semibold uppercase tracking-[0.12em] text-base leading-tight ${
-            isDark ? 'text-indigo-100' : 'text-indigo-800'
+            isDark ? 'text-accent-100' : 'text-accent-700'
           }`}
         >
           Novum Crypto

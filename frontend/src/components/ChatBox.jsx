@@ -16,13 +16,13 @@ const DataCards = ({ title, data, isDark }) => {
   if (entries.length === 0) return null
 
   return (
-    <div className={`mt-2 rounded-lg border ${isDark ? 'border-slate-700 bg-slate-800/60' : 'border-gray-200 bg-gray-50'}`}>
+    <div className={`mt-2 rounded-lg border ${isDark ? 'border-dark-700 bg-dark-800/60' : 'border-slate-200 bg-slate-50'}`}>
       <p className={`px-3 pt-3 text-xs font-semibold uppercase ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{title}</p>
       <div className="grid grid-cols-2 gap-2 p-3">
         {entries.map(([key, value]) => (
           <div
             key={key}
-            className={`rounded-md px-2 py-2 ${isDark ? 'bg-slate-700/60 text-gray-100' : 'bg-white text-gray-800'}`}
+            className={`rounded-md px-2 py-2 ${isDark ? 'bg-dark-700/60 text-gray-100' : 'bg-white text-gray-800'}`}
           >
             <p className="text-[10px] font-semibold uppercase text-gray-400">{key.replace(/_/g, ' ')}</p>
             <p className="text-sm">
@@ -38,10 +38,10 @@ const DataCards = ({ title, data, isDark }) => {
 const AssistantBubble = ({ message, isDark, onChipClick }) => {
   const isUser = message.role === 'user'
   const bubbleClasses = isUser
-    ? 'bg-indigo-600 text-white'
+    ? 'bg-gradient-to-r from-accent-500 to-highlight-500 text-white'
     : isDark
-      ? 'bg-slate-700 text-gray-100'
-      : 'bg-gray-100 text-gray-900'
+      ? 'bg-dark-700 text-gray-100'
+      : 'bg-slate-100 text-gray-900'
 
   const dataSections =
     message.data && typeof message.data === 'object' && Object.keys(message.data).length > 0
@@ -66,7 +66,7 @@ const AssistantBubble = ({ message, isDark, onChipClick }) => {
               key={chip}
               onClick={() => onChipClick?.(chip)}
               className={`text-xs px-2 py-1 rounded-full ${
-                isDark ? 'bg-slate-600 text-gray-200 hover:bg-slate-500' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                isDark ? 'bg-dark-600 text-gray-200 hover:bg-dark-500' : 'bg-slate-200 text-gray-700 hover:bg-slate-300'
               }`}
             >
               {chip}
@@ -238,12 +238,12 @@ const ChatBox = () => {
   return (
     <div
       className={`rounded-xl shadow-lg flex flex-col h-[500px] sm:h-[600px] lg:h-[650px] ${
-        isDark ? 'bg-slate-800/50 backdrop-blur-xl border border-slate-700' : 'bg-white border border-gray-200'
+        isDark ? 'bg-dark-800/50 backdrop-blur-xl border border-accent-500/10' : 'bg-white/80 backdrop-blur-xl border border-slate-200'
       }`}
     >
-      <div className={`px-4 sm:px-6 py-3 sm:py-4 border-b flex-shrink-0 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
+      <div className={`px-4 sm:px-6 py-3 sm:py-4 border-b flex-shrink-0 ${isDark ? 'border-dark-700 bg-dark-800/80' : 'border-slate-200 bg-slate-50'}`}>
         <div className="flex items-center gap-2">
-          <MessageSquare className="text-indigo-500" size={20} />
+          <MessageSquare className="text-accent-500" size={20} />
           <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>AI Assistant</h3>
         </div>
       </div>
@@ -259,8 +259,8 @@ const ChatBox = () => {
         ))}
         {isTyping && (
           <div className="flex justify-start">
-            <div className={`rounded-xl px-4 py-3 ${isDark ? 'bg-slate-700' : 'bg-gray-100'}`}>
-              <Loader2 className="animate-spin text-indigo-500" size={20} />
+            <div className={`rounded-xl px-4 py-3 ${isDark ? 'bg-dark-700' : 'bg-slate-100'}`}>
+              <Loader2 className="animate-spin text-accent-500" size={20} />
             </div>
           </div>
         )}
@@ -272,8 +272,8 @@ const ChatBox = () => {
               disabled={!lastUserQuestion}
               className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium shadow ${
                 isDark
-                  ? 'bg-slate-700 text-gray-100 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-gray-500'
-                  : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400'
+                  ? 'bg-dark-700 text-gray-100 hover:bg-dark-600 disabled:bg-dark-800 disabled:text-gray-500'
+                  : 'bg-white border border-slate-200 text-gray-700 hover:bg-slate-50 disabled:bg-slate-100 disabled:text-gray-400'
               }`}
             >
               <RefreshCw size={16} className="shrink-0" />
@@ -284,7 +284,7 @@ const ChatBox = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className={`p-3 sm:p-4 border-t space-y-3 flex-shrink-0 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-gray-200 bg-gray-50'}`}>
+      <div className={`p-3 sm:p-4 border-t space-y-3 flex-shrink-0 ${isDark ? 'border-dark-700 bg-dark-800/80' : 'border-slate-200 bg-slate-50'}`}>
         {error && <ErrorBox message={error} />}
         <div className="flex gap-2">
           <input
@@ -297,14 +297,14 @@ const ChatBox = () => {
               }
             }}
             placeholder={placeholder}
-            className={`flex-1 px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-              isDark ? 'bg-slate-700 text-white placeholder-gray-400' : 'bg-white text-gray-900 placeholder-gray-500'
+            className={`flex-1 px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-500 ${
+              isDark ? 'bg-dark-700 text-white placeholder-gray-400' : 'bg-white text-gray-900 placeholder-gray-500'
             }`}
           />
           <button
             type="button"
             onClick={() => handleSend()}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all"
+            className="px-4 py-2 bg-gradient-to-r from-accent-500 to-highlight-500 text-white rounded-lg hover:from-accent-400 hover:to-highlight-400 transition-all shadow-lg shadow-accent-500/25"
           >
             <Send size={20} />
           </button>
@@ -315,8 +315,8 @@ const ChatBox = () => {
               type="button"
               key={category}
               onClick={() => handleChipClick(category)}
-              className={`text-xs px-3 py-1 rounded-full border ${
-                isDark ? 'border-slate-600 text-gray-200 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'
+              className={`text-xs px-3 py-1 rounded-full border transition-all ${
+                isDark ? 'border-dark-600 text-gray-200 hover:bg-dark-700 hover:border-accent-500/30' : 'border-slate-300 text-gray-700 hover:bg-slate-100 hover:border-accent-500/30'
               }`}
             >
               {buildQuickQuestion(category)}
