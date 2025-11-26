@@ -225,7 +225,8 @@ async def route_tools(
         )
         if wants_patterns:
             pattern_args = {
-                "exchange": "binance",
+                # Use the configured market exchange (e.g. binanceus on the VM)
+                "exchange": getattr(settings, "MARKET_EXCHANGE_ID", "binance"),
                 "interval": "1d",
                 "limit": 20,
             }
