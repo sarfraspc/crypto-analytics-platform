@@ -1,4 +1,9 @@
-const API_BASE_URL = (import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+const rawApiBase =
+  import.meta.env.VITE_API_URL ||
+  import.meta.env.REACT_APP_API_URL ||
+  (import.meta.env.MODE === 'production' ? '/api' : 'http://localhost:8000')
+
+const API_BASE_URL = rawApiBase.replace(/\/$/, '')
 const GENERIC_MARKET_SYMBOL = 'BTC'
 
 const handleResponse = async (response) => {
