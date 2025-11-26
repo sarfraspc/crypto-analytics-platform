@@ -133,10 +133,12 @@ async def _call_mcp(server: str, tool: str, args: Optional[Dict[str, Any]] = Non
     if not script_path or not os.path.exists(script_path):
         return {"error": f"Server script missing: {script_path}"}
 
+    # Ensure subprocess inherits full environment (DB, Redis, etc.)
     server_params = StdioServerParameters(
         command=sys.executable,
         args=[script_path],
-        cwd=os.getcwd()
+        cwd=os.getcwd(),
+        env=dict(os.environ),
     )
 
     try:
