@@ -2,13 +2,22 @@ export async function onRequest(context) {
   const { request, env } = context
   const incomingUrl = new URL(request.url)
 
-  // Lightweight debug helper to confirm what env keys are visible to the Function
+  // Lightweight debug helper to confirm what env keys and values are visible
   if (incomingUrl.pathname === '/api/debug-env') {
     const keys = env ? Object.keys(env) : []
-    return new Response(JSON.stringify({ hasEnv: !!env, keys }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    const backendOrigin = env?.BACKEND_ORIGIN || env?.VITE_BACKEND_ORIGIN
+    return new Response(
+      JSON.stringify({
+        hasEnv: !!env,
+        keys,
+        backendOrigin: backendOrigin ?? null,
+        typeOfBackendOrigin: typeof backendOrigin,
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    )
   }
 
   // Prefer BACKEND_ORIGIN, but also allow a fallback name just in case
