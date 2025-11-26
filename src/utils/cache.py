@@ -3,6 +3,7 @@ import json
 import logging
 from typing import Any, Optional
 
+import os
 import pandas as pd
 import redis
 
@@ -11,7 +12,16 @@ logger = logging.getLogger(__name__)
 
 class RedisCache:
     def __init__(self, host="localhost", port=6379, db=0, expire_seconds: int = 3600):
-        self.client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+        # Allow Docker / env-configured Redis (e.g. REDIS_HOST=redis inside containers).
+        resolved_host = os.getenv("REDIS_HOST", host)
+        resolved_port = int(os.getenv("REDIS_PORT", port))
+        resolved_db = int(os.getenv("REDIS_DB", db))
+        self.client = redis.Redis(
+            host=resolved_host,
+            port=resolved_port,
+            db=resolved_db,
+            decode_responses=True,
+        )
         self.expire_seconds = expire_seconds
 
     def set_json(self, key: str, value: Any, expire_seconds: Optional[int] = None) -> None:

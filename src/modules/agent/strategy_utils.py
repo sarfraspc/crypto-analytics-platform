@@ -28,14 +28,36 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
     tech_series = pd.Series(tech, index=df.index)
     tech_signal = tech_series.iloc[-1]
 
-    # Sentiment
+    # Sentiment (coerce to floats to avoid type issues)
     agg = sentiment.get('aggregated', {})
-    sent_score = agg.get('bullish_score', 0.5) - agg.get('bearish_score', 0.5)
+    def _to_float(value, default):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    bull_score = _to_float(agg.get('bullish_score', 0.5), 0.5)
+    bear_score = _to_float(agg.get('bearish_score', 0.5), 0.5)
+    sent_score = bull_score - bear_score
     sent_sig = 1 if sent_score > 0.2 else -1 if sent_score < -0.2 else 0
 
-    # Forecast trend
-    last_close = df['close'].iloc[-1]
-    next_pred = forecast.get('predicted_close', [last_close])[-1]
+    # Forecast trend (ensure numeric values)
+    try:
+        last_close = float(df['close'].iloc[-1])
+    except (TypeError, ValueError, IndexError, KeyError):
+        last_close = 0.0
+
+    raw_pred = forecast.get('predicted_close', last_close)
+    if isinstance(raw_pred, (list, tuple)) and raw_pred:
+        try:
+            next_pred = float(raw_pred[-1])
+        except (TypeError, ValueError):
+            next_pred = last_close
+    else:
+        try:
+            next_pred = float(raw_pred)
+        except (TypeError, ValueError):
+            next_pred = last_close
     fc_sig = 1 if next_pred > last_close * 1.01 else -1 if next_pred < last_close * 0.99 else 0
 
     # On-chain (enhanced with corr)
