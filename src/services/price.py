@@ -109,10 +109,11 @@ def _denormalize_forecast_points(symbol: str, points: List[Dict[str, Any]]) -> L
     preprocessor = _get_preprocessor()
     scaler_path = _scaler_path_for(preprocessor.scaler_dir, symbol.upper(), None)
     scaler, cols = load_scaler_with_meta(scaler_path)
-    if not scaler or not cols or "close" not in cols:
-        return points
 
-    close_idx = cols.index("close")
+    close_idx = None
+    if scaler and cols and "close" in cols:
+        close_idx = cols.index("close")
+
     valid_points: List[Dict[str, Any]] = []
     values: List[float] = []
     for point in points:
@@ -129,16 +130,46 @@ def _denormalize_forecast_points(symbol: str, points: List[Dict[str, Any]]) -> L
     if not values:
         return points
 
-    template = np.zeros((len(values), len(cols)))
-    template[:, close_idx] = np.array(values)
-    try:
-        denorm = scaler.inverse_transform(template)[:, close_idx]
-    except Exception as exc:
-        logger.warning("Denormalizing forecast failed for %s: %s", symbol, exc)
+    # Preferred path: use stored scaler metadata when available.
+    if scaler is not None and close_idx is not None and cols:
+        template = np.zeros((len(values), len(cols)))
+        template[:, close_idx] = np.array(values)
+        try:
+            denorm = scaler.inverse_transform(template)[:, close_idx]
+        except Exception as exc:
+            logger.warning("Denormalizing forecast failed for %s: %s", symbol, exc)
+            return points
+
+        for point, denorm_value in zip(valid_points, denorm):
+            point["predicted_close"] = float(denorm_value)
         return points
 
-    for point, denorm_value in zip(valid_points, denorm):
-        point["predicted_close"] = float(denorm_value)
+    # Fallback path: if no scaler metadata is available but the values look
+    # like 0–1 scaled outputs for a large‑priced asset, approximate an
+    # inverse MinMax scaling using recent raw OHLCV history.
+    try:
+        max_pred = max(values)
+        if max_pred < 1.0:
+            df_raw = preprocessor.load_data(symbol.upper(), interval="1h", lookback_days=365)
+            if not df_raw.empty and "close" in df_raw.columns:
+                min_close = float(df_raw["close"].min())
+                max_close = float(df_raw["close"].max())
+                if max_close > min_close and max_close > 10.0:
+                    scale = max_close - min_close
+                    for point, v in zip(valid_points, values):
+                        real_val = float(v) * scale + min_close
+                        point["predicted_close"] = real_val
+                    logger.info(
+                        "[%s] Applied heuristic denormalization fallback "
+                        "(no scaler meta, inferred MinMax range %.2f–%.2f)",
+                        symbol,
+                        min_close,
+                        max_close,
+                    )
+                    return points
+    except Exception as exc:
+        logger.warning("Heuristic denormalization fallback failed for %s: %s", symbol, exc)
+
     return points
 
 
