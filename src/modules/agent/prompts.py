@@ -119,8 +119,26 @@ def _robust_parse(raw: Dict[str, Any]) -> Dict[str, Any]:
 def build_forecast_ctx(forecast: Dict[str, Any]) -> str:
     forecast = _robust_parse(forecast)
     if not forecast: return "FORECAST: N/A"
-    pred = forecast.get('predicted_close', 0)
-    last = forecast.get('last_close', pred)
+
+    # Prophet now returns a list of predicted_close values; reduce to a scalar.
+    raw_pred = forecast.get('predicted_close', 0)
+    if isinstance(raw_pred, (list, tuple)) and raw_pred:
+        pred = float(raw_pred[-1])
+    else:
+        try:
+            pred = float(raw_pred)
+        except (TypeError, ValueError):
+            pred = 0.0
+
+    raw_last = forecast.get('last_close', pred)
+    if isinstance(raw_last, (list, tuple)) and raw_last:
+        last = float(raw_last[-1])
+    else:
+        try:
+            last = float(raw_last)
+        except (TypeError, ValueError):
+            last = pred
+
     trend = "↑ Bullish" if pred > last * 1.01 else "↓ Bearish" if pred < last * 0.99 else "→ Neutral"
     ctx = f"FORECAST: {trend} (Horizon: {forecast.get('horizon', 7)}h, Pred Close: ${pred:.2f}, MAE: {forecast.get('mae_forecast', 0):.2f})"
     if 'shap' in forecast:  # Inject SHAP
