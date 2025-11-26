@@ -225,13 +225,13 @@ export const getOnChainMetrics = (symbol = GENERIC_MARKET_SYMBOL, window = '24h'
 export const getAvailableSymbols = ({ exchange, interval, limit } = {}) =>
   request(`/price/symbols${buildQuery({ exchange, interval, limit })}`)
 
-export const getTechnicalPatterns = ({ exchange = 'binance', interval = '1d', limit = 20 } = {}) =>
+export const getTechnicalPatterns = ({ exchange, interval = '1d', limit = 20 } = {}) =>
   request(`/onchain/patterns${buildQuery({ exchange, interval, limit })}`).then((result) => ({
     ...result,
     patterns: normalizePatternsList(result.patterns),
   }))
 
-export const getPatternSymbols = ({ exchange = 'binance', interval = '1d', limit = 200 } = {}) =>
+export const getPatternSymbols = ({ exchange, interval = '1d', limit = 200 } = {}) =>
   request(`/onchain/pattern-symbols${buildQuery({ exchange, interval, limit })}`)
 
 export const getInsightSummary = async (symbol, { horizonDays = 3, window = '24h', kDocs = 5 } = {}) => {

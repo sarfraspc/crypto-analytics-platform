@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from core.config import settings
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.storage.models import TASignal as TASignalModel, OHLCV as OHLCVModel
@@ -105,7 +106,7 @@ def _compute_price_change_pct_for_symbol(symbol: str, window: str) -> Optional[f
             select(OHLCVModel.close)
             .where(
                 OHLCVModel.symbol == symbol,
-                OHLCVModel.exchange == "binance",
+                OHLCVModel.exchange == settings.MARKET_EXCHANGE_ID,
                 OHLCVModel.interval == "1h",
                 OHLCVModel.time >= start_time,
                 OHLCVModel.time <= now,
@@ -196,7 +197,7 @@ async def get_onchain_metrics(
 
 @router.get("/patterns")
 async def get_ta_patterns(
-    exchange: str = Query("binance", description="Exchange for TA data."),
+    exchange: str = Query(settings.MARKET_EXCHANGE_ID, description="Exchange for TA data."),
     interval: str = Query("1d", description="Candlestick interval."),
     limit: int = Query(20, ge=5, le=100, description="Maximum symbols to scan."),
 ):

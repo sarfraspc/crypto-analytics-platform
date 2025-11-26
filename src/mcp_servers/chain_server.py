@@ -22,6 +22,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from core.config import settings
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.onchain_client import setup_mlflow
@@ -148,7 +149,7 @@ class OnchainMCP:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
         input_data = (params.arguments if params and params.arguments is not None else {})
-        exchange = input_data.get("exchange", "binance")
+        exchange = input_data.get("exchange") or settings.MARKET_EXCHANGE_ID
         interval = input_data.get("interval", "1d")
         limit = input_data.get("limit", 50)
 
@@ -228,7 +229,7 @@ async def list_tools():
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "exchange": {"type": "string", "default": "binance"},
+                    "exchange": {"type": "string", "default": settings.MARKET_EXCHANGE_ID},
                     "interval": {"type": "string", "default": "1d"},
                     "limit": {"type": "integer", "default": 50}
                 },

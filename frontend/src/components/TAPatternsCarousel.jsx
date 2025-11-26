@@ -47,7 +47,6 @@ const buildPatternExplanation = (pattern) => {
 }
 
 const PATTERN_QUERY = {
-  exchange: 'binance',
   interval: '1d',
   limit: 100,
 }
