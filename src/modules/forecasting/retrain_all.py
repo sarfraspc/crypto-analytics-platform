@@ -37,7 +37,7 @@ def setup_mlflow():
     else:
         logger.warning("MLFLOW_TRACKING_URI not set in settings")
 
-def get_all_symbols(exchange: str = "binance", min_data_points: int = 100):
+def get_all_symbols(exchange: str = settings.MARKET_EXCHANGE_ID, min_data_points: int = 100):
     """Fetch symbols that already exist in the OHLCV table."""
     engine = get_timescale_engine()
     query = """
@@ -56,7 +56,7 @@ def get_all_symbols(exchange: str = "binance", min_data_points: int = 100):
 
 def ensure_features(
     symbols: List[str],
-    exchange: str = "binance",
+    exchange: str = settings.MARKET_EXCHANGE_ID,
     interval: str = "1h",
 ):
     """Verify that features exist in the DB for the given symbols."""
@@ -82,7 +82,7 @@ def ensure_features(
 
 def refresh_coin_features(
     symbols: List[str],
-    exchange: str = "binance",
+    exchange: str = settings.MARKET_EXCHANGE_ID,
     interval: str = "1h",
     target_freq: str = "h",
     refit_scaler: bool = False,
@@ -144,7 +144,7 @@ def refresh_coin_features(
 
 def refresh_panel_features(
     symbols: List[str],
-    exchange: str = "binance",
+    exchange: str = settings.MARKET_EXCHANGE_ID,
     interval: str = "1h",
 ):
     """Generates panel data structure for Deep Learning models."""
@@ -170,7 +170,7 @@ def refresh_panel_features(
 
 def retrain_individual_models(
     symbols: List[str],
-    exchange: str = "binance",
+    exchange: str = settings.MARKET_EXCHANGE_ID,
     interval: str = "1h",
     forecast_steps: int = 24,
     models: List[str] = ["sarimax", "prophet"],
@@ -231,7 +231,7 @@ def retrain_individual_models(
 
 def retrain_panel_models(
     symbols: List[str],
-    exchange: str = "binance",
+    exchange: str = settings.MARKET_EXCHANGE_ID,
     interval: str = "1h",
     forecast_steps: int = 24,
     models: List[str] = ["cnn_lstm", "tft"],
@@ -278,7 +278,7 @@ def retrain_panel_models(
     return results
 
 def retrain_all_models(
-    exchange: str = "binance", 
+    exchange: str = settings.MARKET_EXCHANGE_ID, 
     interval: str = "1h",
     forecast_steps: int = 24,
     models: List[str] = ["sarimax", "prophet", "cnn_lstm", "tft"],
@@ -413,7 +413,7 @@ def retrain_all_models(
 
 def main():
     parser = argparse.ArgumentParser(description='Retrain all forecasting models (Preprocessing & Training ONLY)')
-    parser.add_argument('--exchange', default='binance', help='Exchange name')
+    parser.add_argument('--exchange', default=settings.MARKET_EXCHANGE_ID, help='Exchange name')
     parser.add_argument('--interval', default='1h', help='Data interval')
     parser.add_argument('--forecast-steps', type=int, default=24, help='Forecast horizon')
     parser.add_argument('--models', nargs='+', default=['sarimax', 'prophet', 'cnn_lstm', 'tft'], 
@@ -493,7 +493,7 @@ if __name__ == "__main__":
         
         print("Running preprocessing and training for ALL symbols...")
         results = retrain_all_models(
-            exchange="binance",
+            exchange=settings.MARKET_EXCHANGE_ID,
             interval="1h", 
             forecast_steps=24,
             models=["sarimax", "prophet", "cnn_lstm", "tft"],
