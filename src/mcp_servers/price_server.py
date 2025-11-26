@@ -29,11 +29,9 @@ from mcp.types import (
 # Core Modules
 from core.config import settings
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
 from modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics
 from core.logging_config import setup_logging
 
-# Import the model class
 from modules.forecasting.models.prophet import ProphetModel
 
 setup_logging()
@@ -51,70 +49,62 @@ class ProphetMCP:
 
     def _get_real_price_df(self, symbol: str, lookback_days: int = 90) -> pd.DataFrame:
         """
-        Helper to get REAL prices. 
-        CRITICAL FIX: Checks if data exists, and generates it if missing.
+        Load raw OHLCV prices for Prophet (unscaled close in USD).
         """
-        start_date = pd.Timestamp.utcnow() - pd.Timedelta(days=lookback_days)
         exchange = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
-        
-        # 1. Try loading existing features
-        try:
-            df = self.coin_pre.load_features_series(symbol, exchange=exchange, interval="1h", start=start_date)
-        except ValueError:
-            df = pd.DataFrame()
-
-        # 2. If empty, FORCE an update (Fetch OHLCV -> Calculate Features -> Save to DB)
-        if df.empty:
-            logger.info(f"Features missing for {symbol} on {exchange}. Generating now...")
-            # This pulls raw OHLCV from DB and calculates indicators
-            self.coin_pre.update_features(symbol, exchange=exchange, interval="1h", target_freq="h")
-            # Try loading again
-            df = self.coin_pre.load_features_series(symbol, exchange=exchange, interval="1h", start=start_date)
-            
-        if df.empty:
-            raise ValueError(f"Could not find or generate data for {symbol}. Is the Raw OHLCV data in the database?")
-
-        # 3. Inverse Transform to get Real Prices ($90k instead of 0.85)
-        scaler_path = _scaler_path_for(self.coin_pre.scaler_dir, symbol, None)
-        scaler, cols = load_scaler_with_meta(scaler_path)
-        
-        if not scaler or 'close' not in cols:
-            # If no scaler exists, assume data is already raw/real
-            return df
-        
-        close_idx = cols.index('close')
-        matrix = np.zeros((len(df), len(cols)))
-        for i, c in enumerate(cols):
-            if c in df.columns:
-                matrix[:, i] = df[c].values
-                
-        real_close = scaler.inverse_transform(matrix)[:, close_idx]
-        df['close'] = real_close
-        
-        return df
+        df = self.coin_pre.load_data(
+            symbol=symbol,
+            exchange=exchange,
+            interval="1h",
+            lookback_days=lookback_days,
+        )
+        if df.empty or "close" not in df.columns:
+            raise ValueError(f"Could not load OHLCV data for {symbol} on {exchange}.")
+        return df[["close"]].copy()
 
     async def get_or_train_model(self, symbol: str) -> ProphetModel:
         symbol = symbol.upper()
-        
+
         if symbol in self.model_cache:
             return self.model_cache[symbol]
-            
+
         model = ProphetModel(symbol)
-        
-        # Try loading existing model from disk
+        df_real: Optional[pd.DataFrame] = None
+
+        # Try loading an existing model; if it appears to be trained on 0–1
+        # scaled prices, retrain it on real USD closes.
         if model.load():
-            self.model_cache[symbol] = model
-            return model
-            
-        logger.info(f"Model for {symbol} not found on disk. Training new one...")
-        
-        # Train on the fly
-        # Run _get_real_price_df in a thread because it does DB I/O
-        df_real = await asyncio.to_thread(self._get_real_price_df, symbol, lookback_days=180)
-        
-        await asyncio.to_thread(model.train, df_real, target_col='close')
+            try:
+                df_real = await asyncio.to_thread(self._get_real_price_df, symbol, lookback_days=180)
+                last_close = float(df_real["close"].iloc[-1])
+                probe_forecast = await asyncio.to_thread(model.forecast, steps=1, freq="h")
+                probe_val = float(probe_forecast["yhat"].iloc[-1])
+
+                if probe_val < 1.0 and last_close > 10.0:
+                    logger.info(
+                        "Prophet model for %s appears to be scaled (probe=%s, last_close=%s); retraining.",
+                        symbol,
+                        probe_val,
+                        last_close,
+                    )
+                    await asyncio.to_thread(model.train, df_real, target_col="close")
+                    await asyncio.to_thread(model.save)
+
+                self.model_cache[symbol] = model
+                return model
+            except Exception as exc:
+                logger.warning(
+                    "Validation of loaded Prophet model for %s failed; retraining from scratch: %s",
+                    symbol,
+                    exc,
+                )
+
+        if df_real is None:
+            df_real = await asyncio.to_thread(self._get_real_price_df, symbol, lookback_days=180)
+
+        await asyncio.to_thread(model.train, df_real, target_col="close")
         await asyncio.to_thread(model.save)
-        
+
         self.model_cache[symbol] = model
         return model
 

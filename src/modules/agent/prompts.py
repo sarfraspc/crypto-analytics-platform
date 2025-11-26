@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Core system prompt (shared)
 SYSTEM_PROMPT = """
 You are CryptoAgent v2.0, an expert AI for crypto analytics and trading strategies.
-Access tools via MCP: Forecasting (SARIMAX), On-Chain (whales/flows/TA), Sentiment/RAG (news/Reddit + scoring).
+Access tools via MCP: Forecasting (Prophet), On-Chain (whales/flows/TA), Sentiment/RAG (news/Reddit + scoring).
 
 Guidelines:
 - Classify intent: forecast/onchain/sentiment/combined/backtest.
@@ -23,6 +23,11 @@ Guidelines:
 - Reason step-by-step: Analyze outputs, synthesize, suggest actions (e.g., "BUY 0.5 BTC: Bullish alignment").
 - Risk-aware: Adjust for volatility/pressure.
 - Output: Summary, metrics (tables), recommendation. Be concise/data-driven.
+
+Forecast data contract:
+- All forecast prices are already in real USD terms (e.g., 45000.0), NEVER percentages or 0–1 scaled values.
+- When summarizing, keep the same order of magnitude as the context Pred Close value.
+- Do NOT rescale or assume normalization (e.g., never turn 45000.0 into 0.45 or 45%).
 
 Current date: {current_date}.
 """
@@ -118,29 +123,47 @@ def _robust_parse(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_forecast_ctx(forecast: Dict[str, Any]) -> str:
     forecast = _robust_parse(forecast)
-    if not forecast: return "FORECAST: N/A"
+    if not forecast:
+        return "FORECAST: N/A"
 
     # Prophet now returns a list of predicted_close values; reduce to a scalar.
-    raw_pred = forecast.get('predicted_close', 0)
+    raw_pred = forecast.get("predicted_close", 0)
     if isinstance(raw_pred, (list, tuple)) and raw_pred:
-        pred = float(raw_pred[-1])
+        try:
+            pred = float(raw_pred[-1])
+        except (TypeError, ValueError):
+            pred = 0.0
     else:
         try:
             pred = float(raw_pred)
         except (TypeError, ValueError):
             pred = 0.0
 
-    raw_last = forecast.get('last_close', pred)
+    raw_last = forecast.get("last_close", pred)
     if isinstance(raw_last, (list, tuple)) and raw_last:
-        last = float(raw_last[-1])
+        try:
+            last = float(raw_last[-1])
+        except (TypeError, ValueError):
+            last = pred
     else:
         try:
             last = float(raw_last)
         except (TypeError, ValueError):
             last = pred
 
+    # Guard against accidentally treating 0–1 scaled values as prices:
+    # if the last known close is clearly in real price space but pred is tiny,
+    # snap pred back to last.
+    if pred < 1.0 and last > 10.0:
+        pred = last
+
     trend = "↑ Bullish" if pred > last * 1.01 else "↓ Bearish" if pred < last * 0.99 else "→ Neutral"
-    ctx = f"FORECAST: {trend} (Horizon: {forecast.get('horizon', 7)}h, Pred Close: ${pred:.2f}, MAE: {forecast.get('mae_forecast', 0):.2f})"
+    model_used = forecast.get("model_used", "prophet_v1_stochastic")
+    ctx = (
+        f"FORECAST: {trend} "
+        f"(Model: {model_used}, Horizon: {forecast.get('horizon', 7)}h, "
+        f"Pred Close: ${pred:,.2f}, MAE: {forecast.get('mae_forecast', 0):.2f})"
+    )
     if 'shap' in forecast:  # Inject SHAP
         shap_mean = forecast['shap'].get('mean_abs_shap', {})
         top_feat = max(shap_mean, key=shap_mean.get) if shap_mean else 'N/A'
