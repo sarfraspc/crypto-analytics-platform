@@ -39,9 +39,20 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
     fc_sig = 1 if next_pred > last_close * 1.01 else -1 if next_pred < last_close * 0.99 else 0
 
     # On-chain (enhanced with corr)
-    pressure = onchain.get('market_pressure_index', 0.5)
+    raw_pressure = onchain.get('market_pressure_index', 0.5)
+    try:
+        pressure = float(raw_pressure)
+    except (TypeError, ValueError):
+        pressure = 0.5
+
     onch_sig = 1 if pressure > 0.6 else -1 if pressure < 0.4 else 0
-    corr = onchain.get('price_whale_corr_7d', 0.0)  # Default 0
+
+    raw_corr = onchain.get('price_whale_corr_7d', 0.0)  # Default 0
+    try:
+        corr = float(raw_corr)
+    except (TypeError, ValueError):
+        corr = 0.0
+
     onch_sig += corr * 0.1  # Leverage full metrics
 
     # Composite (average scores)
@@ -69,5 +80,19 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
     return result
 
 def risk_adjust_size(size: float, vol: float, pressure: float) -> float:
+    # Coerce to floats to avoid type errors if upstream passes strings/decimals.
+    try:
+        size = float(size)
+    except (TypeError, ValueError):
+        size = 0.5
+    try:
+        vol = float(vol)
+    except (TypeError, ValueError):
+        vol = 0.02
+    try:
+        pressure = float(pressure)
+    except (TypeError, ValueError):
+        pressure = 0.5
+
     adjusted = size * (1 - vol * 10) * (0.5 if pressure > 0.7 else 1.0)
     return max(0.1, min(1.0, adjusted))
