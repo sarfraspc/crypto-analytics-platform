@@ -13,29 +13,35 @@ The Crypto AI Analytics Platform combines advanced machine learning, natural lan
 ## Core Capabilities
 
 ### Intelligent Query Processing
-- Natural language interface powered by GPT-4 agent
-- Dynamic orchestration of specialized analytical modules
-- Context-aware response generation with source attribution
+- Natural language interface powered by multi-LLM orchestration (Gemini, Groq, OpenRouter)
+- Dynamic orchestration of specialized analytical modules via MCP
+- Hybrid query classification with context-aware response generation
+- Source attribution and citation trails
 
 ### Time-Series Forecasting
 - Prophet-based price prediction with trend decomposition
+- CNN-LSTM deep learning model for sequential pattern recognition
+- Temporal Fusion Transformer (TFT) for multi-horizon forecasting
+- SARIMAX for statistical time-series modeling
 - SHAP explainability for model transparency
-- Support for multiple forecasting algorithms (CNN-LSTM, TFT, SARIMAX)
 
 ### Sentiment Analysis
 - Fine-tuned DistilRoBERTa on cryptocurrency-specific corpus
+- VADER sentiment scoring for news and social content
 - Retrieval-Augmented Generation (RAG) for grounded insights
 - Vector-based semantic search with Qdrant
 
 ### On-Chain Analytics
-- Real-time whale transaction monitoring
+- Real-time whale transaction monitoring via Infura
 - Exchange flow analysis (deposits vs. withdrawals)
-- Network activity metrics from Ethereum and other chains
+- Technical analysis pattern detection (RSI, MACD, etc.)
+- Network activity metrics from Ethereum
 
 ### Multi-Source Data Integration
 - Market data aggregation via CCXT (100+ exchanges)
-- Social sentiment from Reddit and CryptoPanic
-- Fear & Greed Index and alternative data sources
+- Social sentiment from Reddit (PRAW) and CryptoPanic
+- Fear & Greed Index from Alternative.me
+- Real-time trade polling and OHLCV backfill
 
 ---
 
@@ -46,38 +52,59 @@ The Crypto AI Analytics Platform combines advanced machine learning, natural lan
 The platform employs a three-tier architecture optimized for low-latency inter-module communication:
 
 ```
-User Interface Layer
-        │
-        ├─── REST API (FastAPI)
-        │
-Core Processing Layer
-        │
-        ├─── LLM Agent (GPT-4)
-        │    └─── Model Context Protocol (MCP)
-        │
-        ├─── Forecasting Module
-        │    └─── Prophet, CNN-LSTM, TFT
-        │
-        ├─── Sentiment Module
-        │    └─── DistilRoBERTa + RAG
-        │
-        └─── On-Chain Module
-             └─── Blockchain Analytics
-        │
-Data & Integration Layer
-        │
-        └─── CCXT, Infura/Alchemy, Reddit, Qdrant
+┌─────────────────────────────────────────────────────────────┐
+│                   User Interface Layer                       │
+│                                                             │
+│   ┌─────────────────┐    ┌─────────────────────────────┐   │
+│   │  React Frontend │    │      REST API (FastAPI)      │   │
+│   │  Vite + Tailwind│    │                             │   │
+│   └─────────────────┘    └─────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                  Core Processing Layer                       │
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │              LLM Agent Orchestrator                  │   │
+│   │         (Gemini / Groq / OpenRouter)                │   │
+│   │              Model Context Protocol                  │   │
+│   └─────────────────────────────────────────────────────┘   │
+│                              │                              │
+│   ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  │
+│   │  Forecasting  │  │   Sentiment   │  │   On-Chain    │  │
+│   │    Module     │  │    Module     │  │    Module     │  │
+│   │               │  │               │  │               │  │
+│   │ Prophet       │  │ DistilRoBERTa │  │ Whale Alerts  │  │
+│   │ CNN-LSTM      │  │ RAG Pipeline  │  │ Exchange Flows│  │
+│   │ TFT           │  │ VADER         │  │ TA Patterns   │  │
+│   │ SARIMAX       │  │               │  │               │  │
+│   └───────────────┘  └───────────────┘  └───────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                 Data & Integration Layer                     │
+│                                                             │
+│   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────┐ │
+│   │TimescaleDB│  │   Redis   │  │  Qdrant   │  │ MLflow  │ │
+│   │  (OHLCV)  │  │  (Cache)  │  │ (Vectors) │  │(Models) │ │
+│   └───────────┘  └───────────┘  └───────────┘  └─────────┘ │
+│                                                             │
+│   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────┐ │
+│   │   CCXT    │  │  Infura   │  │  Reddit   │  │CryptoPanic│
+│   │(Exchanges)│  │(Ethereum) │  │  (PRAW)   │  │ (News)  │ │
+│   └───────────┘  └───────────┘  └───────────┘  └─────────┘ │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 
 ### Agent Workflow
 
-1. **Query Reception**: User submits natural language query through interface
-2. **Intent Classification**: LLM agent analyzes query and determines required analytical modules
-3. **Tool Orchestration**: Agent invokes relevant MCP tools (forecasting, sentiment, on-chain)
+1. **Query Reception**: User submits natural language query through React frontend or API
+2. **Intent Classification**: Hybrid classifier analyzes query and determines required analytical modules
+3. **Tool Orchestration**: Agent invokes relevant MCP tools in parallel (forecasting, sentiment, on-chain)
 4. **Data Processing**: Each module executes specialized analysis on requested data
-5. **Result Synthesis**: Agent aggregates outputs and generates explainable response
-6. **Response Delivery**: Final answer with citations and visualizations returned to user
+5. **Result Synthesis**: Multi-LLM synthesis aggregates outputs and generates explainable response
+6. **Response Delivery**: Final answer with citations, visualizations, and trading signals returned to user
 
 ### Design Rationale
 
@@ -96,37 +123,95 @@ The monolithic architecture was chosen to optimize for:
 
 ### Explainable AI
 - SHAP values for forecast feature importance
+- LIME explanations for model interpretability
 - RAG citations linking to source documents
 - Transparent model decision-making process
 
 ### Real-Time Processing
-- Async data ingestion with APScheduler
-- Low-latency query processing (sub-second for simple queries)
+- Async data ingestion with Celery task queue
+- Redis caching for low-latency query processing (sub-second for cached queries)
 - Streaming responses for long-running analyses
 
 ### Data Validation
 - Strict schema enforcement with Pydantic models
 - Input sanitization and type checking
-- Error handling with detailed logging
+- Comprehensive error handling with detailed logging
 
 ### Extensibility
 - Modular design allows easy addition of new analytical tools
 - MCP protocol standardizes tool interfaces
 - Support for custom models and data sources
+- MLflow model registry for versioning and deployment
 
 ---
 
 ## Technology Stack
 
+### Backend
 | Category | Technologies |
 |----------|--------------|
-| **Backend** | FastAPI, Python 3.11+ |
-| **LLM Orchestration** | GPT-4, Model Context Protocol |
-| **Forecasting** | Prophet, TensorFlow/Keras (CNN-LSTM, TFT) |
-| **NLP** | DistilRoBERTa, Sentence-Transformers, Qdrant |
-| **Data Sources** | CCXT, Infura, Alchemy, PRAW, CryptoPanic |
-| **Explainability** | SHAP |
+| **Framework** | FastAPI, Python 3.10+ |
+| **LLM Orchestration** | Gemini, Groq, OpenRouter, Model Context Protocol |
+| **Forecasting** | Prophet, TensorFlow/Keras (CNN-LSTM), PyTorch Forecasting (TFT), Statsmodels (SARIMAX) |
+| **NLP** | DistilRoBERTa (Transformers), Sentence-Transformers, VADER Sentiment |
+| **Vector Store** | Qdrant |
+| **Explainability** | SHAP, LIME |
 | **Validation** | Pydantic |
+| **MLOps** | MLflow |
+
+### Frontend
+| Category | Technologies |
+|----------|--------------|
+| **Framework** | React 18 |
+| **Build Tool** | Vite |
+| **Styling** | Tailwind CSS |
+| **Charts** | Recharts |
+| **Icons** | Lucide React |
+
+### Infrastructure
+| Category | Technologies |
+|----------|--------------|
+| **Time-Series DB** | TimescaleDB (PostgreSQL) |
+| **Cache** | Redis |
+| **Vector DB** | Qdrant |
+| **Model Registry** | MLflow |
+| **Blockchain** | Web3.py, Infura |
+| **Containerization** | Docker, Docker Compose |
+
+### Data Sources
+| Category | Technologies |
+|----------|--------------|
+| **Market Data** | CCXT  |
+| **Social Media** | Reddit (PRAW) |
+| **News** | CryptoPanic API |
+| **Sentiment Index** | Alternative.me (Fear & Greed) |
+| **On-Chain** | Infura (Ethereum) |
+
+---
+
+## Project Structure
+
+```
+crypto-analytics-platform/
+├── src/
+│   ├── core/                 # Configuration, database, logging
+│   ├── data/                 # Data ingestion and storage
+│   │   ├── ingestion/        # CCXT, Reddit, CryptoPanic, Ethereum clients
+│   │   └── storage/          # CRUD operations and models
+│   ├── modules/
+│   │   ├── agent/            # LLM orchestrator and query classifier
+│   │   ├── forecasting/      # Prophet, CNN-LSTM, TFT, SARIMAX models
+│   │   ├── sentiment/        # DistilRoBERTa, RAG pipeline
+│   │   ├── onchain/          # Whale alerts, exchange flows, TA patterns
+│   │   └── dashboard/        # Frontend data serializers
+│   ├── mcp_servers/          # MCP tool servers
+│   ├── services/             # FastAPI routers
+│   └── utils/                # Cache, GCS loader
+├── frontend/                 # React + Vite application
+├── infrastructure/           # Dockerfiles, nginx, SQL scripts
+├── tests/                    # Test suite
+└── notebook/                 # Jupyter notebooks
+```
 
 ---
 
@@ -146,6 +231,7 @@ The monolithic architecture was chosen to optimize for:
 - Natural language queries for complex market questions
 - Automated whale activity alerts
 - Sentiment-aware price predictions
+- Technical analysis pattern detection
 
 ---
 
@@ -194,6 +280,3 @@ Developed by **Muhammed Sarfras P C** as a demonstration of advanced AI system a
 
 ---
 
-## License
-
-This project is available for educational and research use. See the repository for licensing details.

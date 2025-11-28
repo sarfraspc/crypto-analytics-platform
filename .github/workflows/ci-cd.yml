@@ -29,10 +29,15 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -e .
+      # Create the fake Google Credentials file
+      - name: Create Dummy Google Creds
+        run: echo '{"type": "service_account"}' > google_dummy.json
+      # Load the .env.test file
       - name: Run Pytest
-        env:
-          APP_ENV: testing
-        run: pytest -v
+        run: |
+          # Copy the test config to .env so Pydantic picks it up automatically
+          cp tests/.env.test .env
+          pytest -v
 
   # JOB 2: BUILD & PUSH (Build Docker Images in Cloud)
   build-and-push:
