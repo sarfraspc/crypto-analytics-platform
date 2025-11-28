@@ -4,7 +4,7 @@
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'metadata_user') THEN
-      CREATE ROLE metadata_user LOGIN PASSWORD '123'; -- password here
+      CREATE ROLE metadata_user LOGIN PASSWORD ''; -- password here
    END IF;
 END
 $$;
@@ -46,7 +46,7 @@ GRANT ALL PRIVILEGES ON TABLE tokens TO metadata_user;
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'crypto_user') THEN
-      CREATE ROLE crypto_user LOGIN PASSWORD '123'; -- password here
+      CREATE ROLE crypto_user LOGIN PASSWORD ''; -- password here
    END IF;
 END
 $$;

@@ -2,6 +2,7 @@ version: "3.9"
 services:
   # 1. Backend 
   backend:
+    image: ghcr.io/sarfraspc/cap-backend:latest
     build:
       context: .
       dockerfile: infrastructure/Dockerfile.backend
@@ -70,6 +71,7 @@ services:
 
   # 5. MLflow 
   mlflow:
+    image: ghcr.io/sarfraspc/cap-mlflow:latest
     build:
       context: .
       dockerfile: infrastructure/Dockerfile.mlflow
@@ -97,8 +99,9 @@ services:
       - "5000:5000"
     restart: unless-stopped
 
-  # 6. Frontend (React + Vite, served by Nginx)
+  # 6. Frontend
   frontend:
+    image: ghcr.io/sarfraspc/cap-frontend:latest
     build:
       context: .
       dockerfile: infrastructure/Dockerfile.frontend

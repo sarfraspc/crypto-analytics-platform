@@ -1,11 +1,28 @@
+/**
+ * API service module for crypto analytics platform.
+ *
+ * Provides functions for fetching price forecasts, sentiment analysis,
+ * on-chain metrics, technical patterns, and agent chat interactions.
+ * @module services/api
+ */
+
 const rawApiBase =
   import.meta.env.VITE_API_URL ||
   import.meta.env.REACT_APP_API_URL ||
   (import.meta.env.MODE === 'production' ? '/api' : 'http://localhost:8000')
 
+/** @constant {string} API_BASE_URL - Base URL for API requests */
 const API_BASE_URL = rawApiBase.replace(/\/$/, '')
+
+/** @constant {string} GENERIC_MARKET_SYMBOL - Default symbol for market queries */
 const GENERIC_MARKET_SYMBOL = 'BTC'
 
+/**
+ * Handle API response and parse JSON or text.
+ * @param {Response} response - Fetch response object
+ * @returns {Promise<Object|string>} Parsed response body
+ * @throws {Error} If response is not ok
+ */
 const handleResponse = async (response) => {
   const contentType = response.headers.get('content-type')
   const isJSON = contentType && contentType.includes('application/json')
@@ -17,8 +34,19 @@ const handleResponse = async (response) => {
   return body
 }
 
+/**
+ * Make an API request with automatic response handling.
+ * @param {string} path - API endpoint path
+ * @param {Object} [options] - Fetch options
+ * @returns {Promise<Object>} Parsed response
+ */
 const request = (path, options) => fetch(`${API_BASE_URL}${path}`, options).then(handleResponse)
 
+/**
+ * Build URL query string from parameters object.
+ * @param {Object} [params={}] - Query parameters
+ * @returns {string} Query string with leading '?' or empty string
+ */
 const buildQuery = (params = {}) => {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -29,6 +57,11 @@ const buildQuery = (params = {}) => {
   return queryString ? `?${queryString}` : ''
 }
 
+/**
+ * Parse raw forecast text into structured data points.
+ * @param {string} [rawText=''] - Raw forecast text with timestamp and price
+ * @returns {Array<Object>} Array of {timestamp, predicted_close} objects
+ */
 const parseRawForecastTable = (rawText = '') => {
   const rows = []
   const lines = rawText.split('\n')
@@ -49,6 +82,11 @@ const parseRawForecastTable = (rawText = '') => {
   return rows
 }
 
+/**
+ * Normalize forecast API response into consistent format.
+ * @param {Object} [payload={}] - Raw forecast payload
+ * @returns {Object} Normalized forecast with model, points, lastPoint, rawText
+ */
 const normalizeForecastPayload = (payload = {}) => {
   let points = []
 
@@ -113,6 +151,11 @@ const normalizeForecastPayload = (payload = {}) => {
   }
 }
 
+/**
+ * Normalize patterns data into array format.
+ * @param {Array|Object} input - Patterns as array or object keyed by symbol
+ * @returns {Array<Object>} Array of pattern objects with symbol property
+ */
 const normalizePatternsList = (input) => {
   if (Array.isArray(input)) {
     return input
@@ -126,6 +169,11 @@ const normalizePatternsList = (input) => {
   return []
 }
 
+/**
+ * Normalize aggregated sentiment data into consistent format.
+ * @param {Object} [raw={}] - Raw sentiment data
+ * @returns {Object} Normalized sentiment with top_sentiment, scores
+ */
 const normalizeAggregatedSentiment = (raw = {}) => {
   if (!raw || typeof raw !== 'object') return {}
 
@@ -169,6 +217,14 @@ const normalizeAggregatedSentiment = (raw = {}) => {
   return normalized
 }
 
+/**
+ * Fetch price forecast for a symbol.
+ * @param {string} symbol - Crypto symbol (e.g., 'BTC')
+ * @param {Object} [options] - Forecast options
+ * @param {number} [options.horizonDays=3] - Forecast horizon in days
+ * @param {string} [options.startDate] - Start date for forecast
+ * @returns {Promise<Object>} Forecast data with points and metadata
+ */
 export const getPriceForecast = async (symbol, { horizonDays = 3, startDate } = {}) => {
   const response = await request(
     `/price/forecast/${symbol}${buildQuery({ horizon_days: horizonDays, start_date: startDate })}`,
@@ -184,6 +240,15 @@ export const getPriceForecast = async (symbol, { horizonDays = 3, startDate } = 
   }
 }
 
+/**
+ * Fetch sentiment analysis for a symbol.
+ * @param {string} [symbol='BTC'] - Crypto symbol
+ * @param {Object} [options] - Analysis options
+ * @param {number} [options.k=5] - Number of sources to retrieve
+ * @param {boolean} [options.refresh=false] - Force refresh cache
+ * @param {number} [options.daysBack=7] - Days of history to analyze
+ * @returns {Promise<Object>} Sentiment data with aggregated scores and sources
+ */
 export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, refresh = false, daysBack = 7 } = {}) =>
   request(`/sentiment/asset/${symbol}${buildQuery({ k, refresh, days_back: daysBack })}`).then((result) => {
     const rawAggregated =
@@ -208,6 +273,13 @@ export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, re
     }
   })
 
+/**
+ * Fetch recent sentiment sources across all assets.
+ * @param {Object} [options] - Query options
+ * @param {number} [options.k=5] - Number of sources
+ * @param {boolean} [options.refresh=true] - Force refresh
+ * @returns {Promise<Object>} Recent sources with aggregated sentiment
+ */
 export const getRecentSentimentSources = ({ k = 5, refresh = true } = {}) =>
   request(`/sentiment/sources/recent${buildQuery({ k, refresh })}`).then((result) => ({
     ...result,
@@ -215,30 +287,73 @@ export const getRecentSentimentSources = ({ k = 5, refresh = true } = {}) =>
     sources: Array.isArray(result.sources) ? result.sources : [],
   }))
 
+/**
+ * Fetch current Fear & Greed Index.
+ * @returns {Promise<Object>} FNG data with current value and classification
+ */
 export const getFngCurrent = () =>
   request('/sentiment/fng/current').then((result) => ({
     ...result,
     fng: result.fng || {},
   }))
 
+/**
+ * Fetch on-chain metrics for a symbol.
+ * @param {string} [symbol='BTC'] - Crypto symbol
+ * @param {string} [window='24h'] - Time window for metrics
+ * @returns {Promise<Object>} On-chain metrics data
+ */
 export const getOnChainMetrics = (symbol = GENERIC_MARKET_SYMBOL, window = '24h') =>
   request(`/onchain/metrics${buildQuery({ window, symbol })}`).then((result) => ({
     ...result,
     metrics: result.metrics || {},
   }))
 
+/**
+ * Fetch available trading symbols.
+ * @param {Object} [options] - Query options
+ * @param {string} [options.exchange] - Exchange filter
+ * @param {string} [options.interval] - Time interval
+ * @param {number} [options.limit] - Max symbols to return
+ * @returns {Promise<Array>} List of available symbols
+ */
 export const getAvailableSymbols = ({ exchange, interval, limit } = {}) =>
   request(`/price/symbols${buildQuery({ exchange, interval, limit })}`)
 
+/**
+ * Fetch technical analysis patterns.
+ * @param {Object} [options] - Query options
+ * @param {string} [options.exchange] - Exchange filter
+ * @param {string} [options.interval='1d'] - Candle interval
+ * @param {number} [options.limit=20] - Max patterns to return
+ * @returns {Promise<Object>} Technical patterns data
+ */
 export const getTechnicalPatterns = ({ exchange, interval = '1d', limit = 20 } = {}) =>
   request(`/onchain/patterns${buildQuery({ exchange, interval, limit })}`).then((result) => ({
     ...result,
     patterns: normalizePatternsList(result.patterns),
   }))
 
+/**
+ * Fetch symbols with detected patterns.
+ * @param {Object} [options] - Query options
+ * @param {string} [options.exchange] - Exchange filter
+ * @param {string} [options.interval='1d'] - Candle interval
+ * @param {number} [options.limit=200] - Max symbols to return
+ * @returns {Promise<Array>} Symbols with pattern data
+ */
 export const getPatternSymbols = ({ exchange, interval = '1d', limit = 200 } = {}) =>
   request(`/onchain/pattern-symbols${buildQuery({ exchange, interval, limit })}`)
 
+/**
+ * Fetch combined insight summary for dashboard.
+ * @param {string} symbol - Crypto symbol
+ * @param {Object} [options] - Query options
+ * @param {number} [options.horizonDays=3] - Forecast horizon
+ * @param {string} [options.window='24h'] - Metrics time window
+ * @param {number} [options.kDocs=5] - Number of sentiment docs
+ * @returns {Promise<Object>} Combined forecast, sentiment, and metrics
+ */
 export const getInsightSummary = async (symbol, { horizonDays = 3, window = '24h', kDocs = 5 } = {}) => {
   const overview = await request(
     `/dashboard/overview/${symbol}${buildQuery({ horizon_days: horizonDays, window, k_docs: kDocs })}`,
@@ -259,6 +374,14 @@ export const getInsightSummary = async (symbol, { horizonDays = 3, window = '24h
   }
 }
 
+/**
+ * Send chat message to AI agent.
+ * @param {string} symbol - Crypto symbol context
+ * @param {string} question - User question
+ * @param {Array} [history=[]] - Conversation history
+ * @param {Object} [options={}] - Agent options (horizon, etc.)
+ * @returns {Promise<Object>} Agent response with insights
+ */
 export const sendChatMessage = (symbol, question, history = [], options = {}) => {
   const payload = {
     question,
