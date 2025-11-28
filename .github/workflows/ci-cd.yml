@@ -33,12 +33,12 @@ jobs:
           pip install -r requirements.txt
           pip install -e .
 
-      # Create the fake Google Credentials file
       - name: Create Dummy Google Creds
-        run: echo '{"type": "service_account"}' > google_dummy.json
+        run: |
+          echo '{"type": "service_account"}' > google_dummy.json
 
       - name: Load Test Config
-        run: grep -v '^#' tests/.env.test >> $GITHUB_ENV
+        run: grep -v '^#' tests/.env.test | grep -v '^$' >> $GITHUB_ENV
 
       - name: Run Pytest
         run: pytest -v
