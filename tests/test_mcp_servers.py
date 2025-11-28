@@ -5,12 +5,13 @@ Covers price forecasting, on-chain metrics, and sentiment
 analysis MCP tool handlers and request processing.
 """
 
+import asyncio
 import json
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 from mcp.types import CallToolRequest, CallToolRequestParams
-from unittest.mock import MagicMock, patch
 
 from src.mcp_servers.chain_server import OnchainMCP
 from src.mcp_servers.price_server import ProphetMCP
