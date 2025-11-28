@@ -16,28 +16,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-python@v4
         with:
           python-version: "3.10"
+          
       - uses: actions/cache@v3
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
+            
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install -e .
-      # Create the fake Google Credentials file
+
       - name: Create Dummy Google Creds
-        run: echo '{"type": "service_account"}' > google_dummy.json
-      # Load the .env.test file
-      - name: Run Pytest
         run: |
-          # Copy the test config to .env so Pydantic picks it up automatically
-          cp tests/.env.test .env
-          pytest -v
+          echo '{"type": "service_account"}' > google_dummy.json
+
+      - name: Run Pytest
+        run: cp tests/.env.test .env && pytest -v
 
   # JOB 2: BUILD & PUSH (Build Docker Images in Cloud)
   build-and-push:
@@ -107,18 +108,18 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.0
+        env:
+          CR_PAT: ${{ secrets.CR_PAT }}
         with:
           host: ${{ secrets.GCE_HOST }}
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
-          # We pass the token so the server can log in to GHCR
           envs: CR_PAT
-
           script: |
             set -e
             
             # 1. Login to Registry
-            echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo "$CR_PAT" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
             # 2. Update Config
             cd /home/${{ secrets.GCE_USER }}/crypto-analytics-platform
