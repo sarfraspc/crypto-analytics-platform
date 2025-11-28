@@ -1,21 +1,26 @@
+"""Prophet-based time series forecasting model for crypto prices."""
+
 import logging
+from pathlib import Path
+from typing import Dict, Optional
+
+import joblib
 import numpy as np
 import pandas as pd
-import joblib
-from pathlib import Path
 from prophet import Prophet
-from typing import Optional, Dict
+
+from modules.forecasting.data.preprocess_coin import CoinPreprocessor
+from modules.forecasting.data.preprocess_utils import _scaler_path_for, load_scaler_with_meta
+from utils.gcs_loader import load_from_gcs, upload_to_gcs
 
 logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
 logging.getLogger("prophet").setLevel(logging.WARNING)
 
-from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
-from utils.gcs_loader import upload_to_gcs, load_from_gcs
-
 logger = logging.getLogger(__name__)
 
+
 class ProphetModel:
+    """Prophet model wrapper for crypto price forecasting."""
     def __init__(
         self,
         symbol: str,
@@ -40,6 +45,7 @@ class ProphetModel:
         }
 
     def train(self, df: pd.DataFrame, target_col: str = "close"):
+        """Train Prophet model on price data."""
         if df.empty:
             raise ValueError(f"Empty DataFrame for {self.symbol}")
 
@@ -61,6 +67,7 @@ class ProphetModel:
         logger.info(f"Finished training Prophet for {self.symbol}")
 
     def forecast(self, steps: int = 24, freq: str = 'h') -> pd.DataFrame:
+        """Generate price forecast for specified number of steps."""
         if self.model is None:
             raise RuntimeError("Model not trained")
 
@@ -77,11 +84,13 @@ class ProphetModel:
         return forecast.tail(steps)[['ds', 'yhat', 'yhat_lower', 'yhat_upper']]
 
     def save(self):
+        """Save trained model to disk."""
         if self.model:
             joblib.dump(self.model, self.model_path)
             logger.info(f"Saved Prophet model -> {self.model_path}")
 
     def load(self):
+        """Load model from disk or GCS."""
         # Prefer local file if present
         if self.model_path.exists():
             self.model = joblib.load(self.model_path)
@@ -129,13 +138,14 @@ def _get_real_price_data(symbol: str, days: int = 60):
     return df[['real_close']].rename(columns={'real_close': 'close'})
 
 def train_and_forecast(
-    model: ProphetModel, # Accept model instance
-    df: pd.DataFrame = None, 
-    exchange: str = 'binance', 
-    interval: str = '1h', 
-    forecast_steps: int = 24, 
+    model: ProphetModel,
+    df: pd.DataFrame = None,
+    exchange: str = 'binance',
+    interval: str = '1h',
+    forecast_steps: int = 24,
     retrain_if_exists: bool = False
 ):
+    """Train Prophet model and generate forecast with inverse scaling."""
     """
     Helper function compatible with retrain_all.py structure.
     Handles data fetching (Inverse Scaling), Training, and Forecasting.

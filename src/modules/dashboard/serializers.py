@@ -1,10 +1,18 @@
-from datetime import datetime
-from typing import Dict, Any, List
+"""
+Dashboard data serialization module.
+
+Provides formatting functions to convert MCP results and backtest
+data into structured JSON for frontend dashboard consumption.
+"""
+
 import json
-import re
 import logging
+import re
+from datetime import datetime
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
+
 
 def format_overview(
     agent_data: Dict[str, Any],

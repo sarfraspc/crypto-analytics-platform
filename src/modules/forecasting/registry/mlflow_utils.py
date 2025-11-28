@@ -1,11 +1,15 @@
-import mlflow
+"""MLflow utilities for experiment tracking and model logging."""
+
 import os
-from typing import Dict, Any
 from datetime import datetime
+from typing import Any, Dict
+
+import mlflow
 import numpy as np
 
 
 def init_mlflow_experiment(experiment_name: str = "crypto_forecasting"):
+    """Initialize or get existing MLflow experiment."""
     try:
         experiment_id = mlflow.create_experiment(experiment_name)
     except mlflow.exceptions.MlflowException:
@@ -21,6 +25,7 @@ def log_model_params_and_metrics(
     metrics: Dict[str, float],
     artifacts_path: str = None
 ):
+    """Log model parameters, metrics, and artifacts to MLflow."""
     if symbol == 'multiple' and 'symbols' in params:
         symbol_str = f"panel_{len(params['symbols'])}_symbols"
     else:

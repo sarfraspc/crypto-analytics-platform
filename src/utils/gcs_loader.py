@@ -1,14 +1,26 @@
+"""
+Google Cloud Storage utilities for model loading.
+
+Provides upload and download functions for ML models with
+RAM disk caching for improved performance.
+"""
+
 import os
 from pathlib import Path
+
 from google.cloud import storage
 
+
 def _bucket():
+    """Get GCS bucket name from environment."""
     bucket = os.getenv("GCS_MODEL_BUCKET")
     if not bucket:
         raise RuntimeError("GCS_MODEL_BUCKET env var is missing.")
     return bucket
 
+
 def _client():
+    """Create GCS client using application credentials."""
     # Uses GOOGLE_APPLICATION_CREDENTIALS automatically from your .env
     return storage.Client()
 

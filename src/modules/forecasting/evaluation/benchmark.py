@@ -1,21 +1,26 @@
-import pandas as pd
-import numpy as np
+"""Benchmarking utilities for comparing forecasting model performance."""
+
 import logging
 from typing import Any, List
 
+import numpy as np
+import pandas as pd
+
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
-from modules.forecasting.explainers.xai import explain_model_predictions
-from modules.forecasting.models.sarimax import SarimaxModel
-from modules.forecasting.models.prophet import ProphetModel
-from modules.forecasting.models.cnn_lstm import CNNLSTMPanelForecaster
-from modules.forecasting.models.tft import TFTPanelForecaster
 from modules.forecasting.evaluation.metrics import compute_forecast_metrics
+from modules.forecasting.explainers.xai import explain_model_predictions
+from modules.forecasting.models.cnn_lstm import CNNLSTMPanelForecaster
+from modules.forecasting.models.prophet import ProphetModel
+from modules.forecasting.models.sarimax import SarimaxModel
+from modules.forecasting.models.tft import TFTPanelForecaster
 from modules.forecasting.registry.mlflow_utils import init_mlflow_experiment, log_model_params_and_metrics
 
 logger = logging.getLogger(__name__)
 
+
 def split_data_for_evaluation(df: pd.DataFrame, test_size: float = 0.1, val_size: float = 0.1):
+    """Split time series data into train, validation, and test sets."""
     n = len(df)
     test_start = int(n * (1 - test_size))
     val_start = int(n * (1 - test_size - val_size))
@@ -288,15 +293,16 @@ def evaluate_tft_panel(
 
 
 def run_benchmark(
-    symbol: str = 'BTC', 
-    exchange: str = 'binance', 
-    interval: str = '1h', 
-    forecast_steps: int = 24, 
-    rolling_eval: bool = False, 
+    symbol: str = 'BTC',
+    exchange: str = 'binance',
+    interval: str = '1h',
+    forecast_steps: int = 24,
+    rolling_eval: bool = False,
     retrain_if_exists: bool = False,
     models: List[str] = None,
     panel_symbols: List[str] = None
 ):
+    """Run comprehensive benchmark across all forecasting models."""
     if models is None:
         models = ['sarimax', 'prophet', 'cnn_lstm', 'tft']
     

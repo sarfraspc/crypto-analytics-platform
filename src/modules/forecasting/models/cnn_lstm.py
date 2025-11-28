@@ -1,16 +1,21 @@
+"""CNN-LSTM hybrid model for multi-asset panel forecasting."""
+
+import logging
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.models import load_model
-from pathlib import Path
-import tensorflow as tf
-import logging
 
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
 
 logger = logging.getLogger(__name__)
 
+
 class CNNLSTMPanelForecaster:
+    """CNN-LSTM model for cross-asset panel price forecasting."""
     def __init__(
         self,
         sequence_length: int = 168,  
@@ -37,6 +42,7 @@ class CNNLSTMPanelForecaster:
         self.preprocessor = PanelPreprocessor()
 
     def build_model(self, n_features: int):
+        """Build CNN-LSTM architecture with specified feature count."""
         self.model = models.Sequential([
             layers.Conv1D(filters=64, kernel_size=3, activation='relu', 
                          input_shape=(self.sequence_length, n_features)),
@@ -55,12 +61,13 @@ class CNNLSTMPanelForecaster:
         return self.model
 
     def load_or_create_panel_data(
-        self, 
+        self,
         symbols: list,
         exchange: str = "binance",
         interval: str = "1h",
         force_update: bool = False
     ):
+        """Load panel data from cache or database."""
         if self.panel_parquet_path.exists() and not force_update:
             try:
                 logger.info(f"Loading panel data from {self.panel_parquet_path}")
@@ -205,13 +212,14 @@ class CNNLSTMPanelForecaster:
     def train(
         self,
         symbols: list,
-        epochs: int = 50,  
+        epochs: int = 50,
         batch_size: int = 32,
         exchange: str = "binance",
         interval: str = "1h",
         retrain_if_exists: bool = False,
         force_panel_update: bool = False
     ):
+        """Train CNN-LSTM model on panel data for multiple symbols."""
         if self.model_path.exists() and not retrain_if_exists:
             self.load()
             logger.info("Using existing CNN-LSTM model")
@@ -251,9 +259,10 @@ class CNNLSTMPanelForecaster:
         logger.info(f"Trained CNN-LSTM Panel model on {len(symbols)} symbols")
 
     def forecast(self, symbol: str, steps: int = None):
+        """Generate price forecast for a symbol."""
         if self.model is None:
             self.load()
-        
+
         if steps is None:
             steps = self.forecast_horizon
 
@@ -308,6 +317,7 @@ def train_and_forecast_cnn_lstm(
     retrain_if_exists: bool = False,
     ensure_features: bool = True
 ):
+    """Train CNN-LSTM model and generate forecast for first symbol."""
     model = CNNLSTMPanelForecaster(forecast_horizon=forecast_steps)
     
     if model.model_path.exists() and not retrain_if_exists:

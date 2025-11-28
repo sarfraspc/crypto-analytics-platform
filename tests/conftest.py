@@ -1,13 +1,17 @@
+"""
+Pytest configuration and shared fixtures.
+
+Provides mock modules for external dependencies like TA-Lib,
+Qdrant, and NLTK to enable testing without heavy dependencies.
+"""
+
 import sys
 import types
 from unittest.mock import MagicMock
 
 
-
 def mock_module(name):
-    """
-    Creates a mock module that passes python's importlib checks.
-    """
+    """Create a mock module that passes Python's importlib checks."""
     m = types.ModuleType(name)
     m.__spec__ = MagicMock()
     m.__spec__.name = name

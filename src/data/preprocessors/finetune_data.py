@@ -1,11 +1,15 @@
-from datasets import load_dataset
-import pandas as pd
+"""Data preprocessing utilities for ML model fine-tuning datasets."""
 
-FOLDER = "src/data/datasets/finetune_data"  
+import pandas as pd
+from datasets import load_dataset
+
+FOLDER = "src/data/datasets/finetune_data"
 train_path = f"{FOLDER}/train.parquet"
 val_path = f"{FOLDER}/val.parquet"
 
+
 def prepare_sentiment_data():
+    """Download and prepare Twitter financial sentiment dataset for fine-tuning."""
     dataset = load_dataset("zeroshot/twitter-financial-news-sentiment")
     
     train_df = dataset["train"].to_pandas()

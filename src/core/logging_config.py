@@ -1,7 +1,12 @@
+"""Structured JSON logging configuration for the application."""
+
 import logging.config
 import json
 
+
 class JSONFormatter(logging.Formatter):
+    """Formatter that outputs log records as JSON objects."""
+
     def format(self, record):
         log_obj = {
             "timestamp": self.formatTime(record),
@@ -13,7 +18,9 @@ class JSONFormatter(logging.Formatter):
         }
         return json.dumps(log_obj)
 
+
 def setup_logging():
+    """Configure application logging with JSON formatter and INFO level."""
     LOGGING_CONFIG = {
         'version': 1,
         'disable_existing_loggers': False,

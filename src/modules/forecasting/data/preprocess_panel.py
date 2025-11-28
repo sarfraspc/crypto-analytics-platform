@@ -1,3 +1,5 @@
+"""Multi-coin panel data preprocessing for cross-asset ML models."""
+
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class PanelPreprocessor:
+    """Preprocessor for multi-coin panel data with global scaling."""
     def __init__(
         self,
         scaler_dir: Union[str, Path] = "src/modules/forecasting/models/scalers",
@@ -36,6 +39,7 @@ class PanelPreprocessor:
         save_scaler: bool = True,
         global_cols: Optional[List[str]] = None,
     ):
+        """Combine multiple coin DataFrames into a unified panel with global scaling."""
         if not df_dict:
             return pd.DataFrame(), None
 
@@ -95,11 +99,13 @@ class PanelPreprocessor:
         return panel, scaler
 
     def save_panel_parquet(self, panel: pd.DataFrame, out_path: Union[str, Path]):
+        """Save panel DataFrame to parquet file."""
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         panel.to_parquet(out_path)
         logger.info(f"Saved panel data to {out_path}")
 
     def _convert_to_long_format(self, panel: pd.DataFrame, exchange: str, interval: str):
+        """Convert wide panel to long format for TimescaleDB storage."""
         feature_cols = [col for col in panel.columns 
                        if col not in ['time', 'symbol', 'exchange', 'interval'] 
                        and pd.api.types.is_numeric_dtype(panel[col])]
@@ -122,6 +128,7 @@ class PanelPreprocessor:
         exchange: str = "binance",
         interval: str = "1h",
     ):
+        """Save panel data to TimescaleDB in long format."""
         df_to_write = self._convert_to_long_format(panel, exchange, interval)
         df_to_write = normalize_time(df_to_write)
         
@@ -140,6 +147,7 @@ class PanelPreprocessor:
         exchange: str = "binance",
         interval: str = "1h",
     ):
+        """Load features for symbols and create/update panel in database."""
         df_dict = {}
         successful_symbols = []
         

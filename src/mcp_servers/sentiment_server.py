@@ -1,22 +1,24 @@
+"""MCP server for sentiment analysis, RAG queries, and Fear & Greed Index."""
+
 import asyncio
+import hashlib
 import json
 import logging
-import hashlib
-from pathlib import Path
-from typing import Dict, Any, List
 import os
 import sys
+from pathlib import Path
+from typing import Any, Dict, List
 
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
 from mcp.server.lowlevel import NotificationOptions
 from mcp.server.models import InitializationOptions
+from mcp.server.stdio import stdio_server
 from mcp.types import (
     CallToolRequest,
     CallToolRequestParams,
     CallToolResult,
-    Tool,
     TextContent,
+    Tool,
 )
 
 # Ensure project root is on sys.path so imports like `modules` and `core` work
@@ -24,24 +26,26 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from modules.sentiment.rag.embedder import Embedder
-from modules.sentiment.rag.vector_store import QdrantVectorStore
-from modules.sentiment.rag.retriever import Retriever
-from modules.sentiment.rag.generator import Generator
-from modules.sentiment.models.sentiment_infer import (
-    get_sentiment_classifier,
-    analyze_sentiment_batch,
-    analyze_sentiment  # For single if needed
-)
-from utils.cache import RedisCache
 from core.database import get_timescale_db
-from data.storage.models import IngestionJob as IngestionJobModel
 from core.logging_config import setup_logging
+from data.storage.models import IngestionJob as IngestionJobModel
+from modules.sentiment.models.sentiment_infer import (
+    analyze_sentiment,
+    analyze_sentiment_batch,
+    get_sentiment_classifier,
+)
+from modules.sentiment.rag.embedder import Embedder
+from modules.sentiment.rag.generator import Generator
+from modules.sentiment.rag.retriever import Retriever
+from modules.sentiment.rag.vector_store import QdrantVectorStore
+from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 class PipelineMCP:
+    """MCP handler for sentiment analysis, RAG, and Fear & Greed queries."""
     def __init__(self):
         self.embedder = Embedder()
         self.vector_store = QdrantVectorStore()
@@ -65,6 +69,7 @@ class PipelineMCP:
         )
 
     async def initialize(self):
+        """Initialize the sentiment MCP server with classifier."""
         try:
             self.classifier = await asyncio.to_thread(get_sentiment_classifier)
             logger.info("Pipeline MCP initialized successfully")
@@ -72,7 +77,9 @@ class PipelineMCP:
         except Exception as e:
             logger.exception("Pipeline initialization failed")
             raise e
+
     async def query_rag(self, request: CallToolRequest) -> CallToolResult:
+        """Query RAG system for crypto insights without sentiment."""
         if not self.is_initialized:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
@@ -103,6 +110,7 @@ class PipelineMCP:
             return self._error_result(err)
 
     def _format_rag_response(self, data: Dict, query: str) -> CallToolResult:
+        """Format RAG response as JSON CallToolResult."""
         payload = {
             "query": query,
             "response": data.get("response"),
@@ -111,6 +119,7 @@ class PipelineMCP:
         return self._json_result(payload)
 
     async def analyze_sentiment(self, request: CallToolRequest) -> CallToolResult:
+        """Analyze sentiment of a single text input."""
         if not self.is_initialized:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
@@ -137,6 +146,7 @@ class PipelineMCP:
             return self._error_result(err)
 
     async def analyze_sentiment_batch(self, request: CallToolRequest) -> CallToolResult:
+        """Analyze sentiment of multiple texts in batch."""
         if not self.is_initialized:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
@@ -176,6 +186,7 @@ class PipelineMCP:
             return self._error_result(err)
 
     async def analyze_with_sources(self, request: CallToolRequest) -> CallToolResult:
+        """Full pipeline: RAG retrieval + sentiment analysis + aggregation."""
         if not self.is_initialized:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
@@ -219,6 +230,7 @@ class PipelineMCP:
             return self._error_result(err)
 
     def _format_combined_response(self, data: Dict, query: str, show_sources: bool) -> CallToolResult:
+        """Format combined RAG + sentiment response as JSON."""
         payload = {
             "query": query,
             "response": data.get("response"),
@@ -230,6 +242,7 @@ class PipelineMCP:
         return self._json_result(payload)
 
     def _aggregate_sentiment(self, sentiments: List[Dict]) -> Dict:
+        """Aggregate sentiment scores from multiple results."""
         if not sentiments:
             return {'top_sentiment': 'NEUTRAL', 'top_confidence': 0.0, 'bearish_score': 0, 'bullish_score': 0, 'neutral_score': 0}
         avg_bearish = sum(s.get('bearish_score', s.get('BEARISH', 0)) for s in sentiments) / len(sentiments)
@@ -243,6 +256,7 @@ class PipelineMCP:
         }
 
     async def get_stats(self, request: CallToolRequest) -> CallToolResult:
+        """Get vector store and cache statistics."""
         if not self.is_initialized:
             raise Exception("Server not initialized")
         try:
@@ -329,10 +343,12 @@ class PipelineMCP:
             return self._error_result(err)
 
     def _get_vector_count(self):
+        """Get total document count from vector store."""
         count_result = self.vector_store.count()
         return count_result if isinstance(count_result, int) else count_result.get("count", 0)
 
     def _truncate_text(self, text: str, max_tokens: int = 512) -> str:
+        """Truncate text to max token count for model input."""
         tokens = text.split()
         if len(tokens) > max_tokens:
             return ' '.join(tokens[:max_tokens]) + "... [truncated]"
@@ -458,6 +474,7 @@ async def read_resource(name: str):
 
 
 async def main():
+    """Main entry point for the sentiment MCP server."""
     await mcp.initialize()
     logger.info(f"Starting {server.name}...")
     init_options = InitializationOptions(
@@ -471,6 +488,7 @@ async def main():
     logger.info(f"Init options: {init_options}")
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, init_options)
+
 
 if __name__ == "__main__":
     try:

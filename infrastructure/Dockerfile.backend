@@ -44,7 +44,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -m nltk.downloader -d /usr/local/share/nltk_data punkt punkt_tab
 ENV NLTK_DATA=/usr/local/share/nltk_data
 
-# Copy Application Code
+# Copy Application Code 
 COPY pyproject.toml ./
 COPY src ./src
 

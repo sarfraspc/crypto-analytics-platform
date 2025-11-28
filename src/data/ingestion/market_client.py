@@ -1,26 +1,29 @@
-import os  #
-os.environ['PYTHONIOENCODING'] = 'utf-8'  
+"""Market data ingestion via CCXT for OHLCV backfill and trade polling."""
 
+import os
+import signal
 import time
 import logging
+from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy.orm import Session
-import signal
-from collections import deque
 
 import ccxt
+from sqlalchemy.orm import Session
 
-from data.validation import OHLCV, Trade
-from data.storage.crud import upsert_ohlcv, upsert_trades, get_token
-from core.logging_config import setup_logging
 from core.config import settings
+from core.logging_config import setup_logging
+from data.storage.crud import get_token, upsert_ohlcv, upsert_trades
+from data.validation import OHLCV, Trade
+
+os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
 def get_valid_ccxt_pairs(exchange_id: str | None = None):
+    """Fetch active trading pairs for quote symbol from exchange."""
     exchange_id = exchange_id or settings.MARKET_EXCHANGE_ID
     ExchangeClass = getattr(ccxt, exchange_id)
     exchange = ExchangeClass({'enableRateLimit': True})
@@ -30,6 +33,7 @@ def get_valid_ccxt_pairs(exchange_id: str | None = None):
     return usdt_pairs
 
 def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id: str, symbol: str, timeframe: str = '1m', since_ts_ms: Optional[int] = None, limit: int = 1000):
+    """Backfill historical OHLCV data for a symbol from exchange via CCXT."""
     since_str = datetime.fromtimestamp(since_ts_ms / 1000) if since_ts_ms else 'None'  
     logger.info("Starting backfill_ohlcv_ccxt for %s %s (since=%s)", exchange_id, symbol, since_str)
     valid_pairs = get_valid_ccxt_pairs(exchange_id)
@@ -107,6 +111,7 @@ def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id
     return len(all_bars)
 
 def poll_trades_ccxt(db: Session, exchange_id: str, symbol: str, poll_interval: float = 2.0):
+    """Continuously poll and store recent trades for a symbol via CCXT."""
     logger.info("Starting poll_trades_ccxt for %s %s", exchange_id, symbol)
     shutdown = False
     def shutdown_handler(signum, frame):

@@ -1,3 +1,10 @@
+"""
+Crypto Analytics API main application module.
+
+FastAPI application providing unified API surface for forecasting,
+sentiment analysis, on-chain analytics, and autonomous agent services.
+"""
+
 import logging
 from datetime import datetime
 from typing import Dict
@@ -50,6 +57,7 @@ app.add_middleware(
 
 # --- Helpers -----------------------------------------------------------------
 def _check_db_health() -> bool:
+    """Check database connectivity for both TimescaleDB and metadata DB."""
     try:
         with get_timescale_db() as ts_session:
             ts_session.execute(text("SELECT 1"))
@@ -62,6 +70,7 @@ def _check_db_health() -> bool:
 
 
 def _check_redis_health() -> bool:
+    """Check Redis connectivity with timeout."""
     try:
         client = redis.Redis(
             host=settings.REDIS_HOST,
@@ -78,6 +87,7 @@ def _check_redis_health() -> bool:
 
 
 def _base_health_payload() -> Dict[str, str]:
+    """Build base health check payload with DB and Redis status."""
     return {
         "db": "ok" if _check_db_health() else "down",
         "redis": "ok" if _check_redis_health() else "down",

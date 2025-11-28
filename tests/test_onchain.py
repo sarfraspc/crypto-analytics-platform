@@ -1,11 +1,20 @@
-from unittest.mock import patch, MagicMock
+"""
+Tests for on-chain analytics modules.
+
+Covers whale alert detection, exchange flow calculations,
+metric aggregation, and technical analysis pattern generation.
+"""
+
 from decimal import Decimal
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
 
-from src.modules.onchain.metrics.whale_alerts import summarize_whale_alerts
-from src.modules.onchain.metrics.exchange_flows import compute_exchange_flows
 from src.modules.onchain.metrics.aggregator import combine_metrics
-from src.modules.onchain.patterns.ta_patterns import generate_ta_signal, _generate_signal
+from src.modules.onchain.metrics.exchange_flows import compute_exchange_flows
+from src.modules.onchain.metrics.whale_alerts import summarize_whale_alerts
+from src.modules.onchain.patterns.ta_patterns import _generate_signal, generate_ta_signal
+
 
 # Whale Alerts Tests
 

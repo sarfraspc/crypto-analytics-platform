@@ -1,33 +1,28 @@
-import asyncio
-import logging
-import argparse
-from typing import List
-from pathlib import Path
+"""Orchestration script for retraining all forecasting models."""
 
+import argparse
+import logging
+from pathlib import Path
+from typing import List
+
+import mlflow
 import pandas as pd
-import mlflow # Added explicitly
 from sqlalchemy import func
 from sqlalchemy.orm import sessionmaker
 
-# Core imports
+from core.config import settings
 from core.database import get_timescale_engine
-from core.config import settings # Needed for MLflow URI
-
-# Preprocessors
+from data.storage.models import OHLCVFeature
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
-
-# Models
-from modules.forecasting.models.sarimax import train_and_forecast as sarimax_train_and_forecast
-from modules.forecasting.models.prophet import train_and_forecast as prophet_train_and_forecast
-from modules.forecasting.models.prophet import ProphetModel # Added import
 from modules.forecasting.models.cnn_lstm import train_and_forecast_cnn_lstm
+from modules.forecasting.models.prophet import ProphetModel
+from modules.forecasting.models.prophet import train_and_forecast as prophet_train_and_forecast
+from modules.forecasting.models.sarimax import train_and_forecast as sarimax_train_and_forecast
 from modules.forecasting.models.tft import train_and_forecast_tft
 
-# Data Models
-from data.storage.models import OHLCVFeature
-
 logger = logging.getLogger(__name__)
+
 
 def setup_mlflow():
     """Configure MLflow tracking URI from settings."""
@@ -38,7 +33,7 @@ def setup_mlflow():
         logger.warning("MLFLOW_TRACKING_URI not set in settings")
 
 def get_all_symbols(exchange: str = settings.MARKET_EXCHANGE_ID, min_data_points: int = 100):
-    """Fetch symbols that already exist in the OHLCV table."""
+    """Fetch symbols from OHLCV table with sufficient data points."""
     engine = get_timescale_engine()
     query = """
         SELECT DISTINCT symbol 
@@ -59,7 +54,7 @@ def ensure_features(
     exchange: str = settings.MARKET_EXCHANGE_ID,
     interval: str = "1h",
 ):
-    """Verify that features exist in the DB for the given symbols."""
+    """Verify features exist in database for given symbols."""
     coin_pre = CoinPreprocessor()
     successful_symbols = []
     
@@ -87,10 +82,7 @@ def refresh_coin_features(
     target_freq: str = "h",
     refit_scaler: bool = False,
 ):
-    """
-    Reads raw OHLCV from DB, calculates technical indicators/features,
-    and writes to ohlcv_features table.
-    """
+    """Generate OHLCV features from raw data and write to ohlcv_features table."""
     if not symbols:
         logger.warning("No symbols provided for coin feature generation")
         return []
@@ -147,7 +139,7 @@ def refresh_panel_features(
     exchange: str = settings.MARKET_EXCHANGE_ID,
     interval: str = "1h",
 ):
-    """Generates panel data structure for Deep Learning models."""
+    """Generate panel data structure for deep learning models."""
     if not symbols:
         logger.warning("No symbols provided for panel feature generation")
         return None
@@ -175,8 +167,9 @@ def retrain_individual_models(
     forecast_steps: int = 24,
     models: List[str] = ["sarimax", "prophet"],
     retrain_if_exists: bool = False,
-    batch_size: int = None  
+    batch_size: int = None
 ):
+    """Retrain SARIMAX and Prophet models for individual symbols."""
     results = {}
     
     if batch_size and len(symbols) > batch_size:
@@ -237,6 +230,7 @@ def retrain_panel_models(
     models: List[str] = ["cnn_lstm", "tft"],
     retrain_if_exists: bool = False
 ):
+    """Retrain CNN-LSTM and TFT panel models on multiple symbols."""
     results = {}
     
     if not symbols:
@@ -278,22 +272,17 @@ def retrain_panel_models(
     return results
 
 def retrain_all_models(
-    exchange: str = settings.MARKET_EXCHANGE_ID, 
+    exchange: str = settings.MARKET_EXCHANGE_ID,
     interval: str = "1h",
     forecast_steps: int = 24,
     models: List[str] = ["sarimax", "prophet", "cnn_lstm", "tft"],
     retrain_if_exists: bool = False,
     min_data_points: int = 100,
     force_feature_update: bool = True,
-    individual_batch_size: int = 50,  
+    individual_batch_size: int = 50,
     max_panel_symbols: int = 50
 ):
-    """
-    Main orchestration function.
-    1. Fetches available symbols from DB.
-    2. Runs preprocessing (updates ohlcv_features table).
-    3. Trains models on the preprocessed data.
-    """
+    """Main orchestration: fetch symbols, preprocess features, train all models."""
     setup_mlflow()
     logger.info("Starting comprehensive model retraining for ALL symbols...")
     
@@ -412,6 +401,7 @@ def retrain_all_models(
     return results
 
 def main():
+    """CLI entry point for model retraining."""
     parser = argparse.ArgumentParser(description='Retrain all forecasting models (Preprocessing & Training ONLY)')
     parser.add_argument('--exchange', default=settings.MARKET_EXCHANGE_ID, help='Exchange name')
     parser.add_argument('--interval', default='1h', help='Data interval')

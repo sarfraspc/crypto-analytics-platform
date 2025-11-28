@@ -1,11 +1,14 @@
-from pathlib import Path
-import joblib
+"""Utility functions for data preprocessing, scaling, and feature engineering."""
+
 import json
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-from typing import Optional, List, Dict, Sequence
 import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ _OHLCV_AGG_RULES = {
 }
 
 def remove_duplicates(df: pd.DataFrame):
+    """Remove duplicate index entries, keeping the last occurrence."""
     if df.index.duplicated().any():
         df = df[~df.index.duplicated(keep="last")]
     return df
@@ -44,6 +48,7 @@ def ensure_continuous_range(
     end: Optional[pd.Timestamp] = None,
     method: str = "ffill",
 ):
+    """Reindex DataFrame to continuous time range with gap filling."""
     if df.empty:
         raise ValueError("Input DataFrame to ensure_continuous_range cannot be empty.")
     if start is None:
@@ -71,6 +76,7 @@ def clean_and_resample(
     fill_method: str,
     drop_initial_na: bool = True,
 ):
+    """Clean OHLCV data and resample to target frequency."""
     if not isinstance(df.index, pd.DatetimeIndex):
         df = df.set_index(pd.to_datetime(df.index))
 
@@ -112,6 +118,7 @@ def add_features(
     feature_config: Optional[Dict] = None,
     DEFAULT_FEATURE_WINDOWS: dict = None
 ):
+    """Add technical indicators and time features to OHLCV DataFrame."""
     df = df.copy()
     
     freq_type = "D" if str(target_freq).upper().startswith("D") else "H"
@@ -168,6 +175,7 @@ def scale_features(
     save: bool,
     scope: str,
 ):
+    """Apply MinMax scaling to specified columns with scaler persistence."""
     
     cols_to_scale = [c for c in cols_to_scale if c in df.columns]
     if not cols_to_scale:
@@ -211,6 +219,7 @@ def scale_features(
 
 
 def _scaler_path_for(base_dir: Path, symbol: Optional[str], global_name: str = 'scaler_global.pkl'):
+    """Generate scaler file path for symbol or global scope."""
     base_dir = Path(base_dir)
     if symbol:
         safe = symbol.replace('/', '_').upper()
@@ -219,6 +228,7 @@ def _scaler_path_for(base_dir: Path, symbol: Optional[str], global_name: str = '
 
 
 def save_scaler_with_meta(path: Path, scaler: MinMaxScaler, cols_order: List[str]):
+    """Save scaler and column metadata to disk."""
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(scaler, path)
     meta = {'cols_order': cols_order, 'scaler_type': type(scaler).__name__, 'saved_at': pd.Timestamp.utcnow().isoformat()}
@@ -226,6 +236,7 @@ def save_scaler_with_meta(path: Path, scaler: MinMaxScaler, cols_order: List[str
 
 
 def load_scaler_with_meta(path: Path):
+    """Load scaler and column metadata from disk."""
     meta_p = path.with_suffix('.json')
     if not path.exists() or not meta_p.exists():
         return None, None
@@ -235,6 +246,7 @@ def load_scaler_with_meta(path: Path):
 
 
 def normalize_time(df, col="time"):
+    """Normalize time column to UTC timezone."""
     if col not in df.columns:
         raise ValueError("normalize_time: column 'time' not found")
     df[col] = pd.to_datetime(df[col])
@@ -246,6 +258,7 @@ def normalize_time(df, col="time"):
 
 
 def normalize_single_time(time_value):
+    """Normalize a single timestamp to UTC timezone."""
     ts = pd.Timestamp(time_value)
     if ts.tz is None:
         ts = ts.tz_localize("UTC")

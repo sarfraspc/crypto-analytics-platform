@@ -1,21 +1,25 @@
+"""MCP server for on-chain metrics and TA pattern queries."""
+
 import asyncio
+import json
 import logging
-from typing import Dict, Any
-from pathlib import Path
 import os
 import sys
+from pathlib import Path
+from typing import Any, Dict
 
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
 from mcp.server.lowlevel import NotificationOptions
 from mcp.server.models import InitializationOptions
+from mcp.server.stdio import stdio_server
 from mcp.types import (
     CallToolRequest,
     CallToolRequestParams,
     CallToolResult,
-    Tool,
     TextContent,
+    Tool,
 )
+from sqlalchemy import select
 
 # Ensure project root is on sys.path for imports like `core` and `data`
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -26,18 +30,20 @@ from core.config import settings
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.onchain_client import setup_mlflow
-from data.storage.models import TASignal as TASignalModel, OnchainMetric as OnchainMetricModel
-from sqlalchemy import select
-import json
+from data.storage.models import OnchainMetric as OnchainMetricModel
+from data.storage.models import TASignal as TASignalModel
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 class OnchainMCP:
+    """MCP handler for on-chain metrics and TA pattern queries."""
     def __init__(self):
         self.is_initialized = False
 
     async def initialize(self):
+        """Initialize the on-chain MCP server with MLflow."""
         try:
             await asyncio.to_thread(setup_mlflow)
             logger.info("Onchain MCP initialized successfully")
@@ -47,6 +53,7 @@ class OnchainMCP:
             raise e
 
     async def run_metrics_only(self, request: CallToolRequest) -> CallToolResult:
+        """Query on-chain metrics (exchange flows, whale summaries, market pressure)."""
         if not self.is_initialized:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None
@@ -145,6 +152,7 @@ class OnchainMCP:
             )
 
     async def run_patterns_only(self, request: CallToolRequest) -> CallToolResult:
+        """Query TA patterns (RSI, MACD, candlestick signals) for symbols."""
         if not self.is_initialized:
             raise Exception("Server not initialized")
         params = request.params if hasattr(request, "params") else None

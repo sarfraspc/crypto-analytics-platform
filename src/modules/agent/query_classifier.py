@@ -1,15 +1,20 @@
 # src/modules/agent/query_classifier.py
 """
 Smart query classifier with dynamic LLM routing.
+
+Provides hybrid classification using rule-based patterns and LLM
+inference to route queries to appropriate processing pipelines.
 """
 
+import asyncio
 import json
 import logging
-import asyncio
 import re
-from typing import List, Dict
+from typing import Dict, List
+
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
+
 from core.config import settings
 from modules.agent.constants import LLM_REGISTRY, QUERY_CATEGORIES
 
@@ -62,12 +67,20 @@ Respond with JSON only:
 """
 
 class HybridClassifier:
+    """
+    Hybrid query classifier combining rules and LLM inference.
+
+    Uses fast rule-based classification as primary method with
+    LLM fallback for nuanced query understanding.
+    """
+
     def __init__(self):
+        """Initialize classifier with prompt template."""
         self.prompt = PromptTemplate.from_template(CLASSIFICATION_PROMPT)
         self.rule_cache = {}
 
     def _rule_based_classify(self, query: str) -> Dict[str, List[str]]:
-        """Fast rule-based classification as fallback."""
+        """Classify query using keyword pattern matching."""
         query_lower = query.lower()
         
         # Explicit match for real-time queries
@@ -112,7 +125,7 @@ class HybridClassifier:
         return {"qtype": qtype, "categories": categories}
 
     async def _llm_classify(self, query: str) -> Dict[str, List[str]]:
-        """LLM-based classification for nuanced understanding."""
+        """Classify query using LLM for nuanced understanding."""
         try:
             # Use reasoning LLM for classification
             provider, model, temp = LLM_REGISTRY.get("reasoning", ("groq", "mixtral-8x7b-32768", 0.1))
@@ -185,7 +198,7 @@ class HybridClassifier:
             raise
 
     async def classify(self, query: str) -> Dict[str, List[str]]:
-        """Main classification method with fallback strategy."""
+        """Classify query using LLM with rule-based fallback."""
         # Try LLM classification first for accuracy
         try:
             result = await self._llm_classify(query)

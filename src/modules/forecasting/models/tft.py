@@ -1,20 +1,25 @@
-import pandas as pd
-import numpy as np
-from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
-from pytorch_forecasting.data import GroupNormalizer
-from pytorch_forecasting.metrics import QuantileLoss
+"""Temporal Fusion Transformer model for multi-asset panel forecasting."""
+
+import logging
+from pathlib import Path
+
 import lightning.pytorch as pl
+import numpy as np
+import pandas as pd
+import torch
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
-import torch
-from pathlib import Path
-import logging
+from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
+from pytorch_forecasting.data import GroupNormalizer
+from pytorch_forecasting.metrics import QuantileLoss
 
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
 
 logger = logging.getLogger(__name__)
 
+
 class TFTPanelForecaster:
+    """Temporal Fusion Transformer for cross-asset panel price forecasting."""
     def __init__(
         self,
         max_encoder_length: int = 168,  
@@ -50,12 +55,13 @@ class TFTPanelForecaster:
         self.preprocessor = PanelPreprocessor()
 
     def load_or_create_panel_data(
-        self, 
+        self,
         symbols: list,
         exchange: str = "binance",
         interval: str = "1h",
         force_update: bool = False
     ):
+        """Load panel data from cache or generate from database."""
         if self.panel_parquet_path.exists() and not force_update:
             try:
                 logger.info(f"Loading panel data from {self.panel_parquet_path}")
@@ -162,6 +168,7 @@ class TFTPanelForecaster:
         return validation, test
 
     def build_model(self):
+        """Build TFT model from training dataset configuration."""
         self.tft = TemporalFusionTransformer.from_dataset(
             self.training,
             learning_rate=self.learning_rate,
@@ -181,12 +188,13 @@ class TFTPanelForecaster:
     def train(
         self,
         symbols: list,
-        max_epochs: int = 20, 
+        max_epochs: int = 20,
         exchange: str = "binance",
         interval: str = "1h",
         retrain_if_exists: bool = False,
         force_panel_update: bool = False
     ):
+        """Train TFT model on panel data for multiple symbols."""
         if self.model_path.exists() and not retrain_if_exists:
             self.load()
             logger.info("Using existing TFT model")
@@ -256,6 +264,7 @@ class TFTPanelForecaster:
             return {'mae': 0, 'mse': 0, 'rmse': 0}
 
     def forecast(self, symbol: str, steps: int = None):
+        """Generate price forecast for a symbol using trained TFT model."""
         if self.tft is None:
             self.load()
         
@@ -350,6 +359,7 @@ def train_and_forecast_tft(
     retrain_if_exists: bool = False,
     ensure_features: bool = True
 ):
+    """Train TFT model and generate forecast for first symbol."""
     model = TFTPanelForecaster(max_prediction_length=forecast_steps)
     
     if model.model_path.exists() and not retrain_if_exists:

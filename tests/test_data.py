@@ -1,10 +1,14 @@
-import pytest
-import asyncio
-from unittest.mock import patch, MagicMock
+"""
+Tests for data ingestion and client modules.
 
-from src.data import market_client
-from src.data import news_client
-from src.data import onchain_client
+Covers market data, news aggregation, and on-chain data
+ingestion pipelines and orchestration logic.
+"""
+
+import pytest
+from unittest.mock import MagicMock, patch
+
+from src.data import market_client, news_client, onchain_client
 
 
 # Fixtures

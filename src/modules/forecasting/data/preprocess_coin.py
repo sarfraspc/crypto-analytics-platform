@@ -1,25 +1,28 @@
+"""Single-coin OHLCV data preprocessing and feature engineering."""
+
 import logging
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import types as satypes
 from sqlalchemy import func, select
+from sqlalchemy import types as satypes
 from sqlalchemy.orm import sessionmaker
 
-from core.database import get_timescale_engine
 from core.config import settings
+from core.database import get_timescale_engine
 from data.storage.models import OHLCV, OHLCVFeature
 from modules.forecasting.data.preprocess_utils import (
-    normalize_time,
-    normalize_single_time,
-    clean_and_resample,
-    add_features,
-    scale_features,
-    load_scaler_with_meta,
     _scaler_path_for,
+    add_features,
+    clean_and_resample,
+    load_scaler_with_meta,
+    normalize_single_time,
+    normalize_time,
+    scale_features,
 )
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +33,8 @@ DEFAULT_FEATURE_WINDOWS = {
 
 
 class CoinPreprocessor:
+    """Preprocessor for single-coin OHLCV data with feature engineering and scaling."""
+
     def __init__(
         self,
         table: str = "ohlcv",
@@ -46,6 +51,7 @@ class CoinPreprocessor:
         self.default_target_freq = default_target_freq
 
     def get_coin_start(self, symbol: str, exchange: str = None, interval: str = "1h"):
+        """Get earliest timestamp for a coin's OHLCV data."""
         exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         Session = sessionmaker(bind=self.engine)
         with Session() as session:
@@ -66,6 +72,7 @@ class CoinPreprocessor:
         interval: str = "1h",
         lookback_days: Optional[int] = None,
     ):
+        """Load raw OHLCV data from TimescaleDB for a symbol."""
         exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         base_symbol = (
             symbol.split("/")[0].upper() if "/" in symbol else symbol.upper()
@@ -132,6 +139,7 @@ class CoinPreprocessor:
         return_numpy: bool = False,
         feature_config: Optional[Dict] = None,
     ):
+        """Preprocess OHLCV data: resample, add features, and scale."""
         if df.empty:
             raise ValueError("Input DataFrame is empty")
 
@@ -159,6 +167,7 @@ class CoinPreprocessor:
         return df_scaled, None
 
     def save_to_timescaledb(self, df: pd.DataFrame, table_name: str):
+        """Save processed DataFrame to TimescaleDB table."""
         if isinstance(df.index, pd.DatetimeIndex):
             df_to_write = df.reset_index().rename(columns={'index': 'time'})
         else:
@@ -177,6 +186,7 @@ class CoinPreprocessor:
     def update_features(self, symbol: str, exchange: str = None,
                         interval: str = "1h", target_freq: str = "D",
                         refit_scaler: bool = False):
+        """Update or create OHLCV features for a symbol in the database."""
         exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         freq_type = "D" if str(target_freq).upper().startswith("D") else "H"
         windows = DEFAULT_FEATURE_WINDOWS[freq_type]
@@ -273,6 +283,7 @@ class CoinPreprocessor:
             return df_proc
     
     def load_features_series(self, symbol: str, exchange: str = None, interval: str = '1h', start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
+        """Load preprocessed features from ohlcv_features table."""
         exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
         Session = sessionmaker(bind=self.engine)
         with Session() as session:

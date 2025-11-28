@@ -1,7 +1,10 @@
+"""Forecast evaluation metrics for time series models."""
+
+from typing import Dict, List, Union
+
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score  
-from typing import Dict, Union, List
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
 def compute_forecast_metrics(
@@ -9,6 +12,7 @@ def compute_forecast_metrics(
     y_pred: Union[pd.Series, np.ndarray, List[float]],
     multi_horizon: bool = False
 ):
+    """Compute MAE, RMSE, R2, MAPE, and directional accuracy metrics."""
     y_true = np.asarray(y_true).flatten() if not multi_horizon else np.asarray(y_true)
     y_pred = np.asarray(y_pred).flatten() if not multi_horizon else np.asarray(y_pred)
     

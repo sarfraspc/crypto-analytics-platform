@@ -1,9 +1,11 @@
+"""FastAPI router for on-chain metrics and TA pattern endpoints."""
+
 import logging
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import math
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -11,7 +13,8 @@ from sqlalchemy import select
 from core.config import settings
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
-from data.storage.models import TASignal as TASignalModel, OHLCV as OHLCVModel
+from data.storage.models import OHLCV as OHLCVModel
+from data.storage.models import TASignal as TASignalModel
 from modules.agent.agent_client import call_mcp_tool
 
 setup_logging()
@@ -22,12 +25,14 @@ ALLOWED_WINDOWS = {"1h", "24h", "7d"}
 
 
 def _validate_symbol(symbol: str) -> str:
+    """Validate and normalize crypto symbol input."""
     if not symbol or not symbol.isalnum():
         raise HTTPException(status_code=400, detail="Symbol must be alphanumeric.")
     return symbol.upper()
 
 
 def _validate_window(window: str) -> str:
+    """Validate time window parameter."""
     if window not in ALLOWED_WINDOWS:
         raise HTTPException(status_code=400, detail=f"window must be one of {sorted(ALLOWED_WINDOWS)}")
     return window

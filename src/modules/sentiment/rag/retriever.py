@@ -1,15 +1,32 @@
+"""
+Hybrid retrieval module for RAG pipeline.
+
+Implements semantic and keyword-based retrieval with
+Reciprocal Rank Fusion (RRF) for improved search results.
+"""
+
 import logging
 from typing import Dict
+
 import numpy as np
 from qdrant_client import models
 
-from modules.sentiment.rag.vector_store import QdrantVectorStore
 from modules.sentiment.rag.embedder import Embedder
+from modules.sentiment.rag.vector_store import QdrantVectorStore
 
 logger = logging.getLogger(__name__)
 
+
 class Retriever:
+    """
+    Hybrid document retriever combining semantic and keyword search.
+
+    Uses Reciprocal Rank Fusion to merge results from vector similarity
+    and keyword matching for more robust retrieval performance.
+    """
+
     def __init__(self, embedder: Embedder, vector_store: QdrantVectorStore, alpha: float = 0.5, boost_keywords: Dict[str, float] = None):
+        """Initialize retriever with embedder, vector store, and fusion parameters."""
         self.embedder = embedder
         self.vector_store = vector_store
         self.client = vector_store.client
@@ -19,6 +36,7 @@ class Retriever:
         self.boost_keywords = boost_keywords or {"sentiment": 1.2, "btc": 1.2}
 
     def retrieve(self, query: str, k: int = 5, min_score: float = 0.05, raw_min_score: float = 0.005):
+        """Retrieve top-k documents using hybrid semantic and keyword search."""
         query_emb = self.model.encode(query)
         sem_results = self.client.search(
             collection_name=self.collection_name,

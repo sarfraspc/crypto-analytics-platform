@@ -20,7 +20,7 @@ redis==6.4.0
 celery==5.5.3
 python-dotenv==1.1.1
 pyyaml==6.0.3
-
+ 
 # RAG (Vector Store + Search + HF)
 qdrant-client==1.15.1
 rank-bm25==0.2.2

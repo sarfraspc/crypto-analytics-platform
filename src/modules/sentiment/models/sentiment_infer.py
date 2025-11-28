@@ -1,7 +1,15 @@
+"""
+Sentiment inference module for crypto text classification.
+
+Provides sentiment analysis using fine-tuned DistilRoBERTa models
+with support for both local and Hugging Face Hub model loading.
+"""
+
 import logging
 import os
-from transformers import pipeline
+
 import torch
+from transformers import pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -9,16 +17,19 @@ DEFAULT_SENTIMENT_MODEL_ID = "sarfras/crypto-sentiment-distilroberta"
 
 
 class SentimentClassifier:
+    """
+    Sentiment classifier for crypto-related text.
+
+    Supports loading models from local directories or Hugging Face Hub
+    with automatic fallback resolution for model paths.
+    """
+
     def __init__(self, model_path: str = None):
         """
-        model_path can be either:
-          - a local directory with a saved HF model, or
-          - a Hugging Face repo ID (e.g. 'sarfras/crypto-sentiment-distilroberta').
+        Initialize classifier with model path resolution.
 
-        If None, we resolve in this order:
-          1) local './saved/finetuned_model' if it exists
-          2) env var SENTIMENT_MODEL_ID
-          3) default HF repo DEFAULT_SENTIMENT_MODEL_ID
+        Model path can be a local directory or Hugging Face repo ID.
+        If None, resolves in order: local saved model, env var, default HF repo.
         """
         if model_path is None:
             local_dir = os.path.join(os.path.dirname(__file__), "saved", "finetuned_model")
@@ -30,8 +41,9 @@ class SentimentClassifier:
         self.model_path = model_path
         self.classifier = None
         self._load_model()
-    
+
     def _load_model(self):
+        """Load the sentiment classification pipeline."""
         try:
             self.classifier = pipeline(
                 "text-classification",
@@ -44,16 +56,19 @@ class SentimentClassifier:
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             raise
-    
+
     def predict(self, text: str):
+        """Predict sentiment for a single text input."""
         results = self.classifier(text)
         return self._format_prediction(results[0])
-    
+
     def predict_batch(self, texts: list):
+        """Predict sentiment for a batch of text inputs."""
         results = self.classifier(texts)
         return [self._format_prediction(result) for result in results]
-    
+
     def _format_prediction(self, result):
+        """Format raw model output into structured sentiment scores."""
         formatted = {}
         
         for score in result:
@@ -79,10 +94,11 @@ class SentimentClassifier:
         top_label = max(formatted.items(), key=lambda x: x[1])
         formatted['top_sentiment'] = top_label[0]
         formatted['top_confidence'] = top_label[1]
-        
+
         return formatted
-    
+
     def quick_predict(self, text: str):
+        """Get simplified sentiment prediction with top label and scores."""
         result = self.predict(text)
         return {
             'sentiment': result['top_sentiment'],
@@ -94,17 +110,23 @@ class SentimentClassifier:
 
 _sentiment_classifier = None
 
+
 def get_sentiment_classifier(model_path: str = None):
+    """Get or create singleton sentiment classifier instance."""
     global _sentiment_classifier
     if _sentiment_classifier is None:
         _sentiment_classifier = SentimentClassifier(model_path)
     return _sentiment_classifier
 
+
 def analyze_sentiment(text: str, model_path: str = None):
+    """Analyze sentiment of a single text string."""
     classifier = get_sentiment_classifier(model_path)
     return classifier.quick_predict(text)
 
+
 def analyze_sentiment_batch(texts: list, model_path: str = None):
+    """Analyze sentiment of multiple text strings."""
     classifier = get_sentiment_classifier(model_path)
     return classifier.predict_batch(texts)
 

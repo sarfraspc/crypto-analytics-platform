@@ -9,7 +9,7 @@ BEGIN
 END
 $$;
 
--- Create metadata_db if not exists
+-- Create metadata_db if not exists 
 SELECT 'CREATE DATABASE metadata_db OWNER metadata_user'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'metadata_db')
 \gexec

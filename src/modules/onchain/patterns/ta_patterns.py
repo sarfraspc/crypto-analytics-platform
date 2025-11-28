@@ -1,17 +1,20 @@
-import logging
+"""Technical analysis pattern detection using TA-Lib indicators."""
+
 import json
+import logging
 from typing import Optional
+
 import pandas as pd
 import talib
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 
 from core.config import settings
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
-from utils.cache import RedisCache
-from data.storage.crud import upsert_ta_signals, insert_ta_signals_history
-from data.validation import TASignal, TASignalHistory
+from data.storage.crud import insert_ta_signals_history, upsert_ta_signals
 from data.storage.models import OHLCV as OHLCVModel
+from data.validation import TASignal, TASignalHistory
+from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -25,6 +28,7 @@ redis_cache = RedisCache(
 
 
 def load_recent_ohlcv(symbol: str, exchange: str | None = None, interval: str = "1h", lookback: int = 100):
+    """Load recent OHLCV candles from database for TA computation."""
     exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
     with get_timescale_db() as db:
         try:
@@ -66,6 +70,7 @@ def load_recent_ohlcv(symbol: str, exchange: str | None = None, interval: str = 
 
 
 def compute_ta_indicators(df: pd.DataFrame):
+    """Compute RSI, MACD, Bollinger Bands, and other TA indicators."""
     try:
         close = df['close'].values
         high = df['high'].values
@@ -101,6 +106,7 @@ def compute_ta_indicators(df: pd.DataFrame):
 
 
 def detect_candlestick_patterns(df: pd.DataFrame):
+    """Detect candlestick patterns using TA-Lib pattern recognition."""
     try:
         open_prices = df['open'].values
         high = df['high'].values
@@ -124,6 +130,7 @@ def detect_candlestick_patterns(df: pd.DataFrame):
 
 
 def _generate_signal(rsi: float, macd_hist: float, pattern: Optional[str], pattern_direction: Optional[str]):
+    """Generate trading signal from RSI, MACD, and candlestick patterns."""
     signal = "neutral"
     explanation_parts = []
 
@@ -155,6 +162,7 @@ def _generate_signal(rsi: float, macd_hist: float, pattern: Optional[str], patte
 
 
 def generate_ta_signal(symbol: str, exchange: str | None = None, interval: str = "1h", use_cache: bool = True):
+    """Generate complete TA signal with indicators, patterns, and confidence."""
     exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
     key = f"ta_signal:{symbol}:{exchange}:{interval}"
     if use_cache:

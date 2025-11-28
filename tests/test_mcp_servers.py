@@ -1,13 +1,22 @@
-import pytest
+"""
+Tests for MCP server implementations.
+
+Covers price forecasting, on-chain metrics, and sentiment
+analysis MCP tool handlers and request processing.
+"""
+
 import asyncio
 import json
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
-from unittest.mock import patch, MagicMock
+import pytest
 from mcp.types import CallToolRequest, CallToolRequestParams
 
-from src.mcp_servers.price_server import ProphetMCP
 from src.mcp_servers.chain_server import OnchainMCP
+from src.mcp_servers.price_server import ProphetMCP
 from src.mcp_servers.sentiment_server import PipelineMCP
+
 
 # Price Server Tests
 

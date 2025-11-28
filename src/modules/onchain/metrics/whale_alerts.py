@@ -1,16 +1,19 @@
+"""Whale alert summarization and metrics computation."""
+
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Set
 from decimal import Decimal
+from typing import Set
+
 from sqlalchemy import select
 
 from core.config import settings
 from core.database import get_timescale_db
+from core.logging_config import setup_logging
+from data.storage.crud import upsert_onchain_metrics
 from data.storage.models import WhaleAlert as WhaleAlertModel
 from data.validation import OnchainMetric
-from data.storage.crud import upsert_onchain_metrics
 from utils.cache import RedisCache
-from core.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -29,6 +32,7 @@ def summarize_whale_alerts(
     chain: str = 'ethereum',
     time_window: str = '24h'
 ):
+    """Summarize whale transfer activity with exchange flow breakdown."""
     cache_key = f"onchain:whale_alerts:{chain}:{time_window}"
     cached = redis_cache.get_json(cache_key)
     if cached:

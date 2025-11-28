@@ -1,17 +1,19 @@
-import logging
+"""On-chain analytics client for whale detection and metrics aggregation."""
+
 import argparse
+import logging
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from sqlalchemy.orm import Session
 import mlflow
+from sqlalchemy.orm import Session
 
+from core.config import settings
 from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.ingestion import chain_client
 from modules.onchain.metrics.pipeline import run_onchain_metrics
 from utils.cache import RedisCache
-from core.config import settings
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -25,6 +27,7 @@ redis_cache = RedisCache(
 
 
 def setup_mlflow():
+    """Configure MLflow tracking URI from settings."""
     mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
     logger.info("MLflow configured with: %s", settings.MLFLOW_TRACKING_URI)
 
@@ -36,6 +39,7 @@ def log_pipeline_to_mlflow(
     steps: List[str],
     status: Dict,
 ):
+    """Log on-chain pipeline run metrics and status to MLflow."""
     mlflow.set_experiment(experiment_name)
     with mlflow.start_run(
         run_name=f"{pipeline} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -202,6 +206,7 @@ def run_onchain_pipeline(
 
 
 def main():
+    """CLI entry point for on-chain analytics pipeline."""
     setup_mlflow()
     parser = argparse.ArgumentParser(description="Run on-chain analytics pipeline")
     parser.add_argument("--chain", default="ethereum", help="Blockchain (default: ethereum)")
