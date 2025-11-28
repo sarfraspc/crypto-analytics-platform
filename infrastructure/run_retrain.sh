@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}/.."
 
-mkdir -p logs
+mkdir -p logs 
 
 echo "[$(date -Iseconds)] Starting scheduled Prophet retraining" >> logs/cron_retrain_prophet.log 2>&1
 

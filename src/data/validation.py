@@ -1,9 +1,14 @@
-from pydantic import BaseModel
+"""Pydantic validation models for data ingestion and storage."""
+
 from datetime import datetime
-from typing import Optional, Any, Dict
 from decimal import Decimal
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel
+
 
 class Token(BaseModel):
+    """Token metadata validation model."""
     symbol: str
     coingecko_id: Optional[str] = None
     name: Optional[str] = None
@@ -11,6 +16,8 @@ class Token(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 class OHLCV(BaseModel):
+    """OHLCV candlestick data validation model."""
+
     time: datetime
     symbol: str
     interval: str
@@ -23,6 +30,8 @@ class OHLCV(BaseModel):
     raw: Optional[Dict[str, Any]] = None
 
 class Trade(BaseModel):
+    """Trade execution data validation model."""
+
     time: datetime
     exchange: str
     symbol: str
@@ -33,6 +42,8 @@ class Trade(BaseModel):
     raw: Optional[Dict[str, Any]] = None
 
 class WhaleAlert(BaseModel):
+    """Whale transfer alert validation model."""
+
     time: datetime
     tx_hash: str
     chain: Optional[str] = None
@@ -44,6 +55,8 @@ class WhaleAlert(BaseModel):
     raw: Optional[Dict[str, Any]] = None
 
 class OnchainMetric(BaseModel):
+    """On-chain metric data validation model."""
+
     time: datetime
     chain: str
     metric: str
@@ -51,6 +64,8 @@ class OnchainMetric(BaseModel):
     raw: Optional[Dict[str, Any]] = None
 
 class NewsArticle(BaseModel):
+    """News article validation model for CryptoPanic data."""
+
     id: str
     title: Optional[str] = None
     source: Optional[str] = None
@@ -61,6 +76,8 @@ class NewsArticle(BaseModel):
     raw: Optional[Dict[str, Any]] = None
 
 class RedditPost(BaseModel):
+    """Reddit post validation model."""
+
     id: str
     subreddit: Optional[str] = None
     author: Optional[str] = None
@@ -72,12 +89,16 @@ class RedditPost(BaseModel):
     raw: Optional[Dict[str, Any]] = None
 
 class IngestionJob(BaseModel):
+    """Ingestion job tracking validation model."""
+
     pipeline: str
     last_run: Optional[datetime] = None
     last_success: Optional[datetime] = None
     details: Optional[Dict[str, Any]] = None
 
 class TASignal(BaseModel):
+    """Technical analysis signal snapshot validation model."""
+
     symbol: str
     exchange: str
     interval: str
@@ -88,6 +109,8 @@ class TASignal(BaseModel):
     pattern: Optional[str] = None
 
 class TASignalHistory(BaseModel):
+    """Technical analysis signal history validation model."""
+
     time: datetime
     symbol: str
     exchange: str

@@ -1,10 +1,14 @@
+"""Configuration settings loaded from environment variables."""
+
 try:
     from pydantic_settings import BaseSettings
 except ImportError:
     from pydantic import BaseSettings
 from typing import Dict, List
 
+
 class Settings(BaseSettings):
+    """Application settings with database, API keys, and service configurations."""
     ENVIRONMENT: str = "local"
 
     # GCS model loading
@@ -110,6 +114,10 @@ class Settings(BaseSettings):
     }
 
     class Config:
-        env_file = ".env.local"   # for local only
+        """Pydantic config for environment file loading."""
+
+        env_file = ".env.local"
         env_file_encoding = "utf-8"
+
+
 settings = Settings()

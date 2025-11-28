@@ -1,3 +1,5 @@
+"""FastAPI router for dashboard overview, backtest, and whale activity endpoints."""
+
 import asyncio
 import logging
 import uuid
@@ -23,12 +25,14 @@ BACKTESTER = PortfolioBacktester()
 
 
 def _validate_symbol(symbol: str) -> str:
+    """Validate and normalize crypto symbol input."""
     if not symbol or not symbol.isalnum():
         raise HTTPException(status_code=400, detail="Symbol must be alphanumeric.")
     return symbol.upper()
 
 
 def _shape_forecast(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize forecast payload into stable frontend fields."""
     if not isinstance(payload, dict):
         return {"raw_text": payload}
     return {
@@ -39,6 +43,7 @@ def _shape_forecast(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _shape_sentiment(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize sentiment payload into stable frontend fields."""
     if not isinstance(payload, dict):
         return {"raw": payload}
     aggregated = payload.get("aggregated", {})
@@ -55,6 +60,7 @@ def _shape_sentiment(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize on-chain metrics payload into stable frontend fields."""
     if not isinstance(payload, dict):
         return {"raw": payload}
     flattened = _shape_raw_onchain_metrics(payload)
@@ -86,6 +92,7 @@ def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _gather_overview(symbol: str, horizon_hours: int, window: str, k_docs: int):
+    """Gather forecast, sentiment, and on-chain data concurrently."""
     tasks = {
         "forecast": call_mcp_tool(
             "crypto-prophet-server",

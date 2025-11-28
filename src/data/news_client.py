@@ -1,3 +1,5 @@
+"""News and social media ingestion client for CryptoPanic, Reddit, and FNG."""
+
 import asyncio
 import logging
 from datetime import datetime

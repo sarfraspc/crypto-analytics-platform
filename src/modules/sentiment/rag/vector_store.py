@@ -1,14 +1,32 @@
+"""
+Qdrant vector store module for RAG pipeline.
+
+Provides vector storage and retrieval operations using Qdrant
+for efficient semantic search over document embeddings.
+"""
+
 import logging
-from typing import List, Dict, Any, Optional
 import uuid
+from typing import Any, Dict, List, Optional
+
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams, PointStruct
+from qdrant_client.http.models import Distance, PointStruct, VectorParams
+
 from core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class QdrantVectorStore:
+    """
+    Qdrant-based vector store for document embeddings.
+
+    Manages collection creation, document storage, and semantic
+    search operations for the RAG retrieval system.
+    """
+
     def __init__(self, url: Optional[str] = None, collection_name: Optional[str] = None):
+        """Initialize vector store with Qdrant connection settings."""
         resolved_url = url or settings.QDRANT_URL
         resolved_collection = collection_name or settings.QDRANT_COLLECTION
         self.client = QdrantClient(url=resolved_url)
@@ -16,12 +34,14 @@ class QdrantVectorStore:
         self._ensure_collection()
 
     def _ensure_collection(self):
+        """Ensure the collection exists in Qdrant."""
         try:
             self.client.get_collection(self.collection_name)
         except Exception as e:
             logger.warning(f"Collection check failed (creating if needed): {e}")
 
     def add(self, documents: List[str], embeddings: List[List[float]], metadatas: List[Dict[str, Any]], ids: Optional[List[str]] = None):
+        """Add documents with embeddings and metadata to the vector store."""
         if not documents:
             return
 
@@ -56,6 +76,7 @@ class QdrantVectorStore:
         logger.info(f"Added {len(documents)} chunks to Qdrant.")
 
     def query_semantic(self, query_embedding: List[float], n_results: int = 5):
+        """Query vector store using semantic similarity search."""
         search_result = self.client.search(
             collection_name=self.collection_name,
             query_vector=query_embedding,
@@ -70,6 +91,7 @@ class QdrantVectorStore:
         }
 
     def get_all(self):
+        """Retrieve all documents from the vector store."""
         count = self.count()
         if count == 0:
             return {"documents": [], "metadatas": [], "ids": []}
@@ -86,6 +108,7 @@ class QdrantVectorStore:
         }
 
     def delete_all(self):
+        """Delete all documents and recreate the collection."""
         try:
             self.client.delete_collection(self.collection_name)
         except Exception:
@@ -97,6 +120,7 @@ class QdrantVectorStore:
         logger.info("Cleared Qdrant collection.")
 
     def count(self):
+        """Return the number of documents in the collection."""
         try:
             return self.client.get_collection(self.collection_name).points_count
         except Exception:

@@ -1,3 +1,5 @@
+"""FastAPI router for unified agent insight endpoints."""
+
 import json
 import logging
 import uuid
@@ -16,12 +18,14 @@ router = APIRouter(tags=["Agent"])
 
 
 def _validate_symbol(symbol: str) -> str:
+    """Validate and normalize crypto symbol input."""
     if not symbol or not symbol.isalnum():
         raise HTTPException(status_code=400, detail="Symbol must be alphanumeric.")
     return symbol.upper()
 
 
 class AgentInsightRequest(BaseModel):
+    """Request model for agent insight queries."""
     question: Optional[str] = Field(
         None,
         description="Natural language question for the agent (defaults to '{symbol} market overview').",
@@ -49,6 +53,7 @@ class AgentInsightRequest(BaseModel):
 
 @router.post("/insight/{symbol}")
 async def get_agent_insight(symbol: str, payload: AgentInsightRequest):
+    """Get unified crypto insight via agent orchestration."""
     sanitized_symbol = _validate_symbol(symbol)
     question = (payload.question or f"{sanitized_symbol} market overview").strip()
     request_id = str(uuid.uuid4())

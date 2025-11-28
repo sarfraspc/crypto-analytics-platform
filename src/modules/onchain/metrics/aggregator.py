@@ -1,16 +1,20 @@
+"""Aggregator for combining on-chain metrics into market pressure indicators."""
+
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+
 import numpy as np
 from sqlalchemy import select
 
 from core.config import settings
 from core.database import get_timescale_db
-from data.storage.models import OnchainMetric as OnchainMetricModel, OHLCV as OHLCVModel
-from data.validation import OnchainMetric
-from data.storage.crud import upsert_onchain_metrics
-from utils.cache import RedisCache
 from core.logging_config import setup_logging
+from data.storage.crud import upsert_onchain_metrics
+from data.storage.models import OHLCV as OHLCVModel
+from data.storage.models import OnchainMetric as OnchainMetricModel
+from data.validation import OnchainMetric
+from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -23,6 +27,7 @@ redis_cache = RedisCache(
 )
 
 def _native_symbol_for_chain(chain: str) -> str:
+    """Map blockchain name to native token symbol."""
     if chain.lower() == "ethereum":
         return "ETH"
     if chain.lower() == "bitcoin":
@@ -34,6 +39,7 @@ def combine_metrics(
     chain: str = "ethereum",
     time_window: str = "24h",
 ):
+    """Aggregate exchange flows, whale data, and price into market pressure index."""
     cache_key = f"onchain:aggregated_metrics:{chain}:{time_window}"
     cached = redis_cache.get_json(cache_key)
     if cached:

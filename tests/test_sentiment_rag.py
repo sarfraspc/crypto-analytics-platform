@@ -1,7 +1,15 @@
+"""
+Tests for sentiment analysis and RAG pipeline modules.
+
+Covers sentiment classification, text embedding, document
+retrieval, and RAG query processing with caching.
+"""
+
 import sys
 import types
-import numpy as np 
 from unittest.mock import MagicMock, patch
+
+import numpy as np
 
 
 # ROBUST MOCKING

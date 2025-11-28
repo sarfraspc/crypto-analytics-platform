@@ -1,15 +1,23 @@
 """
-Hybrid strategy: Composite signals + risk adjustment (Agent 1) with SMA/sentiment/on-chain fusion (Agent 2).
+Hybrid trading strategy utilities.
+
+Provides composite signal generation combining technical analysis,
+sentiment, forecasts, and on-chain metrics with risk adjustment.
 """
+
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Any
-import talib  # For fallback SMA; prefer precomputed
-from utils.cache import RedisCache  # Cache signals
+import talib
+
+from utils.cache import RedisCache
+
 cache = RedisCache(expire_seconds=300)  # 5min
 
+
 def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Dict, symbol: str = "BTC", query_hash: str = "", days: int = 30) -> Dict[str, Any]:
+    """Generate hybrid trading signal from multiple data sources."""
     # Use cached result only when we have a query_hash (agent path).
     cache_key = None
     if query_hash:
@@ -101,7 +109,9 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
         cache.set_json(cache_key, result)
     return result
 
+
 def risk_adjust_size(size: float, vol: float, pressure: float) -> float:
+    """Adjust position size based on volatility and market pressure."""
     # Coerce to floats to avoid type errors if upstream passes strings/decimals.
     try:
         size = float(size)

@@ -1,26 +1,29 @@
 """
-Main v2 orchestrator: Hybrid classify, parallel MCP, multi-LLM synthesis, hybrid backtest.
+Crypto analytics agent orchestrator.
+
+Main v2 orchestrator providing hybrid query classification, parallel MCP
+tool execution, multi-LLM synthesis, and hybrid backtesting capabilities.
 """
 
 import asyncio
 import hashlib
+import io
 import json
 import logging
-import os  # Added by agent
+import os
 import re
-import sys  # Added by agent
+import sys
 import traceback
 from contextlib import AsyncExitStack
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-import io
 
 import google.generativeai as genai
 import pandas as pd
 from httpx import AsyncClient
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.types import CallToolRequest  # Imported per MCP client spec (unused but kept for parity)
+from mcp.types import CallToolRequest
 
 from core.config import settings
 from core.logging_config import setup_logging
@@ -39,6 +42,7 @@ cache = RedisCache(expire_seconds=1800)
 
 
 def _safe_int(value: Any, default: int) -> int:
+    """Safely convert value to int with fallback default."""
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -46,6 +50,7 @@ def _safe_int(value: Any, default: int) -> int:
 
 
 def _normalize_arguments(args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize MCP tool arguments, parsing JSON options if needed."""
     normalized = dict(args or {})
     options = normalized.get("options")
     if isinstance(options, str):
@@ -59,12 +64,14 @@ def _normalize_arguments(args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _build_cache_key(server: str, tool: str, args: Dict[str, Any]) -> str:
+    """Build deterministic cache key from server, tool, and arguments."""
     serialized = json.dumps(args, sort_keys=True, default=str)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
     return f"mcp:{server}:{tool}:{digest}"
 
 
 def _parse_tool_output(text: str) -> Any:
+    """Parse MCP tool output from text, JSON, or DataFrame formats."""
     stripped = text.strip()
     try:
         if "DataFrame" in text or stripped.startswith("timestamp"):
@@ -189,6 +196,7 @@ async def route_tools(
     options: Optional[Dict[str, Any]] = None,
     no_cache: bool = False
 ) -> Dict[str, Any]:
+    """Route query to appropriate MCP tools based on classification."""
     tasks = {}
     cats = classify.get("categories", [])
     options = options or {}
@@ -303,9 +311,7 @@ async def route_tools(
     return data
 
 async def synthesize(provider: str, model: str, temp: float, prompt: str, max_retries: int = 2) -> str:
-    """
-    Dynamic LLM synthesis with fallback and retry logic to prevent recursion issues.
-    """
+    """Generate LLM response with provider fallback and retry logic."""
     for attempt in range(max_retries):
         try:
             logger.info(f"Attempting synthesis with {provider}/{model} (attempt {attempt + 1}/{max_retries})")
@@ -368,7 +374,15 @@ async def synthesize(provider: str, model: str, temp: float, prompt: str, max_re
     return "Analysis failed due to an unexpected error after multiple retries."
 
 class CryptoAgentV2:
+    """
+    Main crypto analytics agent with hybrid classification and multi-LLM synthesis.
+
+    Orchestrates query classification, parallel MCP tool execution,
+    data aggregation, and LLM-based response generation.
+    """
+
     def __init__(self):
+        """Initialize agent with classifier and backtester components."""
         self.classifier = HybridClassifier()
         self.backtester = PortfolioBacktester()
         self.current_date = pd.Timestamp.utcnow().strftime("%Y-%m-%d")
@@ -382,7 +396,7 @@ class CryptoAgentV2:
         no_cache: bool = False,
         force_query_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Main agent execution with dynamic LLM routing."""
+        """Execute agent query with dynamic LLM routing and tool orchestration."""
 
         options = options or {}
         run_backtest_opt = bool(options.get("run_backtest"))
@@ -500,6 +514,7 @@ _AGENT_SINGLETON: Optional[CryptoAgentV2] = None
 
 
 def _get_agent() -> CryptoAgentV2:
+    """Get or create singleton agent instance."""
     global _AGENT_SINGLETON
     if _AGENT_SINGLETON is None:
         _AGENT_SINGLETON = CryptoAgentV2()
@@ -545,15 +560,7 @@ _SYMBOL_ALIASES = {
 
 
 def _infer_symbol_from_text(question: str, fallback: str = "BTC") -> str:
-    """
-    Lightweight symbol extractor that uses the natural-language question
-    as the primary source of truth for the asset ticker.
-
-    - Detects common asset names like 'bitcoin'/'ethereum'.
-    - Then looks for ticker-like tokens (2–10 uppercase letters).
-    - Ignores obvious non-symbol words via a small stopword set.
-    - Falls back to the provided fallback (or BTC) if nothing is found.
-    """
+    """Extract crypto symbol from natural language query text."""
     base = (question or "").strip()
     if not base:
         return (fallback or "BTC").upper()
@@ -593,7 +600,7 @@ async def orchestrate_query(
     no_cache: bool = False,
     force_query_type: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Entry point used by the Agent MCP server."""
+    """Execute agent query - main entry point for MCP server."""
 
     raw_question = (question or "").strip()
     # Use the question text as the primary source of truth for the asset,
@@ -615,7 +622,7 @@ async def orchestrate_query(
     )
 
 async def main():
-    """CLI interface for testing the agent."""
+    """Run agent from command line for testing."""
     import argparse
     
     parser = argparse.ArgumentParser(description="Crypto Analytics Agent v2.1")

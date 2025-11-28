@@ -1,3 +1,10 @@
+"""
+Portfolio backtesting module for crypto trading strategies.
+
+Provides historical simulation of hybrid trading strategies using
+real market data, sentiment analysis, and on-chain metrics.
+"""
+
 import asyncio
 import logging
 import os
@@ -6,7 +13,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 import requests
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 # MLflow Import with Safety
 try:
@@ -19,15 +26,16 @@ from core.config import settings
 from core.database import get_timescale_db
 
 # Data Models
-from data.storage.models import NewsArticle, OnchainMetric as OnchainMetricModel
+from data.storage.models import NewsArticle
+from data.storage.models import OnchainMetric as OnchainMetricModel
 
 # Strategy Logic
 from modules.agent.strategy_utils import hybrid_signal
 
 # Forecasting Modules (Real Model Logic)
-from modules.forecasting.models.prophet import ProphetModel
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
+from modules.forecasting.data.preprocess_utils import _scaler_path_for, load_scaler_with_meta
+from modules.forecasting.models.prophet import ProphetModel
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +92,21 @@ def _mlflow_server_available() -> bool:
         return False
 
 
-# Main Backtester Class 
+# Main Backtester Class
+
 
 class PortfolioBacktester:
+    """
+    Portfolio backtester for hybrid crypto trading strategies.
+
+    Simulates trading using real historical data, AI forecasts,
+    sentiment analysis, and on-chain metrics with MLflow tracking.
+    """
+
     def __init__(self, initial_capital: float = 10000, experiment: str = "crypto_backtest_real", enable_mlflow: bool = True):
+        """Initialize backtester with capital and MLflow settings."""
         self.initial_capital = initial_capital
-        self.fee_rate: float = 0.0005 # 0.05% per trade
+        self.fee_rate: float = 0.0005  # 0.05% per trade
         self.experiment = experiment
         
         # MLflow Configuration: Only enable if requested AND server is running
@@ -105,10 +122,7 @@ class PortfolioBacktester:
                 self.enable_mlflow = False
 
     async def _load_historical_sentiment(self, symbol: str, start_ts: pd.Timestamp, end_ts: pd.Timestamp) -> Dict[str, Any]:
-        """
-        HONESTY CHECK: Queries the 'news_articles' table for actual news.
-        Uses keyword scoring to determine sentiment from 0.0 (Bearish) to 1.0 (Bullish).
-        """
+        """Load historical sentiment from news articles using keyword scoring."""
         try:
             with get_timescale_db() as session:
                 # Fetch headlines in this window
@@ -142,9 +156,7 @@ class PortfolioBacktester:
             return {"aggregated": {"bullish_score": 0.5, "bearish_score": 0.5}}
 
     async def _load_historical_onchain(self, symbol: str, as_of: pd.Timestamp) -> Dict[str, Any]:
-        """
-        HONESTY CHECK: Queries 'onchain_metrics' for the closest recorded metric.
-        """
+        """Load historical on-chain metrics from database."""
         try:
             chain = "bitcoin" if "BTC" in symbol.upper() else "ethereum"
             
@@ -169,10 +181,7 @@ class PortfolioBacktester:
             return {"market_pressure_index": 0.5, "price_whale_corr_7d": 0.0}
 
     async def _generate_model_forecasts(self, symbol: str, df_bt: pd.DataFrame) -> Dict[pd.Timestamp, float]:
-        """
-        HONESTY CHECK: Loads the ACTUAL SAVED MODEL and predicts on backtest timestamps.
-        This uses 'prophet_BTC.pkl' (your saved file).
-        """
+        """Generate AI forecasts using saved Prophet model for backtest timestamps."""
         logger.info(f"Generating AI predictions using saved Prophet model for {symbol}...")
         
         model_wrapper = ProphetModel(symbol)
@@ -204,12 +213,10 @@ class PortfolioBacktester:
 
     async def run_hybrid_backtest(self, symbol: str, days: int = 60, cats: List[str] = None, rolling_window: int = 30) -> Dict[str, Any]:
         """
-        The Main Loop: 
-        1. Loads Real Data from DB.
-        2. Inverse Scales it (0.8 -> $90k).
-        3. Generates AI Predictions using Saved Model.
-        4. Loads Real News/OnChain Data.
-        5. Simulates Trading.
+        Run hybrid backtest simulation.
+
+        Loads real data from DB, inverse scales prices, generates AI predictions,
+        loads sentiment/on-chain data, and simulates trading with fee accounting.
         """
         pre = CoinPreprocessor()
         exchange = getattr(settings, "MARKET_EXCHANGE_ID", "binance")

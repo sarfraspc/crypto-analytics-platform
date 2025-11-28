@@ -1,23 +1,32 @@
-import numpy as np
-import random
+"""
+DistilRoBERTa sentiment model fine-tuning module.
+
+Provides training pipeline for fine-tuning DistilRoBERTa on
+crypto sentiment classification with class weighting and MLflow tracking.
+"""
+
 import logging
 import os
+import random
+import warnings
+
+import mlflow
+import numpy as np
+import pandas as pd
+import torch
+import transformers
 from datasets import load_dataset
-from transformers import (
-    AutoTokenizer,
-    AutoModelForSequenceClassification,
-    TrainingArguments,
-    Trainer,
-    DataCollatorWithPadding,
-)
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.utils.class_weight import compute_class_weight
-import mlflow
-import torch
-import pandas as pd
-import warnings
+from transformers import (
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    DataCollatorWithPadding,
+    Trainer,
+    TrainingArguments,
+)
+
 warnings.filterwarnings("ignore")
-import transformers
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -30,14 +39,24 @@ def set_seed(seed: int = 42):
 
 set_seed(42)
 
-class SentimentTrainer:    
+
+class SentimentTrainer:
+    """
+    Trainer for fine-tuning sentiment classification models.
+
+    Handles dataset loading, tokenization, class weighting,
+    and training with MLflow experiment tracking.
+    """
+
     def __init__(self, model_name: str = "distilroberta-base"):
+        """Initialize trainer with base model name."""
         self.model_name = model_name
         self.tokenizer = None
         self.model = None
         self.class_weights = None
-        
+
     def compute_metrics(self, eval_pred):
+        """Compute accuracy, precision, recall, and F1 metrics."""
         logits, labels = eval_pred
         predictions = np.argmax(logits, axis=-1)
         accuracy = accuracy_score(labels, predictions)
@@ -45,19 +64,24 @@ class SentimentTrainer:
             labels, predictions, average='weighted'
         )
         return {'accuracy': accuracy, 'precision': precision, 'recall': recall, 'f1': f1}
-    
+
     def log_dataset_stats(self, dataset, split_name):
+        """Log label distribution statistics for a dataset split."""
         labels = dataset["label"]
         counts = pd.Series(labels).value_counts().sort_index()
         logger.info(f"{split_name} label distribution: {dict(counts)}")
         return counts
 
     class WeightedTrainer(Trainer):
+        """Custom trainer with class-weighted loss for imbalanced datasets."""
+
         def __init__(self, class_weights=None, *args, **kwargs):
+            """Initialize with optional class weights."""
             super().__init__(*args, **kwargs)
             self.class_weights = class_weights
-        
+
         def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            """Compute weighted cross-entropy loss."""
             labels = inputs.get("labels")
             outputs = model(**inputs)
             logits = outputs.get("logits")
@@ -83,6 +107,7 @@ class SentimentTrainer:
         run_name: str = "sentiment_finetune",
         mlflow_uri: str = None,
     ):
+        """Fine-tune the sentiment model on provided training data."""
         try:
             if mlflow_uri:
                 mlflow.set_tracking_uri(mlflow_uri)
@@ -198,11 +223,13 @@ class SentimentTrainer:
                 mlflow.end_run(status="FAILED")
             raise
 
+
 def train_sentiment_model(
     data_dir: str = None,
     save_dir: str = None,
     **kwargs
 ):
+    """Train sentiment model with default paths and parameters."""
     if data_dir is None:
         data_dir = os.path.join(os.path.dirname(__file__), "../../../data/datasets/finetune_data")
     

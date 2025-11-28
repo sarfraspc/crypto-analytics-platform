@@ -1,15 +1,21 @@
-from pycoingecko import CoinGeckoAPI
-from core.database import get_metadata_db
-from data.storage.models import Token as TokenModel
+"""Token seeding utility to populate metadata DB from CoinGecko."""
+
 import logging
+
+from pycoingecko import CoinGeckoAPI
 from sqlalchemy import select
+
+from core.database import get_metadata_db
 from core.logging_config import setup_logging
+from data.storage.models import Token as TokenModel
 
 setup_logging()
 logger = logging.getLogger(__name__)
 CG = CoinGeckoAPI()
 
+
 def seed_top_n(n=200):
+    """Seed or update top N tokens from CoinGecko into metadata database."""
     try:
         coins = CG.get_coins_markets(vs_currency='usd', per_page=250, page=1)
     except Exception as e:

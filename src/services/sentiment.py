@@ -1,3 +1,5 @@
+"""FastAPI router for sentiment analysis and RAG query endpoints."""
+
 import logging
 import uuid
 from datetime import datetime
@@ -18,12 +20,14 @@ MAX_BATCH = 32
 
 
 def _validate_symbol(symbol: str) -> str:
+    """Validate and normalize crypto symbol input."""
     if not symbol or not symbol.isalnum():
         raise HTTPException(status_code=400, detail="Symbol must be alphanumeric.")
     return symbol.upper()
 
 
 def _shape_sentiment_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize sentiment payload into stable frontend fields."""
     if not isinstance(payload, dict):
         return {"raw": payload}
     return {
@@ -39,10 +43,13 @@ def _shape_sentiment_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class SentimentTextRequest(BaseModel):
+    """Request model for single text sentiment analysis."""
+
     text: constr(strip_whitespace=True, min_length=1, max_length=MAX_TEXT_LENGTH)
 
 
 class SentimentBatchRequest(BaseModel):
+    """Request model for batch text sentiment analysis."""
     texts: List[constr(strip_whitespace=True, min_length=1, max_length=MAX_TEXT_LENGTH)]
 
     @validator("texts")
@@ -55,12 +62,15 @@ class SentimentBatchRequest(BaseModel):
 
 
 class RagQueryRequest(BaseModel):
+    """Request model for RAG query."""
+
     query: constr(strip_whitespace=True, min_length=1, max_length=1000)
     k: int = Field(5, ge=1, le=20)
 
 
 @router.post("/text")
 async def analyze_single_text(request: SentimentTextRequest):
+    """Analyze sentiment of a single text input."""
     request_id = str(uuid.uuid4())
     start_time = datetime.utcnow()
     logger.info("[%s] Sentiment text analysis request", request_id)
@@ -83,6 +93,7 @@ async def analyze_single_text(request: SentimentTextRequest):
 
 @router.post("/batch")
 async def analyze_text_batch(request: SentimentBatchRequest):
+    """Analyze sentiment of multiple texts in batch."""
     request_id = str(uuid.uuid4())
     start_time = datetime.utcnow()
     logger.info("[%s] Sentiment batch analysis (%s texts)", request_id, len(request.texts))
@@ -217,6 +228,7 @@ async def get_recent_sources(
 
 @router.post("/rag-query")
 async def query_sentiment_rag(request: RagQueryRequest):
+    """Query RAG system for crypto sentiment insights."""
     request_id = str(uuid.uuid4())
     start_time = datetime.utcnow()
     logger.info("[%s] RAG query: %s", request_id, request.query[:120])
@@ -244,6 +256,7 @@ async def query_sentiment_rag(request: RagQueryRequest):
 
 @router.get("/fng/current")
 async def get_fng_current():
+    """Get current Fear & Greed Index value with market bias."""
     request_id = str(uuid.uuid4())
     start_time = datetime.utcnow()
     logger.info("[%s] FNG current request", request_id)

@@ -1,15 +1,24 @@
-import pytest
+"""
+Tests for core configuration, database, and exception modules.
+
+Covers settings validation, database connection management,
+and custom exception handling.
+"""
+
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 from pydantic import ValidationError
 
 from src.core.config import Settings
-from src.core.exceptions import APIError
 from src.core.database import (
     _build_postgres_url,
-    get_timescale_db,
     get_metadata_db,
+    get_timescale_db,
 )
+from src.core.exceptions import APIError
+
 
 # Configuration Tests
 

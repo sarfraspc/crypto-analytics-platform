@@ -1,7 +1,9 @@
+"""FastAPI router for price forecast and symbol listing endpoints."""
+
+import json
 import logging
 import re
 import uuid
-import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -15,7 +17,7 @@ from data.storage.models import OHLCV as OHLCVModel
 from data.storage.models import Token as TokenModel
 from modules.agent.agent_client import call_mcp_tool
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
+from modules.forecasting.data.preprocess_utils import _scaler_path_for, load_scaler_with_meta
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -39,12 +41,14 @@ PRIORITY_SYMBOLS = [
 
 
 def _validate_symbol(symbol: str) -> str:
+    """Validate and normalize crypto symbol input."""
     if not symbol or not symbol.isalnum():
         raise HTTPException(status_code=400, detail="Symbol must be alphanumeric.")
     return symbol.upper()
 
 
 def _normalize_forecast_points(payload: Dict[str, Any], horizon_hours: int) -> List[Dict[str, Any]]:
+    """Extract and normalize forecast points from MCP payload."""
     predicted = payload.get("predicted_close")
     timestamps = payload.get("timestamps") or payload.get("forecast_timestamps")
     points: List[Dict[str, Any]] = []
@@ -83,6 +87,7 @@ def _normalize_forecast_points(payload: Dict[str, Any], horizon_hours: int) -> L
 
 
 def _get_preprocessor() -> CoinPreprocessor:
+    """Get or create singleton CoinPreprocessor instance."""
     global _PREPROCESSOR
     if _PREPROCESSOR is None:
         _PREPROCESSOR = CoinPreprocessor()
@@ -90,6 +95,7 @@ def _get_preprocessor() -> CoinPreprocessor:
 
 
 def _denormalize_forecast_points(symbol: str, points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Denormalize scaled forecast values to real USD prices."""
     if not points:
         return points
 

@@ -1,3 +1,5 @@
+"""SQLAlchemy ORM models for TimescaleDB and PostgreSQL tables."""
+
 from sqlalchemy import (
     Column, String, Integer, Numeric, JSON, TEXT, BIGINT, DateTime, Float
 )
@@ -6,7 +8,9 @@ from sqlalchemy.sql import func
 
 Base = declarative_base()
 
+
 class Token(Base):
+    """Token metadata model for cryptocurrency assets."""
     __tablename__ = "tokens"
 
     symbol = Column(String, primary_key=True)
@@ -15,7 +19,9 @@ class Token(Base):
     decimals = Column(Integer)
     token_metadata = Column('metadata', JSON) 
     
-class OHLCV(Base):  
+class OHLCV(Base):
+    """OHLCV candlestick time-series model."""
+
     __tablename__ = "ohlcv"
 
     time = Column(DateTime(timezone=True), primary_key=True)
@@ -30,6 +36,8 @@ class OHLCV(Base):
     raw = Column(JSON)
 
 class Trade(Base):
+    """Individual trade execution model."""
+
     __tablename__ = "trades"
 
     time = Column(DateTime(timezone=True), primary_key=True)
@@ -42,6 +50,8 @@ class Trade(Base):
     raw = Column(JSON)
 
 class WhaleAlert(Base):
+    """Large transfer whale alert model."""
+
     __tablename__ = "whale_alerts"
 
     time = Column(DateTime(timezone=True), primary_key=True)
@@ -55,6 +65,8 @@ class WhaleAlert(Base):
     raw = Column(JSON)
 
 class OnchainMetric(Base):
+    """On-chain analytics metric model."""
+
     __tablename__ = "onchain_metrics"
 
     time = Column(DateTime(timezone=True), primary_key=True)
@@ -64,6 +76,8 @@ class OnchainMetric(Base):
     raw = Column(JSON)
 
 class NewsArticle(Base):
+    """Crypto news article model."""
+
     __tablename__ = "news_articles"
 
     id = Column(String, primary_key=True)
@@ -75,6 +89,8 @@ class NewsArticle(Base):
     raw = Column(JSON)
 
 class RedditPost(Base):
+    """Reddit post model for social sentiment."""
+
     __tablename__ = "reddit_posts"
 
     id = Column(String, primary_key=True)
@@ -87,6 +103,8 @@ class RedditPost(Base):
     raw = Column(JSON)
 
 class IngestionJob(Base):
+    """Ingestion pipeline job tracking model."""
+
     __tablename__ = "ingestion_jobs"
 
     pipeline = Column(String, primary_key=True)
@@ -95,6 +113,8 @@ class IngestionJob(Base):
     details = Column(JSON)
 
 class OHLCVFeature(Base):
+    """Computed OHLCV features for ML training."""
+
     __tablename__ = "ohlcv_features"
 
     time = Column(DateTime(timezone=True), primary_key=True) 
@@ -124,6 +144,8 @@ class OHLCVFeature(Base):
     is_month_start = Column(Integer)
 
 class OHLCVFeaturePanel(Base):
+    """Long-format OHLCV feature panel for flexible querying."""
+
     __tablename__ = "ohlcv_features_panel"
 
     time = Column(DateTime(timezone=True), primary_key=True)
@@ -134,6 +156,8 @@ class OHLCVFeaturePanel(Base):
     feature_value = Column(Float(precision=53))
 
 class TASignal(Base):
+    """Current technical analysis signal snapshot model."""
+
     __tablename__ = "ta_signals"
 
     symbol = Column(String, primary_key=True)
@@ -146,6 +170,8 @@ class TASignal(Base):
     pattern = Column(String)                   
 
 class TASignalHistory(Base):
+    """Historical technical analysis signal time-series model."""
+
     __tablename__ = "ta_signals_history"
 
     time = Column(DateTime(timezone=True), primary_key=True)

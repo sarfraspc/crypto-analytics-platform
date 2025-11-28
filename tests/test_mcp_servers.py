@@ -1,13 +1,21 @@
-import pytest
-import asyncio
-import json
-import pandas as pd
-from unittest.mock import patch, MagicMock
-from mcp.types import CallToolRequest, CallToolRequestParams
+"""
+Tests for MCP server implementations.
 
-from src.mcp_servers.price_server import ProphetMCP
+Covers price forecasting, on-chain metrics, and sentiment
+analysis MCP tool handlers and request processing.
+"""
+
+import json
+
+import pandas as pd
+import pytest
+from mcp.types import CallToolRequest, CallToolRequestParams
+from unittest.mock import MagicMock, patch
+
 from src.mcp_servers.chain_server import OnchainMCP
+from src.mcp_servers.price_server import ProphetMCP
 from src.mcp_servers.sentiment_server import PipelineMCP
+
 
 # Price Server Tests
 

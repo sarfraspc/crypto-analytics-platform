@@ -1,14 +1,18 @@
 """
-Unified prompts with context builders for multi-type responses.
+Unified prompts and context builders for agent responses.
+
+Provides prompt templates and context formatting functions for
+multi-type LLM responses including forecasts, sentiment, and backtests.
 """
 
 import json
-import pandas as pd
-import re
 import logging
-from typing import Dict, Any
+import re
 from datetime import datetime
-import pytz  # For UTC dynamic
+from typing import Any, Dict
+
+import pandas as pd
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +69,7 @@ INSTRUCTIONS: {type_instructions}
 """
 
 def _robust_parse(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Fallback parser for tool outputs (text/JSON/DF)."""
+    """Parse tool outputs from text, JSON, or DataFrame formats."""
     if isinstance(raw, dict) and 'raw' in raw:
         text = raw['raw']
         # SARIMAX: Detect header, parse DF
@@ -121,7 +125,9 @@ def _robust_parse(raw: Dict[str, Any]) -> Dict[str, Any]:
         except: pass
     return raw or {}
 
+
 def build_forecast_ctx(forecast: Dict[str, Any]) -> str:
+    """Build forecast context string for LLM prompt."""
     forecast = _robust_parse(forecast)
     if not forecast:
         return "FORECAST: N/A"
@@ -170,7 +176,9 @@ def build_forecast_ctx(forecast: Dict[str, Any]) -> str:
         ctx += f" | Top Driver: {top_feat} (SHAP: {shap_mean.get(top_feat, 0):.3f})"
     return ctx
 
+
 def build_sentiment_ctx(sentiment: Dict[str, Any]) -> str:
+    """Build sentiment context string for LLM prompt."""
     sentiment = _robust_parse(sentiment)
     if not sentiment:
         return "SENTIMENT: N/A"
@@ -188,7 +196,9 @@ def build_sentiment_ctx(sentiment: Dict[str, Any]) -> str:
     bear = flattened.get('bearish_score', 0)
     return f"SENTIMENT: {top} (Conf: {conf:.1%}, Bull: {bull:.2f}, Bear: {bear:.2f})"
 
+
 def build_onchain_ctx(onchain: Dict[str, Any]) -> str:
+    """Build on-chain metrics context string for LLM prompt."""
     onchain = _robust_parse(onchain)
     if not onchain:
         return "ON-CHAIN: N/A"
@@ -196,7 +206,9 @@ def build_onchain_ctx(onchain: Dict[str, Any]) -> str:
     pressure = onchain.get("market_pressure_index", 0)
     return f"ON-CHAIN: {bias.upper()} Bias (Pressure: {pressure:.2f}, Net Flow: ${onchain.get('net_flow_usd', 0):,.0f})"
 
+
 def build_backtest_ctx(backtest: Dict[str, Any]) -> str:
+    """Build backtest results context string for LLM prompt."""
     if not backtest:
         return "BACKTEST: N/A"
     m = backtest.get("metrics", {})
@@ -215,7 +227,9 @@ def build_backtest_ctx(backtest: Dict[str, Any]) -> str:
         f"Trades {m.get('trades_count', 0)}"
     )
 
+
 def construct_prompt(query: str, data: Dict[str, Any], qtype: str, current_date: str, categories: list[str] | None = None) -> str:
+    """Construct full LLM prompt with system instructions and data context."""
     # Dynamic UTC date
     utc_now = datetime.now(pytz.UTC).strftime("%Y-%m-%d") if current_date is None else current_date
     cats = set(categories or [])

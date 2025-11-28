@@ -1,27 +1,30 @@
-import time
-import logging
+"""News and social media ingestion from CryptoPanic, Reddit, and Alternative.me."""
+
 import hashlib
+import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
-import requests
 import praw
+import requests
 from prawcore import exceptions as prawcore_exceptions
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from sqlalchemy.orm import Session
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from core.config import settings
-from data.validation import NewsArticle, RedditPost, IngestionJob
-from data.storage.crud import upsert_news, upsert_reddit, get_last_success, update_ingestion_job
-from data.storage.models import IngestionJob as IngestionJobModel
 from core.logging_config import setup_logging
+from data.storage.crud import get_last_success, update_ingestion_job, upsert_news, upsert_reddit
+from data.storage.models import IngestionJob as IngestionJobModel
+from data.validation import IngestionJob, NewsArticle, RedditPost
 
 setup_logging()
 logger = logging.getLogger(__name__)
 vader = SentimentIntensityAnalyzer()
 
 def ingest_fng(db: Session):
+    """Ingest Fear & Greed Index from Alternative.me API."""
     logger.info("Starting FNG ingestion")
     try:
         resp = requests.get(settings.ALTERNATIVE_ME_URL, timeout=10)
@@ -54,6 +57,7 @@ def ingest_fng(db: Session):
         return 0, 0  
 
 def ingest_cryptopanic(db: Session, api_key: Optional[str] = None, limit: int = 50, max_retries: int = 3, ingestion_pipeline: str = 'cryptopanic_ingest'):
+    """Ingest news articles from CryptoPanic API with sentiment scoring."""
     logger.info("Starting CryptoPanic ingestion")
     key = api_key or settings.CRYPTOPANIC_API_KEY
     if not key:
@@ -146,6 +150,7 @@ def ingest_cryptopanic(db: Session, api_key: Optional[str] = None, limit: int = 
     return 0, 0  
 
 def ingest_reddit_praw(db: Session, subreddit: str = "cryptocurrency", limit: int = 200, ingestion_pipeline: str = 'reddit_praw_ingest'):
+    """Ingest Reddit posts from subreddit using PRAW with sentiment scoring."""
     logger.info("Starting Reddit PRAW ingestion for /r/%s", subreddit)
     cid = settings.REDDIT_CLIENT_ID
     secret = settings.REDDIT_CLIENT_SECRET

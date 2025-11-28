@@ -1,49 +1,51 @@
+"""MCP server for Prophet-based crypto price forecasting."""
+
 import asyncio
-import logging
 import json
-from pathlib import Path
-from typing import Dict, Any, Optional
+import logging
 import os
 import sys
-import pandas as pd
+from pathlib import Path
+from typing import Any, Dict, Optional
+
 import numpy as np
+import pandas as pd
+from mcp.server import Server
+from mcp.server.lowlevel import NotificationOptions
+from mcp.server.models import InitializationOptions
+from mcp.server.stdio import stdio_server
+from mcp.types import (
+    CallToolRequest,
+    CallToolRequestParams,
+    CallToolResult,
+    TextContent,
+    Tool,
+)
 
 # Ensure project root is on sys.path for imports like `core` and `modules`
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-# MCP Imports
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.server.lowlevel import NotificationOptions
-from mcp.server.models import InitializationOptions
-from mcp.types import (
-    CallToolRequest,
-    CallToolRequestParams,
-    CallToolResult,
-    Tool,
-    TextContent,
-)
-
-# Core Modules
 from core.config import settings
-from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics
 from core.logging_config import setup_logging
-
+from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.models.prophet import ProphetModel
+from modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 class ProphetMCP:
+    """MCP handler for Prophet-based price forecasting."""
     def __init__(self):
         self.coin_pre = CoinPreprocessor()
         self.model_cache: Dict[str, Any] = {}
         self.is_initialized = False
 
     async def initialize(self):
+        """Initialize the Prophet MCP server."""
         self.is_initialized = True
         logger.info("ProphetMCP Initialized.")
 
@@ -63,6 +65,7 @@ class ProphetMCP:
         return df[["close"]].copy()
 
     async def get_or_train_model(self, symbol: str) -> ProphetModel:
+        """Load cached model or train new Prophet model for symbol."""
         symbol = symbol.upper()
 
         if symbol in self.model_cache:
@@ -109,6 +112,7 @@ class ProphetMCP:
         return model
 
     async def run(self, request: CallToolRequest) -> CallToolResult:
+        """Execute Prophet forecast with stochastic noise."""
         if not self.is_initialized:
             await self.initialize()
 
@@ -217,6 +221,7 @@ async def read_resource(name: str):
     raise Exception(f"Unknown resource: {name}")
 
 async def main():
+    """Main entry point for the Prophet MCP server."""
     await mcp.initialize()
     logger.info(f"Starting {server.name}...")
     init_options = InitializationOptions(
@@ -229,6 +234,7 @@ async def main():
     )
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, init_options)
+
 
 if __name__ == "__main__":
     try:

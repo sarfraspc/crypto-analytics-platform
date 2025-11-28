@@ -1,3 +1,5 @@
+"""MCP server for unified crypto agent insights (forecast, sentiment, on-chain, RAG)."""
+
 import asyncio
 import hashlib
 import json
@@ -10,7 +12,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolRequest, CallToolResult, Tool, TextContent
 
-from core.exceptions import CryptoAnalyticsError, APIError
+from core.exceptions import APIError, CryptoAnalyticsError
 from core.logging_config import setup_logging
 from modules.agent.agent_client import orchestrate_query
 from utils.cache import RedisCache
@@ -34,25 +36,31 @@ DEFAULT_OPTIONS = {
 
 
 class AgentMCP:
+    """MCP handler for unified crypto agent insight queries."""
+
     def __init__(self):
         self.is_initialized = False
 
     async def initialize(self):
+        """Initialize the agent MCP server."""
         logger.info("Agent MCP initialized successfully")
         self.is_initialized = True
 
     def _validate_symbol(self, symbol: str) -> str:
+        """Validate and normalize crypto symbol input."""
         if not symbol or not isinstance(symbol, str) or len(symbol) > 10 or not symbol.isalnum():
             raise ValueError("Invalid symbol. Provide an alphanumeric ticker like 'BTC' or 'ETH'.")
         return symbol.upper()
 
     def _normalize_question(self, question: Optional[str], symbol: str) -> str:
+        """Sanitize and truncate user question input."""
         sanitized = (question or "").strip() or f"{symbol} market overview"
         if len(sanitized) > MAX_QUESTION_LEN:
             sanitized = sanitized[:MAX_QUESTION_LEN] + "... [truncated]"
         return sanitized
 
     def _extract_options(self, args: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+        """Extract and validate query options from request arguments."""
         raw_options = args.get("options", {})
         if isinstance(raw_options, str):
             try:
@@ -88,6 +96,7 @@ class AgentMCP:
         return merged, no_cache
 
     def _post_process(self, result: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
+        """Post-process agent result with warnings and truncation."""
         processed = dict(result)
         warnings = []
 
@@ -118,6 +127,7 @@ class AgentMCP:
         return processed
 
     async def get_agent_insight(self, request: CallToolRequest) -> CallToolResult:
+        """Execute unified agent insight query with caching."""
         if not self.is_initialized:
             raise Exception("Server not initialized")
 
@@ -295,6 +305,7 @@ async def read_resource(name: str):
 
 
 async def main():
+    """Main entry point for the agent MCP server."""
     await mcp.initialize()
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, INIT_OPTIONS)

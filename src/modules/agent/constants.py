@@ -1,5 +1,10 @@
 # src/modules/agent/constants.py
-"""Shared constants and LLM registry for the agent."""
+"""
+Agent constants and LLM registry configuration.
+
+Defines query type to LLM provider mappings and available
+query categories for the crypto analytics agent.
+"""
 
 LLM_REGISTRY = {
     "real_time": ("groq", "llama-3.3-70b-versatile", 0.1),

@@ -1,19 +1,22 @@
+"""SHAP-based explainability for forecasting models."""
+
 import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import shap
-import torch
-import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
+import shap
+import torch
 from plotly.subplots import make_subplots
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
-from modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics  
+from modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,7 @@ MODEL_SHAP_STRATEGY = {
 
 
 class SHAPExplainer:
+    """SHAP explainer wrapper for forecasting model interpretability."""
     def __init__(
         self,
         model: Any,
@@ -290,6 +294,7 @@ def explain_model_predictions(
     n_samples: int = 100,
     **kwargs
 ):
+    """Generate SHAP explanations for model predictions with visualizations."""
     explainer = SHAPExplainer(model, model_type, preprocessor, symbol)
     
     if model_type.upper() in ['CNN-LSTM', 'TFT']:

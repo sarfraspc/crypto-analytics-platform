@@ -1,11 +1,23 @@
-import pytest
-import pandas as pd
-import numpy as np
-from unittest.mock import patch, MagicMock, AsyncMock
+"""
+Tests for the crypto analytics agent module.
 
-from src.modules.agent.agent_client import CryptoAgentV2, route_tools, _infer_symbol_from_text
+Covers strategy logic, backtesting, signal generation,
+query classification, and agent orchestration.
+"""
+
+import numpy as np
+import pandas as pd
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from src.modules.agent.agent_client import (
+    CryptoAgentV2,
+    _infer_symbol_from_text,
+    route_tools,
+)
 from src.modules.agent.backtester import PortfolioBacktester, calculate_metrics
 from src.modules.agent.strategy_utils import hybrid_signal, risk_adjust_size
+
 
 # Logic Tests
 

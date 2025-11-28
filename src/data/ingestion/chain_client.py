@@ -1,14 +1,17 @@
-from web3 import Web3
-from typing import Any, Dict, List, Optional, Set
+"""Ethereum blockchain client for whale transfer detection and ingestion."""
+
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any, Dict, List, Optional, Set
+
 from sqlalchemy.orm import Session
-import logging
+from web3 import Web3
 
 from core.config import settings
-from data.validation import WhaleAlert
-from data.storage.crud import upsert_whale_alerts
 from core.logging_config import setup_logging
+from data.storage.crud import upsert_whale_alerts
+from data.validation import WhaleAlert
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -73,6 +76,7 @@ def get_logs_in_chunks(
     return all_logs
 
 def get_token_decimals(w3, token_address: str) -> Optional[int]:
+    """Get token decimals from cache, static metadata, or on-chain call."""
     if not hasattr(get_token_decimals, "_cache"):
         get_token_decimals._cache = {}
     
@@ -102,6 +106,7 @@ def get_token_decimals(w3, token_address: str) -> Optional[int]:
         return None
 
 def clean_hexbytes(obj: Any):
+    """Recursively convert HexBytes objects to hex strings for JSON serialization."""
     if isinstance(obj, dict):
         return {k: clean_hexbytes(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -118,6 +123,7 @@ def process_transfer_log(
     threshold_usd: float,
     min_timestamp: Optional[int] = None
 ) -> tuple[Optional[WhaleAlert], Set[str]]:
+    """Process a single ERC-20 Transfer log and return WhaleAlert if above threshold."""
     try:
         if len(log['topics']) < 3:
             logger.warning(f"Skipping malformed log (short topics): {log.get('transactionHash', 'unknown').hex() if hasattr(log.get('transactionHash'), 'hex') else 'unknown'}")

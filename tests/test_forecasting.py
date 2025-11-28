@@ -1,12 +1,20 @@
-import pytest
-import pandas as pd
-import numpy as np
-from unittest.mock import patch, MagicMock
+"""
+Tests for forecasting models and evaluation metrics.
 
-from src.modules.forecasting.models.sarimax import SarimaxModel
-from src.modules.forecasting.models.prophet import ProphetModel
+Covers SARIMAX, Prophet model training and inference,
+metric calculations, and MLflow logging.
+"""
+
+import numpy as np
+import pandas as pd
+import pytest
+from unittest.mock import MagicMock, patch
+
 from src.modules.forecasting.evaluation.metrics import compute_forecast_metrics
+from src.modules.forecasting.models.prophet import ProphetModel
+from src.modules.forecasting.models.sarimax import SarimaxModel
 from src.modules.forecasting.registry.mlflow_utils import log_model_params_and_metrics
+
 
 # Fixtures
 

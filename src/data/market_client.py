@@ -1,11 +1,13 @@
+"""Market data ingestion client for OHLCV backfill and TA signal generation."""
+
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict
-from sqlalchemy.orm import Session
-from sqlalchemy import func, select, Integer
 
 import mlflow
+from sqlalchemy import func, select, Integer
+from sqlalchemy.orm import Session
 
 from core.config import settings
 from core.database import get_timescale_db, get_metadata_db
@@ -21,10 +23,12 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 def setup_mlflow():
+    """Configure MLflow tracking URI from settings."""
     mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
     logger.info(f"MLflow configured with: {settings.MLFLOW_TRACKING_URI}")
 
 def get_symbols_from_tokens(db: Session, limit: int = 50):
+    """Fetch top-ranked token symbols from metadata DB for market ingestion."""
     try:
         quote = getattr(settings, "MARKET_QUOTE_SYMBOL", "USDT")
         exchange_id = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
@@ -119,6 +123,7 @@ def backfill_and_ta(db_timescale, db_metadata, exchange, symbol, interval, since
 
 
 async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: List[Dict] = None):
+    """Run full historical OHLCV backfill for all symbols."""
     start_time = datetime.now()
     symbols = symbols or get_symbols_from_tokens(db_metadata, limit=50)
     logger.info("Starting backfill for %d symbols", len(symbols))
@@ -170,6 +175,7 @@ async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: Lis
     logger.info("Backfill complete")
 
 async def run_polling(db_metadata: Session, db_timescale: Session, symbols: List[Dict] = None):
+    """Run continuous trade polling for real-time data ingestion."""
     start_time = datetime.now()
     symbols = symbols or get_symbols_from_tokens(db_metadata, limit=10)
     logger.info("Starting polling for %d symbols", len(symbols))
@@ -210,6 +216,7 @@ async def run_polling(db_metadata: Session, db_timescale: Session, symbols: List
     logger.info("Polling complete")
 
 def log_ingestion_to_mlflow(experiment_name: str, pipeline: str, duration: float, symbols: List[Dict], details: Dict):
+    """Log ingestion run metrics and parameters to MLflow."""
     mlflow.set_experiment(experiment_name)
     with mlflow.start_run(run_name=f"{pipeline} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"):
         mlflow.log_param("pipeline", pipeline)
@@ -224,6 +231,7 @@ def log_ingestion_to_mlflow(experiment_name: str, pipeline: str, duration: float
         logger.info(f"Logged ingestion run for pipeline '{pipeline}' to MLflow experiment '{experiment_name}'.")
 
 async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipeline: str = 'full_cycle', symbols: List[Dict] = None, delta_only: bool = True):
+    """Run complete ingestion cycle: OHLCV backfill followed by TA generation."""
     start_time = datetime.now()
     symbols = symbols or get_symbols_from_tokens(db_metadata, limit=50)
     logger.info(f"Starting {pipeline} with %d symbols", len(symbols))

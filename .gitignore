@@ -39,7 +39,7 @@ src/modules/forecasting/models/scalers/
 # Docker
 *.log
 
-# Lightning/TensorBoard logs
+# Lightning/TensorBoard logs 
 lightning_logs/
 tslogs/
 src/logs/tft_logs/

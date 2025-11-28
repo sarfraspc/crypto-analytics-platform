@@ -1,10 +1,12 @@
+"""Pipeline orchestration for on-chain metrics computation."""
+
 import logging
 from datetime import datetime, timezone
 
 from core.logging_config import setup_logging
+from modules.onchain.metrics.aggregator import combine_metrics
 from modules.onchain.metrics.exchange_flows import compute_exchange_flows
 from modules.onchain.metrics.whale_alerts import summarize_whale_alerts
-from modules.onchain.metrics.aggregator import combine_metrics
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -14,6 +16,7 @@ def run_onchain_metrics(
     chain: str = "ethereum",
     time_window: str = "24h",
 ):
+    """Run full on-chain metrics pipeline: flows, whales, and aggregation."""
     logger.info(f"Starting onchain metrics pipeline for {chain}, {time_window}")
     errors = []
     status = {

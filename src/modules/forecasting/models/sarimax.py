@@ -1,3 +1,5 @@
+"""SARIMAX time series forecasting model for crypto prices."""
+
 import logging
 from pathlib import Path
 from typing import Optional, Tuple
@@ -8,11 +10,13 @@ import pandas as pd
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
-from modules.forecasting.data.preprocess_utils import load_scaler_with_meta, _scaler_path_for
+from modules.forecasting.data.preprocess_utils import _scaler_path_for, load_scaler_with_meta
 
 logger = logging.getLogger(__name__)
 
+
 class SarimaxModel:
+    """SARIMAX model wrapper for crypto price forecasting on log returns."""
     def __init__(
         self,
         symbol: str,
@@ -33,8 +37,9 @@ class SarimaxModel:
     def train(
         self,
         df: pd.DataFrame,
-        target_col: str = "log_return", # Changed default target
+        target_col: str = "log_return",
     ):
+        """Train SARIMAX model on log returns."""
         if target_col not in df.columns:
             raise ValueError(f"Target column '{target_col}' not found in DataFrame")
 
@@ -60,6 +65,7 @@ class SarimaxModel:
         logger.info(f"Finished training SARIMAX for {self.symbol}")
 
     def forecast(self, steps: int = 7) -> pd.Series:
+        """Forecast log returns for specified number of steps."""
         if self.model_fit is None:
             raise RuntimeError("Model is not trained. Call train() first.")
         
@@ -68,12 +74,14 @@ class SarimaxModel:
         return forecast_returns
 
     def save(self):
+        """Save trained model to disk."""
         if self.model_fit is None:
             raise RuntimeError("No trained model to save")
         joblib.dump(self.model_fit, self.model_path)
         logger.info(f"Saved SARIMAX model for {self.symbol} -> {self.model_path}")
 
     def load(self):
+        """Load trained model from disk."""
         if not self.model_path.exists():
             raise FileNotFoundError(f"No saved model found at {self.model_path}")
         self.model_fit = joblib.load(self.model_path)
@@ -104,14 +112,15 @@ def _inverse_transform_close(symbol: str, df: pd.DataFrame, preprocessor: CoinPr
 
 
 def train_and_forecast(
-    symbol: str, 
-    df: pd.DataFrame = None, 
-    exchange: str = 'binance', 
-    interval: str = '1h', 
-    forecast_steps: int = 7, 
-    retrain_if_exists: bool = False, 
+    symbol: str,
+    df: pd.DataFrame = None,
+    exchange: str = 'binance',
+    interval: str = '1h',
+    forecast_steps: int = 7,
+    retrain_if_exists: bool = False,
     ensure_features: bool = True
 ):
+    """Train SARIMAX model and generate price forecast from log returns."""
     coin_pre = CoinPreprocessor()
     
     # 1. Load Data

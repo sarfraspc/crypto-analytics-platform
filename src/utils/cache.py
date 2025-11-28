@@ -1,9 +1,16 @@
-from io import StringIO
+"""
+Redis caching utilities for the crypto analytics platform.
+
+Provides JSON and DataFrame caching with configurable TTL,
+pattern-based deletion, and environment-aware configuration.
+"""
+
 import json
 import logging
+import os
+from io import StringIO
 from typing import Any, Optional
 
-import os
 import pandas as pd
 import redis
 
@@ -11,8 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 class RedisCache:
+    """
+    Redis-based cache for JSON and DataFrame storage.
+
+    Supports environment-based configuration for Docker deployments
+    and provides TTL-based expiration for cached data.
+    """
+
     def __init__(self, host="localhost", port=6379, db=0, expire_seconds: int = 3600):
-        # Allow Docker / env-configured Redis (e.g. REDIS_HOST=redis inside containers).
+        """Initialize Redis connection with environment overrides."""
         resolved_host = os.getenv("REDIS_HOST", host)
         resolved_port = int(os.getenv("REDIS_PORT", port))
         resolved_db = int(os.getenv("REDIS_DB", db))
@@ -25,6 +39,7 @@ class RedisCache:
         self.expire_seconds = expire_seconds
 
     def set_json(self, key: str, value: Any, expire_seconds: Optional[int] = None) -> None:
+        """Store JSON-serializable value with optional TTL override."""
         try:
             ttl = expire_seconds if expire_seconds is not None else self.expire_seconds
             self.client.set(key, json.dumps(value), ex=ttl)
@@ -33,6 +48,7 @@ class RedisCache:
             logger.warning(f"[Redis] Failed to cache key={key}: {e}")
 
     def get_json(self, key: str):
+        """Retrieve and deserialize JSON value from cache."""
         try:
             data = self.client.get(key)
             return json.loads(data) if data else None
@@ -41,6 +57,7 @@ class RedisCache:
             return None
 
     def set_dataframe(self, key: str, df: pd.DataFrame, expire_seconds: Optional[int] = None):
+        """Store pandas DataFrame in cache with split orientation."""
         try:
             ttl = expire_seconds if expire_seconds is not None else self.expire_seconds
             payload = df.to_json(orient="split", date_format="iso")
@@ -50,6 +67,7 @@ class RedisCache:
             logger.warning(f"[Redis] Failed to cache DataFrame key={key}: {e}")
 
     def get_dataframe(self, key: str):
+        """Retrieve and deserialize DataFrame from cache."""
         try:
             data = self.client.get(key)
             if not data:
@@ -62,6 +80,7 @@ class RedisCache:
             return None
 
     def delete_by_pattern(self, pattern: str):
+        """Delete all keys matching the given pattern."""
         try:
             keys_to_delete = [key for key in self.client.scan_iter(match=pattern)]
             if keys_to_delete:
@@ -79,6 +98,7 @@ class RedisCache:
             return 0
 
     def get_stats(self, pattern: str = "*"):
+        """Get count of keys matching pattern."""
         try:
             count = 0
             for _ in self.client.scan_iter(match=pattern):

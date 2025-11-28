@@ -1,15 +1,18 @@
+"""Exchange flow metrics computation from whale transfer data."""
+
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+
 from sqlalchemy import select
 
 from core.config import settings
 from core.database import get_timescale_db
+from core.logging_config import setup_logging
+from data.storage.crud import upsert_onchain_metrics
 from data.storage.models import WhaleAlert as WhaleAlertModel
 from data.validation import OnchainMetric
-from data.storage.crud import upsert_onchain_metrics
 from utils.cache import RedisCache
-from core.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -26,8 +29,9 @@ EXCHANGE_ADDRS = {addr.lower(): exchange for exchange, addrs in settings.EXCHANG
 
 def compute_exchange_flows(
     chain: str = 'ethereum',
-    time_window: str = '24h' 
+    time_window: str = '24h'
 ):
+    """Compute exchange inflow/outflow metrics from whale alerts."""
     cache_key = f"onchain:exchange_flows:{chain}:{time_window}"
     cached = redis_cache.get_json(cache_key)
     if cached:

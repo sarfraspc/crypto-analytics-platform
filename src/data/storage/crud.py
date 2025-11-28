@@ -1,38 +1,42 @@
-from typing import List
-from datetime import datetime, timedelta, timezone
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
-from sqlalchemy import select
-from data.validation import (
-    OHLCV,
-    Trade,
-    NewsArticle,
-    RedditPost,
-    WhaleAlert,
-    OnchainMetric,
-    IngestionJob,
-    TASignal,
-    TASignalHistory,
-)
-from data.storage.models import (
-    Token as TokenModel,
-    OHLCV as OHLCVModel,
-    Trade as TradeModel,
-    WhaleAlert as WhaleAlertModel,
-    OnchainMetric as OnchainMetricModel,
-    NewsArticle as NewsArticleModel,
-    RedditPost as RedditPostModel,
-    IngestionJob as IngestionJobModel,
-    TASignal as TASignalModel,
-    TASignalHistory as TASignalHistoryModel,
-)
+"""CRUD operations for data storage in TimescaleDB and PostgreSQL."""
 
 import logging
+from datetime import datetime, timedelta, timezone
+from typing import List
+
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
+from data.storage.models import (
+    IngestionJob as IngestionJobModel,
+    NewsArticle as NewsArticleModel,
+    OHLCV as OHLCVModel,
+    OnchainMetric as OnchainMetricModel,
+    RedditPost as RedditPostModel,
+    TASignal as TASignalModel,
+    TASignalHistory as TASignalHistoryModel,
+    Token as TokenModel,
+    Trade as TradeModel,
+    WhaleAlert as WhaleAlertModel,
+)
+from data.validation import (
+    IngestionJob,
+    NewsArticle,
+    OHLCV,
+    OnchainMetric,
+    RedditPost,
+    TASignal,
+    TASignalHistory,
+    Trade,
+    WhaleAlert,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def get_token(db: Session, symbol: str):
+    """Fetch token metadata by symbol from database."""
     try:
         token = db.execute(select(TokenModel).where(TokenModel.symbol == symbol)).scalar_one_or_none()
         return token.__dict__ if token else None
@@ -42,6 +46,7 @@ def get_token(db: Session, symbol: str):
 
 
 def upsert_ohlcv(db: Session, rows: List[OHLCV]):
+    """Insert OHLCV rows, skipping duplicates based on composite key."""
     if not rows:
         return
     try:
@@ -72,6 +77,7 @@ def upsert_ohlcv(db: Session, rows: List[OHLCV]):
 
 
 def upsert_trades(db: Session, rows: List[Trade]):
+    """Insert trade rows, skipping duplicates based on composite key."""
     if not rows:
         return
     try:
@@ -101,6 +107,7 @@ def upsert_trades(db: Session, rows: List[Trade]):
 
 
 def upsert_news(db: Session, articles: List[NewsArticle]):
+    """Insert news articles, skipping duplicates by ID."""
     if not articles:
         return
     
@@ -125,6 +132,7 @@ def upsert_news(db: Session, articles: List[NewsArticle]):
 
 
 def upsert_reddit(db: Session, posts: List[RedditPost]):
+    """Insert Reddit posts, skipping duplicates by ID."""
     if not posts:
         return
     
@@ -149,6 +157,7 @@ def upsert_reddit(db: Session, posts: List[RedditPost]):
 
 
 def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert], chunk_size: int = 500):
+    """Bulk upsert whale alerts in chunks with conflict handling."""
     if not alerts:
         return
 
@@ -186,6 +195,7 @@ def upsert_whale_alerts(db: Session, alerts: List[WhaleAlert], chunk_size: int =
 
 
 def upsert_onchain_metrics(db: Session, metrics: List[OnchainMetric]):
+    """Bulk upsert on-chain metrics with conflict handling."""
     if not metrics:
         return
     
@@ -216,6 +226,7 @@ def upsert_onchain_metrics(db: Session, metrics: List[OnchainMetric]):
 
 
 def get_last_success(db: Session, pipeline: str):
+    """Get last successful run timestamp for a pipeline, defaults to 1 hour ago."""
     try:
         job = db.execute(
             select(IngestionJobModel).where(IngestionJobModel.pipeline == pipeline)
@@ -228,6 +239,7 @@ def get_last_success(db: Session, pipeline: str):
 
 
 def update_ingestion_job(db: Session, job: IngestionJob):
+    """Update or insert ingestion job tracking record."""
     try:
         job_model = IngestionJobModel(
             pipeline=job.pipeline, last_run=job.last_run, last_success=job.last_success,
@@ -243,6 +255,7 @@ def update_ingestion_job(db: Session, job: IngestionJob):
 
 
 def upsert_ta_signals(db: Session, signals: List[TASignal]):
+    """Upsert TA signal snapshots with conflict update on composite key."""
     if not signals:
         return
     try:
@@ -280,6 +293,7 @@ def upsert_ta_signals(db: Session, signals: List[TASignal]):
 
 
 def insert_ta_signals_history(db: Session, signals: List[TASignalHistory]):
+    """Insert TA signal history records with conflict update."""
     if not signals:
         return
     try:
