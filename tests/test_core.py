@@ -55,7 +55,8 @@ def test_settings_valid_env_vars():
         "INFURA_WSS": "wss://mainnet.infura.io/v3/xyz",
         "ALTERNATIVE_ME_URL": "https://api.alternative.me/",
         "CRYPTOPANIC_URL": "https://cryptopanic.com/api/",
-        "ALLOWED_ORIGINS": "http://localhost:3000,http://example.com"
+        "ALLOWED_ORIGINS": "http://localhost:3000,http://example.com",
+        "APP_ENV": "development"
     }
 
     with patch.dict(os.environ, env_vars):
