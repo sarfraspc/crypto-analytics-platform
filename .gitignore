@@ -20,6 +20,7 @@ env/
 .env
 .env.*
 !.env.example
+!tests/.env.test
 secrets/
 
 # Data
