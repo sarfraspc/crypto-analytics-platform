@@ -15,6 +15,7 @@ from core.database import get_metadata_db, get_timescale_db
 from core.logging_config import setup_logging
 from data.storage.models import OHLCV as OHLCVModel
 from data.storage.models import Token as TokenModel
+from data.storage.models import ForecastCache as ForecastCacheModel
 from modules.agent.agent_client import call_mcp_tool
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_utils import _scaler_path_for, load_scaler_with_meta
@@ -305,6 +306,34 @@ async def get_price_forecast(
 
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
     
+    generated_at = datetime.utcnow()
+    last_point = points[-1] if points else None
+
+    # Save to cache for fast dashboard loading
+    try:
+        with get_timescale_db() as session:
+            from sqlalchemy.dialects.postgresql import insert
+
+            cache_data = {
+                "symbol": sanitized_symbol,
+                "model_used": model_used,
+                "generated_at": generated_at,
+                "horizon_hours": horizon_hours,
+                "forecast_points": points,
+                "last_point": last_point,
+                "raw_text": raw_text,
+            }
+            stmt = insert(ForecastCacheModel).values(**cache_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["symbol"],
+                set_=cache_data,
+            )
+            session.execute(stmt)
+            session.commit()
+            logger.info("[%s] Saved forecast to cache for %s", request_id, sanitized_symbol)
+    except Exception as cache_exc:
+        logger.warning("[%s] Failed to cache forecast: %s", request_id, cache_exc)
+
     response = {
         "request_id": request_id,
         "symbol": sanitized_symbol,
@@ -312,10 +341,60 @@ async def get_price_forecast(
         "model_used": model_used,
         "start_date": start_date,
         "forecast_points": points,
-        "last_point": points[-1] if points else None,
+        "last_point": last_point,
         "raw_text": raw_text,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": generated_at.isoformat(),
         "duration_ms": duration_ms,
     }
     logger.info("[%s] Forecast returned %s points in %sms", request_id, len(points), duration_ms)
     return response
+
+
+@router.get("/forecast/{symbol}/cached")
+async def get_cached_forecast(
+    symbol: str,
+    max_age_hours: int = Query(4, ge=1, le=24, description="Max age of cached forecast in hours."),
+):
+    """Get cached forecast for fast dashboard loading. Falls back to fresh if cache is stale."""
+    sanitized_symbol = _validate_symbol(symbol)
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+
+    logger.info("[%s] Cached forecast request: symbol=%s max_age=%sh", request_id, sanitized_symbol, max_age_hours)
+
+    try:
+        with get_timescale_db() as session:
+            from datetime import timedelta
+
+            min_time = datetime.utcnow() - timedelta(hours=max_age_hours)
+            stmt = (
+                select(ForecastCacheModel)
+                .where(
+                    ForecastCacheModel.symbol == sanitized_symbol,
+                    ForecastCacheModel.generated_at >= min_time,
+                )
+                .order_by(ForecastCacheModel.generated_at.desc())
+                .limit(1)
+            )
+            cached = session.execute(stmt).scalar_one_or_none()
+
+            if cached:
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                return {
+                    "request_id": request_id,
+                    "symbol": sanitized_symbol,
+                    "horizon_hours": cached.horizon_hours,
+                    "model_used": cached.model_used,
+                    "forecast_points": cached.forecast_points or [],
+                    "last_point": cached.last_point,
+                    "raw_text": cached.raw_text,
+                    "generated_at": cached.generated_at.isoformat() if cached.generated_at else None,
+                    "duration_ms": duration_ms,
+                    "from_cache": True,
+                }
+    except Exception as exc:
+        logger.warning("[%s] Cache lookup failed: %s", request_id, exc)
+
+    # Fallback to fresh forecast
+    logger.info("[%s] Cache miss, fetching fresh forecast", request_id)
+    return await get_price_forecast(sanitized_symbol, horizon_days=10)

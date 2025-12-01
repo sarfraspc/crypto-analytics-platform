@@ -134,6 +134,81 @@ def _compute_price_change_pct_for_symbol(symbol: str, window: str) -> Optional[f
         return None
 
 
+def _fetch_metrics_from_db(chain: str, window: str) -> Dict[str, Any]:
+    """Fetch on-chain metrics directly from database (bypasses MCP for speed)."""
+    with get_timescale_db() as ts_db:
+        from data.storage.models import OnchainMetric as OnchainMetricModel
+
+        def latest(metric_name: str) -> Optional[float]:
+            stmt = (
+                select(OnchainMetricModel.value)
+                .where(
+                    OnchainMetricModel.chain == chain,
+                    OnchainMetricModel.metric == metric_name,
+                    OnchainMetricModel.raw.op("->>")("window") == window,
+                )
+                .order_by(OnchainMetricModel.time.desc())
+                .limit(1)
+            )
+            value = ts_db.execute(stmt).scalar_one_or_none()
+            return float(value) if value is not None else None
+
+        flows = {
+            "exchange_inflow_usd": latest("exchange_inflow_usd"),
+            "exchange_outflow_usd": latest("exchange_outflow_usd"),
+            "net_flow_usd": latest("net_flow_usd"),
+            "exchange_flow_ratio": latest("exchange_flow_ratio"),
+            "flow_trend_24h": latest("flow_trend_24h"),
+        }
+
+        whales = {
+            "whale_count": latest("whale_count"),
+            "total_whale_volume_usd": latest("total_whale_volume_usd"),
+            "avg_whale_tx_size_usd": latest("avg_whale_tx_size_usd"),
+            "whale_exchange_inflow": latest("whale_exchange_inflow"),
+            "whale_exchange_outflow": latest("whale_exchange_outflow"),
+            "whale_exchange_ratio": latest("whale_exchange_ratio"),
+            "unique_whale_addresses": latest("unique_whale_addresses"),
+        }
+
+        aggregated_metrics = {
+            "market_pressure_index": latest("market_pressure_index"),
+            "whale_to_exchange_ratio": latest("whale_to_exchange_ratio"),
+            "price_whale_corr_7d": latest("price_whale_corr_7d"),
+            "flow_trend_7d": latest("flow_trend_7d"),
+            "price_change_pct": latest("price_change_pct"),
+        }
+
+    # Derive market_bias on the fly
+    net_flow = flows.get("net_flow_usd") or 0.0
+    price_change = aggregated_metrics.get("price_change_pct") or 0.0
+    whale_ratio = aggregated_metrics.get("whale_to_exchange_ratio") or 0.0
+
+    flow_bias = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
+    price_bias = 1 if price_change > 0 else -1 if price_change < 0 else 0
+    ratio_bias = 1 - whale_ratio
+
+    bias_score = (flow_bias * 0.4) + (price_bias * 0.3) + (ratio_bias * 0.3)
+    if bias_score > 0.3:
+        market_bias = "bullish"
+    elif bias_score < -0.3:
+        market_bias = "bearish"
+    else:
+        market_bias = "neutral"
+
+    aggregated = {
+        **aggregated_metrics,
+        "market_bias": market_bias,
+    }
+
+    return {
+        "flows": flows,
+        "whales": whales,
+        "aggregated": aggregated,
+        "errors": [],
+    }
+
+
 @router.get("/metrics")
 async def get_onchain_metrics(
     window: str = Query("24h", description="Lookback window (1h, 24h, 7d)."),
@@ -154,18 +229,11 @@ async def get_onchain_metrics(
         symbol,
     )
 
-    async def _fetch_metrics():
-        return await call_mcp_tool(
-            "crypto-onchain-server",
-            "run_metrics_only",
-            {"chain": chain, "window": window},
-            use_cache=False,
-        )
-
     try:
-        payload = await _fetch_metrics()
+        # Direct DB query - bypasses MCP for faster response
+        payload = _fetch_metrics_from_db(chain, window)
     except Exception as exc:
-        logger.error("[%s] Metrics tool failed: %s", request_id, exc, exc_info=True)
+        logger.error("[%s] Metrics DB query failed: %s", request_id, exc, exc_info=True)
         raise HTTPException(status_code=502, detail="On-chain metrics unavailable.") from exc
 
     metrics = _shape_metrics(payload)

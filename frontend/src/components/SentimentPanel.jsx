@@ -23,8 +23,9 @@ const SentimentPanel = () => {
       setLoading(true)
       setError(null)
       try {
+        // Use cached sentiment for fast initial load
         const [result, fngResult] = await Promise.all([
-          getSentimentAnalysis(symbol),
+          getSentimentAnalysis(symbol, { useCached: true, maxAgeHours: 4 }),
           getFngCurrent().catch(() => null),
         ])
         if (isMounted) {

@@ -182,3 +182,33 @@ class TASignalHistory(Base):
     rsi = Column(Float(precision=53))
     macd_hist = Column(Float(precision=53))
     pattern = Column(String)
+
+
+class ForecastCache(Base):
+    """Cached forecast results for fast dashboard loading."""
+
+    __tablename__ = "forecast_cache"
+
+    symbol = Column(String, primary_key=True)
+    model_used = Column(String)
+    generated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    horizon_hours = Column(Integer)
+    forecast_points = Column(JSON)  # Array of {timestamp, predicted_close}
+    last_point = Column(JSON)  # Last forecast point
+    raw_text = Column(TEXT)
+
+
+class SentimentCache(Base):
+    """Cached sentiment results for fast dashboard loading."""
+
+    __tablename__ = "sentiment_cache"
+
+    symbol = Column(String, primary_key=True)
+    generated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    top_sentiment = Column(String)
+    top_confidence = Column(Float(precision=53))
+    bullish_score = Column(Float(precision=53))
+    bearish_score = Column(Float(precision=53))
+    neutral_score = Column(Float(precision=53))
+    sources = Column(JSON)  # Array of source objects
+    response = Column(TEXT)

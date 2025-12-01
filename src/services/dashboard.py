@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import desc, select
 
 from core.database import get_timescale_db
+from data.storage.models import OnchainMetric as OnchainMetricModel
 from core.logging_config import setup_logging
 from data.storage.models import WhaleAlert as WhaleAlertModel
 from modules.agent.agent_client import call_mcp_tool
@@ -91,38 +92,139 @@ def _shape_onchain_metrics(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def _gather_overview(symbol: str, horizon_hours: int, window: str, k_docs: int):
-    """Gather forecast, sentiment, and on-chain data concurrently."""
-    tasks = {
-        "forecast": call_mcp_tool(
-            "crypto-prophet-server",
-            "forecast_prophet",
-            {"symbol": symbol, "horizon": horizon_hours},
-        ),
-        "sentiment": call_mcp_tool(
-            "crypto-sentiment-server",
-            "analyze_with_sources",
-            {
-                "query": f"Market sentiment for {symbol} from news, Reddit, and on-chain context",
-                "k": k_docs,
-                "include_sources": True,
-            },
-        ),
-        "onchain": call_mcp_tool(
-            "crypto-onchain-server",
-            "run_metrics_only",
-            {"window": window},
-        ),
+def _fetch_onchain_metrics_from_db(chain: str, window: str) -> Dict[str, Any]:
+    """Fetch on-chain metrics directly from database (bypasses MCP for speed)."""
+    with get_timescale_db() as ts_db:
+        def latest(metric_name: str):
+            stmt = (
+                select(OnchainMetricModel.value)
+                .where(
+                    OnchainMetricModel.chain == chain,
+                    OnchainMetricModel.metric == metric_name,
+                    OnchainMetricModel.raw.op("->>")("window") == window,
+                )
+                .order_by(OnchainMetricModel.time.desc())
+                .limit(1)
+            )
+            value = ts_db.execute(stmt).scalar_one_or_none()
+            return float(value) if value is not None else None
+
+        flows = {
+            "exchange_inflow_usd": latest("exchange_inflow_usd"),
+            "exchange_outflow_usd": latest("exchange_outflow_usd"),
+            "net_flow_usd": latest("net_flow_usd"),
+            "exchange_flow_ratio": latest("exchange_flow_ratio"),
+            "flow_trend_24h": latest("flow_trend_24h"),
+        }
+
+        whales = {
+            "whale_count": latest("whale_count"),
+            "total_whale_volume_usd": latest("total_whale_volume_usd"),
+            "avg_whale_tx_size_usd": latest("avg_whale_tx_size_usd"),
+            "whale_exchange_inflow": latest("whale_exchange_inflow"),
+            "whale_exchange_outflow": latest("whale_exchange_outflow"),
+            "whale_exchange_ratio": latest("whale_exchange_ratio"),
+            "unique_whale_addresses": latest("unique_whale_addresses"),
+        }
+
+        aggregated_metrics = {
+            "market_pressure_index": latest("market_pressure_index"),
+            "whale_to_exchange_ratio": latest("whale_to_exchange_ratio"),
+            "price_whale_corr_7d": latest("price_whale_corr_7d"),
+            "flow_trend_7d": latest("flow_trend_7d"),
+            "price_change_pct": latest("price_change_pct"),
+        }
+
+    # Derive market_bias
+    net_flow = flows.get("net_flow_usd") or 0.0
+    price_change = aggregated_metrics.get("price_change_pct") or 0.0
+    whale_ratio = aggregated_metrics.get("whale_to_exchange_ratio") or 0.0
+
+    flow_bias = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
+    price_bias = 1 if price_change > 0 else -1 if price_change < 0 else 0
+    ratio_bias = 1 - whale_ratio
+
+    bias_score = (flow_bias * 0.4) + (price_bias * 0.3) + (ratio_bias * 0.3)
+    if bias_score > 0.3:
+        market_bias = "bullish"
+    elif bias_score < -0.3:
+        market_bias = "bearish"
+    else:
+        market_bias = "neutral"
+
+    return {
+        "flows": flows,
+        "whales": whales,
+        "aggregated": {**aggregated_metrics, "market_bias": market_bias},
+        "errors": [],
     }
-    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-    shaped = {}
-    for key, result in zip(tasks.keys(), results):
-        if isinstance(result, Exception):
-            logger.error("Dashboard %s task failed: %s", key, result)
-            shaped[key] = {"error": str(result)}
-        else:
-            shaped[key] = result
-    return shaped
+
+
+def _fetch_forecast_from_cache(symbol: str) -> Dict[str, Any]:
+    """Fetch forecast from cache table (fast, no MCP overhead)."""
+    from data.storage.models import ForecastCache as ForecastCacheModel
+
+    with get_timescale_db() as ts_db:
+        stmt = (
+            select(ForecastCacheModel)
+            .where(ForecastCacheModel.symbol == symbol)
+            .limit(1)
+        )
+        cached = ts_db.execute(stmt).scalar_one_or_none()
+        if cached:
+            return {
+                "model_used": cached.model_used,
+                "forecast_points": cached.forecast_points,
+                "last_point": cached.last_point,
+                "raw_text": cached.raw_text,
+                "generated_at": cached.generated_at.isoformat() if cached.generated_at else None,
+            }
+    return {}
+
+
+def _fetch_sentiment_from_cache(symbol: str) -> Dict[str, Any]:
+    """Fetch sentiment from cache table (fast, no MCP overhead)."""
+    from data.storage.models import SentimentCache as SentimentCacheModel
+
+    with get_timescale_db() as ts_db:
+        stmt = (
+            select(SentimentCacheModel)
+            .where(SentimentCacheModel.symbol == symbol)
+            .limit(1)
+        )
+        cached = ts_db.execute(stmt).scalar_one_or_none()
+        if cached:
+            return {
+                "aggregated": {
+                    "top_sentiment": cached.top_sentiment,
+                    "top_confidence": cached.top_confidence,
+                    "bullish_score": cached.bullish_score,
+                    "bearish_score": cached.bearish_score,
+                    "neutral_score": cached.neutral_score,
+                },
+                "sources": cached.sources,
+                "response": cached.response,
+                "generated_at": cached.generated_at.isoformat() if cached.generated_at else None,
+            }
+    return {}
+
+
+async def _gather_overview(symbol: str, horizon_hours: int, window: str, k_docs: int):
+    """Gather forecast, sentiment, and on-chain data from cache (fast dashboard loading)."""
+    import asyncio
+
+    def fetch_all_from_db():
+        try:
+            forecast = _fetch_forecast_from_cache(symbol)
+            sentiment = _fetch_sentiment_from_cache(symbol)
+            onchain = _fetch_onchain_metrics_from_db("ethereum", window)
+            return {"forecast": forecast, "sentiment": sentiment, "onchain": onchain}
+        except Exception as e:
+            logger.error("Dashboard DB fetch failed: %s", e)
+            return {"error": str(e)}
+
+    result = await asyncio.to_thread(fetch_all_from_db)
+    return result
 
 
 @router.get("/overview/{symbol}")
