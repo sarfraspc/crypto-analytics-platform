@@ -8,7 +8,9 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, constr, validator
 
+from core.database import get_timescale_db
 from core.logging_config import setup_logging
+from data.storage.models import SentimentCache as SentimentCacheModel
 from modules.agent.agent_client import call_mcp_tool
 
 setup_logging()
@@ -156,6 +158,36 @@ async def get_asset_sentiment(
 
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
     aggregated = sentiment_payload.get("aggregated", {}) if isinstance(sentiment_payload, dict) else {}
+    sources = sentiment_payload.get("sources") if isinstance(sentiment_payload, dict) else None
+    response_text = sentiment_payload.get("response") if isinstance(sentiment_payload, dict) else sentiment_payload
+
+    # Save to cache for fast dashboard loading
+    try:
+        from sqlalchemy.dialects.postgresql import insert
+
+        with get_timescale_db() as session:
+            cache_data = {
+                "symbol": sanitized_symbol,
+                "generated_at": datetime.utcnow(),
+                "top_sentiment": aggregated.get("top_sentiment") or aggregated.get("sentiment"),
+                "top_confidence": aggregated.get("top_confidence") or aggregated.get("confidence"),
+                "bullish_score": aggregated.get("bullish_score"),
+                "bearish_score": aggregated.get("bearish_score"),
+                "neutral_score": aggregated.get("neutral_score"),
+                "sources": sources,
+                "response": response_text if isinstance(response_text, str) else None,
+            }
+            stmt = insert(SentimentCacheModel).values(**cache_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["symbol"],
+                set_=cache_data,
+            )
+            session.execute(stmt)
+            session.commit()
+            logger.info("[%s] Saved sentiment to cache for %s", request_id, sanitized_symbol)
+    except Exception as cache_exc:
+        logger.warning("[%s] Failed to cache sentiment: %s", request_id, cache_exc)
+
     response = {
         "request_id": request_id,
         "symbol": sanitized_symbol,
@@ -167,10 +199,65 @@ async def get_asset_sentiment(
             "bullish_score": aggregated.get("bullish_score"),
             "neutral_score": aggregated.get("neutral_score"),
         },
-        "sources": sentiment_payload.get("sources") if isinstance(sentiment_payload, dict) else None,
-        "response": sentiment_payload.get("response") if isinstance(sentiment_payload, dict) else sentiment_payload,
+        "sources": sources,
+        "response": response_text,
     }
     return response
+
+
+@router.get("/asset/{symbol}/cached")
+async def get_cached_sentiment(
+    symbol: str,
+    max_age_hours: int = Query(4, ge=1, le=24, description="Max age of cached sentiment in hours."),
+):
+    """Get cached sentiment for fast dashboard loading. Falls back to fresh if cache is stale."""
+    sanitized_symbol = _validate_symbol(symbol)
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+
+    logger.info("[%s] Cached sentiment request: symbol=%s max_age=%sh", request_id, sanitized_symbol, max_age_hours)
+
+    try:
+        from datetime import timedelta
+        from sqlalchemy import select
+
+        with get_timescale_db() as session:
+            min_time = datetime.utcnow() - timedelta(hours=max_age_hours)
+            stmt = (
+                select(SentimentCacheModel)
+                .where(
+                    SentimentCacheModel.symbol == sanitized_symbol,
+                    SentimentCacheModel.generated_at >= min_time,
+                )
+                .order_by(SentimentCacheModel.generated_at.desc())
+                .limit(1)
+            )
+            cached = session.execute(stmt).scalar_one_or_none()
+
+            if cached:
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                return {
+                    "request_id": request_id,
+                    "symbol": sanitized_symbol,
+                    "duration_ms": duration_ms,
+                    "aggregated": {
+                        "top_sentiment": cached.top_sentiment,
+                        "top_confidence": cached.top_confidence,
+                        "bearish_score": cached.bearish_score,
+                        "bullish_score": cached.bullish_score,
+                        "neutral_score": cached.neutral_score,
+                    },
+                    "sources": cached.sources,
+                    "response": cached.response,
+                    "generated_at": cached.generated_at.isoformat() if cached.generated_at else None,
+                    "from_cache": True,
+                }
+    except Exception as exc:
+        logger.warning("[%s] Cache lookup failed: %s", request_id, exc)
+
+    # Fallback to fresh sentiment
+    logger.info("[%s] Cache miss, fetching fresh sentiment", request_id)
+    return await get_asset_sentiment(sanitized_symbol, k=5, refresh=False)
 
 
 @router.get("/sources/recent")
@@ -254,6 +341,48 @@ async def query_sentiment_rag(request: RagQueryRequest):
     return response
 
 
+def _fetch_fng_from_db() -> Dict[str, Any]:
+    """Fetch Fear & Greed Index directly from database (bypasses MCP for speed)."""
+    from data.storage.models import IngestionJob as IngestionJobModel
+
+    with get_timescale_db() as db:
+        latest = db.query(IngestionJobModel).filter(
+            IngestionJobModel.pipeline == 'fear_greed'
+        ).order_by(IngestionJobModel.last_success.desc()).first()
+
+        if not latest or not (details := latest.details) or not isinstance(details, dict):
+            return None
+
+        value = float(details.get("value", 50))
+
+        # Classify sentiment based on FNG value
+        if value >= 75:
+            sentiment = "EXTREME GREED"
+            market_bias = "BEARISH"  # Contrarian indicator
+        elif value >= 55:
+            sentiment = "GREED"
+            market_bias = "CAUTION"
+        elif value >= 45:
+            sentiment = "NEUTRAL"
+            market_bias = "NEUTRAL"
+        elif value >= 25:
+            sentiment = "FEAR"
+            market_bias = "OPPORTUNITY"
+        else:
+            sentiment = "EXTREME FEAR"
+            market_bias = "BULLISH"  # Contrarian indicator
+
+        return {
+            "value": details.get("value"),
+            "current_value": details.get("value"),
+            "sentiment": sentiment,
+            "classification": details.get("value_classification"),
+            "market_bias": market_bias,
+            "timestamp": latest.last_success.isoformat() if latest.last_success else None,
+            "last_updated": latest.last_run.isoformat() if latest.last_run else None,
+        }
+
+
 @router.get("/fng/current")
 async def get_fng_current():
     """Get current Fear & Greed Index value with market bias."""
@@ -262,19 +391,15 @@ async def get_fng_current():
     logger.info("[%s] FNG current request", request_id)
 
     try:
-        payload = await call_mcp_tool(
-            "crypto-sentiment-server",
-            "get_fng_current",
-            use_cache=False,
-        )
+        # Direct DB query - bypasses MCP for faster response
+        data = _fetch_fng_from_db()
+        if not data:
+            data = {"error": "No FNG data available", "message": "Fear & Greed data unavailable"}
     except Exception as exc:
-        logger.error("[%s] FNG fetch failed: %s", request_id, exc, exc_info=True)
-        payload = {"error": f"MCP error: {exc}"}
+        logger.error("[%s] FNG DB fetch failed: %s", request_id, exc, exc_info=True)
+        data = {"error": f"DB error: {exc}", "message": "Fear & Greed data unavailable"}
 
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-    data = payload if isinstance(payload, dict) else {"raw": payload}
-    if isinstance(data, dict) and data.get("error"):
-        data.setdefault("message", "Fear & Greed data unavailable")
 
     response = {
         "request_id": request_id,

@@ -223,12 +223,16 @@ const normalizeAggregatedSentiment = (raw = {}) => {
  * @param {Object} [options] - Forecast options
  * @param {number} [options.horizonDays=3] - Forecast horizon in days
  * @param {string} [options.startDate] - Start date for forecast
+ * @param {boolean} [options.useCached=false] - Use cached forecast for faster loading
+ * @param {number} [options.maxAgeHours=4] - Max age of cached data in hours
  * @returns {Promise<Object>} Forecast data with points and metadata
  */
-export const getPriceForecast = async (symbol, { horizonDays = 3, startDate } = {}) => {
-  const response = await request(
-    `/price/forecast/${symbol}${buildQuery({ horizon_days: horizonDays, start_date: startDate })}`,
-  )
+export const getPriceForecast = async (symbol, { horizonDays = 3, startDate, useCached = false, maxAgeHours = 4 } = {}) => {
+  const endpoint = useCached
+    ? `/price/forecast/${symbol}/cached${buildQuery({ max_age_hours: maxAgeHours })}`
+    : `/price/forecast/${symbol}${buildQuery({ horizon_days: horizonDays, start_date: startDate })}`
+  
+  const response = await request(endpoint)
   const normalized = normalizeForecastPayload(response)
   return {
     ...response,
@@ -237,6 +241,7 @@ export const getPriceForecast = async (symbol, { horizonDays = 3, startDate } = 
     last_point: normalized.lastPoint,
     raw_text: normalized.rawText,
     generated_at: normalized.generatedAt,
+    from_cache: response.from_cache || false,
   }
 }
 
@@ -247,10 +252,16 @@ export const getPriceForecast = async (symbol, { horizonDays = 3, startDate } = 
  * @param {number} [options.k=5] - Number of sources to retrieve
  * @param {boolean} [options.refresh=false] - Force refresh cache
  * @param {number} [options.daysBack=7] - Days of history to analyze
+ * @param {boolean} [options.useCached=false] - Use cached sentiment for faster loading
+ * @param {number} [options.maxAgeHours=4] - Max age of cached data in hours
  * @returns {Promise<Object>} Sentiment data with aggregated scores and sources
  */
-export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, refresh = false, daysBack = 7 } = {}) =>
-  request(`/sentiment/asset/${symbol}${buildQuery({ k, refresh, days_back: daysBack })}`).then((result) => {
+export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, refresh = false, daysBack = 7, useCached = false, maxAgeHours = 4 } = {}) => {
+  const endpoint = useCached
+    ? `/sentiment/asset/${symbol}/cached${buildQuery({ max_age_hours: maxAgeHours })}`
+    : `/sentiment/asset/${symbol}${buildQuery({ k, refresh, days_back: daysBack })}`
+  
+  return request(endpoint).then((result) => {
     const rawAggregated =
       result.aggregated ||
       result.sentiment?.aggregated ||
@@ -270,8 +281,10 @@ export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, re
       ...result,
       aggregated,
       sources,
+      from_cache: result.from_cache || false,
     }
   })
+}
 
 /**
  * Fetch recent sentiment sources across all assets.

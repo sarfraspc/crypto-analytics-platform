@@ -26,6 +26,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import CallToolRequest
 
 from core.config import settings
+from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from modules.agent.backtester import PortfolioBacktester
 from modules.agent.constants import LLM_REGISTRY
@@ -39,6 +40,77 @@ from utils.cache import RedisCache
 setup_logging()
 logger = logging.getLogger(__name__)
 cache = RedisCache(expire_seconds=1800)
+
+
+def _fetch_onchain_metrics_direct(window: str, chain: str = "ethereum") -> Dict[str, Any]:
+    """Fetch on-chain metrics directly from database (bypasses MCP for speed)."""
+    from sqlalchemy import select
+    from data.storage.models import OnchainMetric as OnchainMetricModel
+
+    with get_timescale_db() as ts_db:
+        def latest(metric_name: str):
+            stmt = (
+                select(OnchainMetricModel.value)
+                .where(
+                    OnchainMetricModel.chain == chain,
+                    OnchainMetricModel.metric == metric_name,
+                    OnchainMetricModel.raw.op("->>")("window") == window,
+                )
+                .order_by(OnchainMetricModel.time.desc())
+                .limit(1)
+            )
+            value = ts_db.execute(stmt).scalar_one_or_none()
+            return float(value) if value is not None else None
+
+        flows = {
+            "exchange_inflow_usd": latest("exchange_inflow_usd"),
+            "exchange_outflow_usd": latest("exchange_outflow_usd"),
+            "net_flow_usd": latest("net_flow_usd"),
+            "exchange_flow_ratio": latest("exchange_flow_ratio"),
+            "flow_trend_24h": latest("flow_trend_24h"),
+        }
+
+        whales = {
+            "whale_count": latest("whale_count"),
+            "total_whale_volume_usd": latest("total_whale_volume_usd"),
+            "avg_whale_tx_size_usd": latest("avg_whale_tx_size_usd"),
+            "whale_exchange_inflow": latest("whale_exchange_inflow"),
+            "whale_exchange_outflow": latest("whale_exchange_outflow"),
+            "whale_exchange_ratio": latest("whale_exchange_ratio"),
+            "unique_whale_addresses": latest("unique_whale_addresses"),
+        }
+
+        aggregated_metrics = {
+            "market_pressure_index": latest("market_pressure_index"),
+            "whale_to_exchange_ratio": latest("whale_to_exchange_ratio"),
+            "price_whale_corr_7d": latest("price_whale_corr_7d"),
+            "flow_trend_7d": latest("flow_trend_7d"),
+            "price_change_pct": latest("price_change_pct"),
+        }
+
+    # Derive market_bias
+    net_flow = flows.get("net_flow_usd") or 0.0
+    price_change = aggregated_metrics.get("price_change_pct") or 0.0
+    whale_ratio = aggregated_metrics.get("whale_to_exchange_ratio") or 0.0
+
+    flow_bias = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
+    price_bias = 1 if price_change > 0 else -1 if price_change < 0 else 0
+    ratio_bias = 1 - whale_ratio
+
+    bias_score = (flow_bias * 0.4) + (price_bias * 0.3) + (ratio_bias * 0.3)
+    if bias_score > 0.3:
+        market_bias = "bullish"
+    elif bias_score < -0.3:
+        market_bias = "bearish"
+    else:
+        market_bias = "neutral"
+
+    return {
+        "flows": flows,
+        "whales": whales,
+        "aggregated": {**aggregated_metrics, "market_bias": market_bias},
+        "errors": [],
+    }
 
 
 def _safe_int(value: Any, default: int) -> int:
@@ -227,7 +299,6 @@ async def route_tools(
 
     wants_onchain = any(cat in cats for cat in ("onchain", "combined", "patterns"))
     if wants_onchain:
-        base_onchain_args = {"window": window}
         wants_patterns = "patterns" in cats or any(
             word in query_lower for word in ["pattern", "rsi", "macd", "ta", "technical"]
         )
@@ -245,12 +316,10 @@ async def route_tools(
                 use_cache=use_cache,
             )
         else:
-            tasks["onchain"] = call_mcp_tool(
-                "crypto-onchain-server",
-                "run_metrics_only",
-                base_onchain_args,
-                use_cache=use_cache,
-            )
+            # Use direct DB query for metrics (faster than MCP)
+            async def fetch_onchain_direct():
+                return await asyncio.to_thread(_fetch_onchain_metrics_direct, window)
+            tasks["onchain"] = fetch_onchain_direct()
 
     if any(cat in cats for cat in ("sentiment", "combined")):
         sentiment_query = f"Current market sentiment and news about {symbol}"
