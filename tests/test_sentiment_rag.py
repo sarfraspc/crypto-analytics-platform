@@ -160,24 +160,34 @@ def test_retriever_rrf_logic():
 
 # RAG Pipeline Tests
 
-def test_query_rag_cache_hit():
+def test_query_rag_basic():
+    """Test basic RAG query flow (caching handled by sentiment_server, not rag_pipeline)."""
     mock_retriever = MagicMock()
     mock_generator = MagicMock()
-    
-    with patch("src.modules.sentiment.rag.rag_pipeline.cache") as mock_cache:
-        mock_cache.get_json.return_value = {'response': 'Cached Answer'}
-        response = query_rag("test query", mock_retriever, mock_generator)
-        assert response == "Cached Answer"
 
-def test_query_rag_cache_miss():
-    mock_retriever = MagicMock()
-    mock_generator = MagicMock()
-    
     mock_retriever.retrieve.return_value = [{'content': 'Context 1', 'metadata': {'doc_id': 1}}]
     mock_generator.generate.return_value = "Generated Answer"
-    
-    with patch("src.modules.sentiment.rag.rag_pipeline.cache") as mock_cache:
-        mock_cache.get_json.return_value = None
-        response = query_rag("test query", mock_retriever, mock_generator)
-        assert response == "Generated Answer"
-        mock_cache.set_json.assert_called_once()
+
+    response = query_rag("test query", mock_retriever, mock_generator)
+
+    assert response == "Generated Answer"
+    mock_retriever.retrieve.assert_called_once()
+    mock_generator.generate.assert_called_once()
+
+
+def test_query_rag_with_multiple_contexts():
+    """Test RAG query with multiple retrieved contexts."""
+    mock_retriever = MagicMock()
+    mock_generator = MagicMock()
+
+    mock_retriever.retrieve.return_value = [
+        {'content': 'Context 1', 'metadata': {'doc_id': 1}},
+        {'content': 'Context 2', 'metadata': {'doc_id': 2}},
+        {'content': 'Context 3', 'metadata': {'doc_id': 3}},
+    ]
+    mock_generator.generate.return_value = "Answer based on 3 contexts"
+
+    response = query_rag("test query", mock_retriever, mock_generator, k=3)
+
+    assert response == "Answer based on 3 contexts"
+    mock_retriever.retrieve.assert_called_once_with("test query", k=3)
