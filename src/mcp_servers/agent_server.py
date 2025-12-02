@@ -15,12 +15,9 @@ from mcp.types import CallToolRequest, CallToolResult, Tool, TextContent
 from core.exceptions import APIError, CryptoAnalyticsError
 from core.logging_config import setup_logging
 from modules.agent.agent_client import orchestrate_query
-from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
-cache = RedisCache(expire_seconds=1800)
 
 MAX_QUESTION_LEN = 1000
 SUPPORTED_WINDOWS = {"1h", "24h", "7d"}
@@ -150,33 +147,17 @@ class AgentMCP:
         )
 
         start_time = datetime.now()
-        cache_hit = False
 
         try:
-            opt_str = json.dumps(options, sort_keys=True)
-            q_hash = hashlib.sha256(question.encode()).hexdigest()
-            opt_hash = hashlib.sha256(opt_str.encode()).hexdigest()
-            cache_key = f"agent:{symbol.lower()}:{opt_hash}:{q_hash}"
-
-            payload = None
-            if not no_cache:
-                payload = cache.get_json(cache_key)
-                cache_hit = payload is not None
-                if cache_hit:
-                    logger.info("[%s] Cache hit for %s", request_id, cache_key)
-
-            if payload is None:
-                agent_result = await orchestrate_query(
-                    symbol=symbol,
-                    question=question,
-                    options=options,
-                    no_cache=no_cache,
-                    force_query_type=options.get("force_llm"),
-                )
-                payload = self._post_process(agent_result, options)
-                if not no_cache:
-                    cache.set_json(cache_key, payload)
-                    logger.info("[%s] Cached agent response under %s", request_id, cache_key)
+            # Caching is handled by agent_client.py - no duplicate caching here
+            agent_result = await orchestrate_query(
+                symbol=symbol,
+                question=question,
+                options=options,
+                no_cache=no_cache,
+                force_query_type=options.get("force_llm"),
+            )
+            payload = self._post_process(agent_result, options)
 
             duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
             output = {
@@ -187,17 +168,15 @@ class AgentMCP:
                 "llm_used": payload.get("llm_used"),
                 "timestamp": datetime.now().isoformat(),
                 "duration_ms": duration_ms,
-                "cache_hit": cache_hit,
                 **{k: v for k, v in payload.items() if k not in {"symbol", "query_type", "llm_used"}},
             }
 
             logger.info(
-                "[%s] Completed: query_type=%s llm=%s duration_ms=%s cache_hit=%s",
+                "[%s] Completed: query_type=%s llm=%s duration_ms=%s",
                 request_id,
                 output.get("query_type"),
                 output.get("llm_used"),
                 duration_ms,
-                cache_hit,
             )
 
             output_str = json.dumps(output, default=str, indent=2)

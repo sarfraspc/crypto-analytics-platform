@@ -22,10 +22,7 @@ def test_summarize_whale_alerts_logic():
     """Test that whale alerts are summed correctly."""
     
     # Mock the DB context manager and query result
-    with patch("src.modules.onchain.metrics.whale_alerts.get_timescale_db") as mock_db_ctx, \
-         patch("src.modules.onchain.metrics.whale_alerts.redis_cache") as mock_cache:
-        
-        mock_cache.get_json.return_value = None
+    with patch("src.modules.onchain.metrics.whale_alerts.get_timescale_db") as mock_db_ctx:
         mock_session = MagicMock()
         mock_db_ctx.return_value.__enter__.return_value = mock_session
         
@@ -46,10 +43,7 @@ def test_compute_exchange_flows_inflow_outflow():
     """Test classification of inflow vs outflow based on address lists."""
     
     with patch("src.modules.onchain.metrics.exchange_flows.get_timescale_db") as mock_db_ctx, \
-         patch("src.modules.onchain.metrics.exchange_flows.redis_cache") as mock_cache, \
          patch("src.modules.onchain.metrics.exchange_flows.EXCHANGE_ADDRS", {"exc_in": "kraken", "exc_out": "kraken"}):
-        
-        mock_cache.get_json.return_value = None
         mock_session = MagicMock()
         mock_db_ctx.return_value.__enter__.return_value = mock_session
         
@@ -74,10 +68,7 @@ def test_compute_exchange_flows_inflow_outflow():
 def test_combine_metrics_math():
     """Test the 'Market Pressure Index' calculation logic."""
     
-    with patch("src.modules.onchain.metrics.aggregator.get_timescale_db") as mock_db_ctx, \
-         patch("src.modules.onchain.metrics.aggregator.redis_cache") as mock_cache:
-        
-        mock_cache.get_json.return_value = None
+    with patch("src.modules.onchain.metrics.aggregator.get_timescale_db") as mock_db_ctx:
         mock_session = MagicMock()
         mock_db_ctx.return_value.__enter__.return_value = mock_session
         
@@ -118,11 +109,7 @@ def test_generate_ta_signal_flow():
     with patch("src.modules.onchain.patterns.ta_patterns.load_recent_ohlcv") as mock_load, \
          patch("src.modules.onchain.patterns.ta_patterns.compute_ta_indicators") as mock_indic, \
          patch("src.modules.onchain.patterns.ta_patterns.detect_candlestick_patterns") as mock_patterns, \
-         patch("src.modules.onchain.patterns.ta_patterns.redis_cache") as mock_cache, \
-         patch("src.modules.onchain.patterns.ta_patterns.get_timescale_db"): 
-        
-        mock_cache.get_json.return_value = None
-        
+         patch("src.modules.onchain.patterns.ta_patterns.get_timescale_db"):
         dates = pd.date_range(start="2024-01-01", periods=40, freq="h")
         df = pd.DataFrame({
             'close': [100]*40, 

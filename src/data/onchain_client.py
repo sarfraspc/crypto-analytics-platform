@@ -11,17 +11,9 @@ from core.config import settings
 from core.logging_config import setup_logging
 from data.ingestion import chain_client
 from modules.onchain.metrics.pipeline import run_onchain_metrics
-from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
-redis_cache = RedisCache(
-    host=settings.REDIS_HOST,
-    port=settings.REDIS_PORT,
-    db=settings.REDIS_DB,
-    expire_seconds=3600,
-)
 
 
 def setup_mlflow():
@@ -89,9 +81,7 @@ def run_whale_ingestion(
     threshold_usd: float = 500000.0,
     time_window: str = "24h",
 ):
-    """
-    Ingest whale alerts and invalidate onchain caches for the given chain/window.
-    """
+    """Ingest whale alerts for the given chain/window."""
     try:
         logger.info(
             "Starting whale ingestion for %s (window=%s, threshold_usd=%s)",
@@ -102,20 +92,6 @@ def run_whale_ingestion(
         result = chain_client.scan_eth_transfers(threshold_usd=threshold_usd)
         if result and result.get("whale_alerts", 0) > 0:
             logger.info("Ingested %s whale alerts", result["whale_alerts"])
-
-            try:
-                keys = [
-                    f"onchain:whale_alerts:{chain}:{time_window}",
-                    f"onchain:exchange_flows:{chain}:{time_window}",
-                    f"onchain:aggregated_metrics:{chain}:{time_window}",
-                ]
-                deleted = sum(redis_cache.delete(key) for key in keys)
-                logger.info("Invalidated %s caches post-ingestion", deleted)
-            except Exception as cache_err:
-                logger.warning(
-                    "Cache invalidation failed: %s (metrics may be stale)", cache_err
-                )
-
             return {"ingestion": result, "status": "success"}
 
         logger.warning("No new whale alerts ingested")
@@ -129,23 +105,9 @@ def run_metrics_update(
     chain: str = "ethereum",
     time_window: str = "24h",
 ):
-    """
-    Refresh onchain metrics (exchange flows + whale summaries + aggregator)
-    for the given chain/window/symbol and clear caches first.
-    """
+    """Refresh onchain metrics (exchange flows + whale summaries + aggregator)."""
     try:
         logger.info("Starting metrics update for %s, %s", chain, time_window)
-        try:
-            keys = [
-                f"onchain:exchange_flows:{chain}:{time_window}",
-                f"onchain:whale_alerts:{chain}:{time_window}",
-                f"onchain:aggregated_metrics:{chain}:{time_window}",
-            ]
-            deleted = sum(redis_cache.delete(key) for key in keys)
-            logger.info("Pre-metrics: Invalidated %s caches", deleted)
-        except Exception as clear_err:
-            logger.warning("Pre-clear failed: %s", clear_err)
-
         status = run_onchain_metrics(chain, time_window)
         if not status.get("errors"):
             logger.info("Metrics updated successfully")
@@ -223,21 +185,9 @@ def main():
         default="all",
         help="Steps to run: 'all' or comma-separated e.g., 'ingestion,metrics'",
     )
-    parser.add_argument(
-        "--clear-cache",
-        action="store_true",
-        help="Flush all onchain Redis caches before running",
-    )
     args = parser.parse_args()
 
     steps = args.run.split(",") if args.run != "all" else None
-
-    if args.clear_cache:
-        try:
-            deleted = redis_cache.delete_by_pattern("onchain:*")
-            logger.info("Manual cache flush: Deleted %s keys", deleted)
-        except Exception as e:
-            logger.error("Cache flush failed: %s", e)
 
     result = run_onchain_pipeline(
         chain=args.chain,
