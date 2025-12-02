@@ -53,7 +53,7 @@ class ProphetMCP:
         """
         Load raw OHLCV prices for Prophet (unscaled close in USD).
         """
-        exchange = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange = getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         df = self.coin_pre.load_data(
             symbol=symbol,
             exchange=exchange,

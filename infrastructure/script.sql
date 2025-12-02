@@ -4,7 +4,7 @@
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'metadata_user') THEN
-      CREATE ROLE metadata_user LOGIN PASSWORD ''; -- password here
+      CREATE ROLE metadata_user LOGIN PASSWORD '123';
    END IF;
 END
 $$;
@@ -46,7 +46,7 @@ GRANT ALL PRIVILEGES ON TABLE tokens TO metadata_user;
 DO $$
 BEGIN
    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'crypto_user') THEN
-      CREATE ROLE crypto_user LOGIN PASSWORD ''; -- password here
+      CREATE ROLE crypto_user LOGIN PASSWORD '123';
    END IF;
 END
 $$;
@@ -278,3 +278,38 @@ GRANT ALL PRIVILEGES ON TABLE ta_signals_history TO crypto_user;
 
 SELECT add_retention_policy('ta_signals_history', INTERVAL '180 days', if_not_exists => TRUE);
 
+
+
+-- Forecast cache table (for fast dashboard loading)
+CREATE TABLE IF NOT EXISTS forecast_cache (
+    symbol TEXT PRIMARY KEY,
+    model_used TEXT,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    horizon_hours INT,
+    forecast_points JSONB,
+    last_point JSONB,
+    raw_text TEXT
+);
+
+ALTER TABLE IF EXISTS forecast_cache OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE forecast_cache TO crypto_user;
+
+-- Sentiment cache table (for fast dashboard loading)
+CREATE TABLE IF NOT EXISTS sentiment_cache (
+    symbol TEXT PRIMARY KEY,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    top_sentiment TEXT,
+    top_confidence DOUBLE PRECISION,
+    bullish_score DOUBLE PRECISION,
+    bearish_score DOUBLE PRECISION,
+    neutral_score DOUBLE PRECISION,
+    sources JSONB,
+    response TEXT
+);
+
+ALTER TABLE IF EXISTS sentiment_cache OWNER TO crypto_user;
+GRANT ALL PRIVILEGES ON TABLE sentiment_cache TO crypto_user;
+
+-- Indexes for faster lookups
+CREATE INDEX IF NOT EXISTS idx_forecast_cache_generated ON forecast_cache(generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sentiment_cache_generated ON sentiment_cache(generated_at DESC);

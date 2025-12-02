@@ -63,7 +63,7 @@ class CNNLSTMPanelForecaster:
     def load_or_create_panel_data(
         self,
         symbols: list,
-        exchange: str = "binance",
+        exchange: str = "kraken",
         interval: str = "1h",
         force_update: bool = False
     ):
@@ -189,7 +189,7 @@ class CNNLSTMPanelForecaster:
     def prepare_training_data(
         self, 
         symbols: list,
-        exchange: str = "binance",
+        exchange: str = "kraken",
         interval: str = "1h",
         force_update: bool = False
     ):
@@ -214,7 +214,7 @@ class CNNLSTMPanelForecaster:
         symbols: list,
         epochs: int = 50,
         batch_size: int = 32,
-        exchange: str = "binance",
+        exchange: str = "kraken",
         interval: str = "1h",
         retrain_if_exists: bool = False,
         force_panel_update: bool = False
@@ -267,7 +267,7 @@ class CNNLSTMPanelForecaster:
             steps = self.forecast_horizon
 
         coin_pre = self.preprocessor.coin_pre
-        df = coin_pre.load_features_series(symbol, exchange='binance', interval='1h')
+        df = coin_pre.load_features_series(symbol, exchange='kraken', interval='1h')
 
         available_features = [col for col in self.feature_cols if col in df.columns]
         if not available_features:
@@ -311,7 +311,7 @@ class CNNLSTMPanelForecaster:
 def train_and_forecast_cnn_lstm(
     symbols: list,
     df: pd.DataFrame = None,
-    exchange: str = 'binance',
+    exchange: str = 'kraken',
     interval: str = '1h',
     forecast_steps: int = 24,
     retrain_if_exists: bool = False,

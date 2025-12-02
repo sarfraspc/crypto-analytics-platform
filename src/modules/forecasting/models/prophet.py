@@ -140,7 +140,7 @@ def _get_real_price_data(symbol: str, days: int = 60):
 def train_and_forecast(
     model: ProphetModel,
     df: pd.DataFrame = None,
-    exchange: str = 'binance',
+    exchange: str = 'kraken',
     interval: str = '1h',
     forecast_steps: int = 24,
     retrain_if_exists: bool = False

@@ -125,7 +125,7 @@ class PanelPreprocessor:
         self,
         panel: pd.DataFrame,
         table_name: str,
-        exchange: str = "binance",
+        exchange: str = "kraken",
         interval: str = "1h",
     ):
         """Save panel data to TimescaleDB in long format."""
@@ -144,7 +144,7 @@ class PanelPreprocessor:
     def update_panel(
         self,
         symbols: List[str],
-        exchange: str = "binance",
+        exchange: str = "kraken",
         interval: str = "1h",
     ):
         """Load features for symbols and create/update panel in database."""

@@ -76,7 +76,7 @@ def combine_metrics(
                 select(OHLCVModel)
                 .where(
                     OHLCVModel.symbol == symbol,
-                    OHLCVModel.exchange == 'binance',
+                    OHLCVModel.exchange == 'kraken',
                     OHLCVModel.interval == '1h',
                     OHLCVModel.time >= start_time,
                     OHLCVModel.time <= end_time,
@@ -105,7 +105,7 @@ def combine_metrics(
                 select(OHLCVModel.close)
                 .where(
                     OHLCVModel.symbol == symbol,
-                    OHLCVModel.exchange == 'binance',
+                    OHLCVModel.exchange == 'kraken',
                     OHLCVModel.interval == '1h',
                     OHLCVModel.time >= corr_start,
                     OHLCVModel.time <= end_time,

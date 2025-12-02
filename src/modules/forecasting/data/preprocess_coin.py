@@ -52,7 +52,7 @@ class CoinPreprocessor:
 
     def get_coin_start(self, symbol: str, exchange: str = None, interval: str = "1h"):
         """Get earliest timestamp for a coin's OHLCV data."""
-        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         Session = sessionmaker(bind=self.engine)
         with Session() as session:
             start_time = session.query(func.min(OHLCV.time)).filter(
@@ -73,7 +73,7 @@ class CoinPreprocessor:
         lookback_days: Optional[int] = None,
     ):
         """Load raw OHLCV data from TimescaleDB for a symbol."""
-        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         base_symbol = (
             symbol.split("/")[0].upper() if "/" in symbol else symbol.upper()
         )
@@ -187,7 +187,7 @@ class CoinPreprocessor:
                         interval: str = "1h", target_freq: str = "D",
                         refit_scaler: bool = False):
         """Update or create OHLCV features for a symbol in the database."""
-        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         freq_type = "D" if str(target_freq).upper().startswith("D") else "H"
         windows = DEFAULT_FEATURE_WINDOWS[freq_type]
         all_windows = windows['sma'] + windows['ema'] + windows['vol'] + (windows.get('z_score', 30),)
@@ -284,7 +284,7 @@ class CoinPreprocessor:
     
     def load_features_series(self, symbol: str, exchange: str = None, interval: str = '1h', start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
         """Load preprocessed features from ohlcv_features table."""
-        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         Session = sessionmaker(bind=self.engine)
         with Session() as session:
             # NEW LOGS

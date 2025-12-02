@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     MLFLOW_ARTIFACT_ROOT: str
 
     # Market ingestion defaults
-    MARKET_EXCHANGE_ID: str = "binance"
+    MARKET_EXCHANGE_ID: str = "kraken"
     MARKET_QUOTE_SYMBOL: str = "USDT"
 
     # Sentiment model 
@@ -51,8 +51,8 @@ class Settings(BaseSettings):
 
     # API Keys 
     COINGECKO_API_KEY: str | None = None
-    BINANCE_API_KEY: str | None = None
-    BINANCE_API_SECRET: str | None = None
+    KRAKEN_API_KEY: str | None = None
+    KRAKEN_API_SECRET: str | None = None
     INFURA_PROJECT_ID: str | None = None
     CRYPTOPANIC_API_KEY: str | None = None
     REDDIT_CLIENT_ID: str | None = None

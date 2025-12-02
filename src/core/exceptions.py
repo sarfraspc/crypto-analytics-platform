@@ -8,7 +8,7 @@ class CryptoAnalyticsError(Exception):
 
 
 class APIError(CryptoAnalyticsError):
-    """Raised when external API calls fail (CoinGecko, Binance, etc.)."""
+    """Raised when external API calls fail (CoinGecko, Kraken, etc.)."""
 
     def __init__(self, message: str, status_code: int = None):
         self.message = message

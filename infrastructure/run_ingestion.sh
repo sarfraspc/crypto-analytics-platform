@@ -11,17 +11,17 @@ echo "[$(date -Iseconds)] Starting scheduled ingestion cycle" >> logs/cron_inges
 
 # 1) Market data (incremental OHLCV + TA)
 docker compose exec -T backend \
-  python -m data.market_client --pipeline full_cycle \
+  python -m data.market_client \
   >> logs/cron_market.log 2>&1
 
 # 2) News data (CryptoPanic + Reddit + FNG)
 docker compose exec -T backend \
-  python -m data.news_client --mode cycle \
+  python -m data.news_client \
   >> logs/cron_news.log 2>&1
 
 # 3) On-chain pipeline (ingestion + metrics)
 docker compose exec -T backend \
-  python -m data.onchain_client --run all \
+  python -m data.onchain_client \
   >> logs/cron_onchain.log 2>&1
 
 # 4) RAG index ingestion for chatbot

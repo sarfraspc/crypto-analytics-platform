@@ -29,7 +29,7 @@ redis_cache = RedisCache(
 
 def load_recent_ohlcv(symbol: str, exchange: str | None = None, interval: str = "1h", lookback: int = 100):
     """Load recent OHLCV candles from database for TA computation."""
-    exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+    exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
     with get_timescale_db() as db:
         try:
             query = select(
@@ -163,7 +163,7 @@ def _generate_signal(rsi: float, macd_hist: float, pattern: Optional[str], patte
 
 def generate_ta_signal(symbol: str, exchange: str | None = None, interval: str = "1h", use_cache: bool = True):
     """Generate complete TA signal with indicators, patterns, and confidence."""
-    exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+    exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
     key = f"ta_signal:{symbol}:{exchange}:{interval}"
     if use_cache:
         cached = redis_cache.get_json(key)
@@ -308,7 +308,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Generate TA signals manually")
     parser.add_argument("--symbol", required=True, help="Symbol e.g., BTCUSDT")
-    parser.add_argument("--exchange", default="binance", help="Exchange")
+    parser.add_argument("--exchange", default="kraken", help="Exchange")
     parser.add_argument("--interval", default="1h", help="Interval")
     parser.add_argument("--no-cache", action="store_true", help="Force recompute without using cache")
     args = parser.parse_args()

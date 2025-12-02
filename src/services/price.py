@@ -182,7 +182,7 @@ def _denormalize_forecast_points(symbol: str, points: List[Dict[str, Any]]) -> L
 
 @router.get("/symbols")
 async def list_available_symbols(
-    exchange: Optional[str] = Query(None, description="Optional exchange filter (e.g., binance)."),
+    exchange: Optional[str] = Query(None, description="Optional exchange filter (e.g., kraken)."),
     interval: Optional[str] = Query(None, description="Optional timeframe filter (e.g., 1h)."),
     limit: int = Query(200, ge=1, le=1000, description="Maximum number of symbols to return."),
 ):

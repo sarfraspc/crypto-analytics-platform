@@ -6,10 +6,8 @@ from datetime import datetime, timezone
 from typing import Dict, List
 
 import mlflow
-from sqlalchemy.orm import Session
 
 from core.config import settings
-from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.ingestion import chain_client
 from modules.onchain.metrics.pipeline import run_onchain_metrics
@@ -87,7 +85,6 @@ def log_pipeline_to_mlflow(
 
 
 def run_whale_ingestion(
-    db: Session,
     chain: str = "ethereum",
     threshold_usd: float = 500000.0,
     time_window: str = "24h",
@@ -102,7 +99,7 @@ def run_whale_ingestion(
             time_window,
             threshold_usd,
         )
-        result = chain_client.scan_eth_transfers(db, threshold_usd=threshold_usd)
+        result = chain_client.scan_eth_transfers(threshold_usd=threshold_usd)
         if result and result.get("whale_alerts", 0) > 0:
             logger.info("Ingested %s whale alerts", result["whale_alerts"])
 
@@ -162,7 +159,6 @@ def run_metrics_update(
 
 
 def run_onchain_pipeline(
-    db: Session,
     chain: str = "ethereum",
     threshold_usd: float = 500000.0,
     time_window: str = "24h",
@@ -187,7 +183,7 @@ def run_onchain_pipeline(
     }
 
     if "ingestion" in run_steps:
-        ingestion = run_whale_ingestion(db, chain, threshold_usd, time_window)
+        ingestion = run_whale_ingestion(chain, threshold_usd, time_window)
         status["ingestion"] = ingestion
         if ingestion and ingestion.get("status") == "error":
             status["errors"].append("Ingestion failed")
@@ -243,15 +239,13 @@ def main():
         except Exception as e:
             logger.error("Cache flush failed: %s", e)
 
-    with get_timescale_db() as db:
-        result = run_onchain_pipeline(
-            db=db,
-            chain=args.chain,
-            threshold_usd=args.threshold_usd,
-            time_window=args.window,
-            run_steps=steps,
-        )
-        print(result)
+    result = run_onchain_pipeline(
+        chain=args.chain,
+        threshold_usd=args.threshold_usd,
+        time_window=args.window,
+        run_steps=steps,
+    )
+    print(result)
 
 
 if __name__ == "__main__":

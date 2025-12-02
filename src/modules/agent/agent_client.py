@@ -304,8 +304,8 @@ async def route_tools(
         )
         if wants_patterns:
             pattern_args = {
-                # Use the configured market exchange (e.g. binanceus on the VM)
-                "exchange": getattr(settings, "MARKET_EXCHANGE_ID", "binance"),
+                # Use the configured market exchange (e.g. kraken on the VM)
+                "exchange": getattr(settings, "MARKET_EXCHANGE_ID", "kraken"),
                 "interval": "1d",
                 "limit": 20,
             }
@@ -514,7 +514,7 @@ class CryptoAgentV2:
             df = await asyncio.to_thread(
                 preprocessor.load_features_series,
                 symbol,
-                getattr(settings, "MARKET_EXCHANGE_ID", "binance"),
+                getattr(settings, "MARKET_EXCHANGE_ID", "kraken"),
                 "1h",
             )
             if df.index.tz is None:

@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set
 
-from sqlalchemy.orm import Session
 from web3 import Web3
 
 from core.config import settings
+from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.storage.crud import upsert_whale_alerts
 from data.validation import WhaleAlert
@@ -187,9 +187,11 @@ def process_transfer_log(
         logger.error(f"Error processing transfer log: {e}", exc_info=True)
         return None, set()
 
-def scan_eth_transfers(db: Session, threshold_usd: float = 500000.0):
+def scan_eth_transfers(threshold_usd: float = 500000.0):
     """
     Timestamp-based 24h rolling ingestion for Ethereum whale transfers.
+    
+    Thread-safe: creates its own database session internally.
 
     This no longer relies on ChainState or incremental block scanning.
     Each run:
@@ -275,7 +277,8 @@ def scan_eth_transfers(db: Session, threshold_usd: float = 500000.0):
                 logger.info(f"Processed {idx:,} / {total_logs:,} logs for whale detection...")
 
         if alerts:
-            upsert_whale_alerts(db, alerts)
+            with get_timescale_db() as db:
+                upsert_whale_alerts(db, alerts)
             logger.info(f"Upserted {len(alerts)} whale alerts from {len(unique_addrs)} unique addresses")
         else:
             logger.info("No whale alerts found in the last 24h window above threshold")
@@ -284,6 +287,4 @@ def scan_eth_transfers(db: Session, threshold_usd: float = 500000.0):
 
     except Exception as e:
         logger.error(f"Ethereum 24h scan failed: {e}", exc_info=True)
-        if db.in_transaction():
-            db.rollback()
         return {"whale_alerts": 0}

@@ -31,7 +31,7 @@ def get_symbols_from_tokens(db: Session, limit: int = 50):
     """Fetch top-ranked token symbols from metadata DB for market ingestion."""
     try:
         quote = getattr(settings, "MARKET_QUOTE_SYMBOL", "USDT")
-        exchange_id = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange_id = getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         result = db.execute(
             select(Token).where(func.jsonb_extract_path_text(Token.token_metadata, 'market_cap_rank').isnot(None))  
             .order_by(func.cast(func.jsonb_extract_path_text(Token.token_metadata, 'market_cap_rank'), Integer)) 
@@ -58,7 +58,7 @@ def get_top_symbols(db: Session, limit: int = 50):
     lookup or hardcoded fallback list.
     """
     try:
-        exchange_id = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange_id = getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         result = (
             db.execute(
                 select(OHLCVModel.symbol)
@@ -90,7 +90,7 @@ def run_ta_patterns(
     Used by ingestion and the MCP onchain TA tool.
     """
     try:
-        exchange_name = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange_name = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         logger.info(
             "Starting TA patterns for %d symbols on %s (%s)",
             len(symbols),
@@ -113,13 +113,13 @@ def run_ta_patterns(
         logger.error(f"TA patterns failed: {e}")
         return {"patterns": {}, "status": "error", "error": str(e)}
 
-def backfill_and_ta(db_timescale, db_metadata, exchange, symbol, interval, since_ms):
+def backfill_and_ta(exchange, symbol, interval, since_ms):
     """
     Backfill OHLCV for a symbol.
     TA generation is run in a separate phase after OHLCV
     has been updated for all symbols in the cycle.
     """
-    return backfill_ohlcv_ccxt(db_timescale, db_metadata, exchange, symbol, interval, since_ms)
+    return backfill_ohlcv_ccxt(exchange, symbol, interval, since_ms)
 
 
 async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: List[Dict] = None):
@@ -138,8 +138,6 @@ async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: Lis
             loop.run_in_executor(
                 None,
                 backfill_ohlcv_ccxt,
-                db_timescale,
-                db_metadata,
                 s['exchange'],
                 s['use_ccxt_symbol'],
                 '1h',
@@ -187,7 +185,6 @@ async def run_polling(db_metadata: Session, db_timescale: Session, symbols: List
             loop.run_in_executor(
                 None,
                 poll_trades_ccxt,
-                db_timescale,
                 s['exchange'],
                 s['use_ccxt_symbol'],
                 1000
@@ -253,8 +250,6 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
                 return await loop.run_in_executor(
                     None,
                     backfill_and_ta,
-                    db_timescale,
-                    db_metadata,
                     s['exchange'],
                     s['use_ccxt_symbol'],
                     '1h',
@@ -301,7 +296,7 @@ async def run_ingestion_cycle(db_metadata: Session, db_timescale: Session, pipel
         else:
             logger.info("Starting TA generation for symbols after OHLCV backfill")
         ta_start = datetime.now()
-        exchange_name = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange_name = getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         ta_tasks = [
             loop.run_in_executor(
                 None,
