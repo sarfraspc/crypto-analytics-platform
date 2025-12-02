@@ -135,5 +135,7 @@ jobs:
             # 4. Restart (No build happening here!)
             docker compose up -d --remove-orphans
             
-            # 5. Cleanup space
-            docker image prune -f
+            # 5. Aggressive cleanup to prevent disk full (keeps data volumes safe)
+            docker image prune -af --filter "until=24h"
+            docker system prune -f
+            docker builder prune -f
