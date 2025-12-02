@@ -208,7 +208,7 @@ async def get_asset_sentiment(
 @router.get("/asset/{symbol}/cached")
 async def get_cached_sentiment(
     symbol: str,
-    max_age_hours: int = Query(4, ge=1, le=24, description="Max age of cached sentiment in hours."),
+    max_age_hours: int = Query(12, ge=1, le=24, description="Max age of cached sentiment in hours."),
 ):
     """Get cached sentiment for fast dashboard loading. Falls back to fresh if cache is stale."""
     sanitized_symbol = _validate_symbol(symbol)
@@ -255,9 +255,9 @@ async def get_cached_sentiment(
     except Exception as exc:
         logger.warning("[%s] Cache lookup failed: %s", request_id, exc)
 
-    # Fallback to fresh sentiment
+    # Fallback to fresh sentiment - pass primitive values, not Query objects
     logger.info("[%s] Cache miss, fetching fresh sentiment", request_id)
-    return await get_asset_sentiment(sanitized_symbol, k=5, refresh=False)
+    return await get_asset_sentiment(symbol=sanitized_symbol, k=5, refresh=False)
 
 
 @router.get("/sources/recent")

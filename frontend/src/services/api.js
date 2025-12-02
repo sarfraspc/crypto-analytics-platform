@@ -227,7 +227,7 @@ const normalizeAggregatedSentiment = (raw = {}) => {
  * @param {number} [options.maxAgeHours=4] - Max age of cached data in hours
  * @returns {Promise<Object>} Forecast data with points and metadata
  */
-export const getPriceForecast = async (symbol, { horizonDays = 3, startDate, useCached = false, maxAgeHours = 4 } = {}) => {
+export const getPriceForecast = async (symbol, { horizonDays = 3, startDate, useCached = false, maxAgeHours = 12 } = {}) => {
   const endpoint = useCached
     ? `/price/forecast/${symbol}/cached${buildQuery({ max_age_hours: maxAgeHours })}`
     : `/price/forecast/${symbol}${buildQuery({ horizon_days: horizonDays, start_date: startDate })}`
@@ -256,7 +256,7 @@ export const getPriceForecast = async (symbol, { horizonDays = 3, startDate, use
  * @param {number} [options.maxAgeHours=4] - Max age of cached data in hours
  * @returns {Promise<Object>} Sentiment data with aggregated scores and sources
  */
-export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, refresh = false, daysBack = 7, useCached = false, maxAgeHours = 4 } = {}) => {
+export const getSentimentAnalysis = (symbol = GENERIC_MARKET_SYMBOL, { k = 5, refresh = false, daysBack = 7, useCached = false, maxAgeHours = 12 } = {}) => {
   const endpoint = useCached
     ? `/sentiment/asset/${symbol}/cached${buildQuery({ max_age_hours: maxAgeHours })}`
     : `/sentiment/asset/${symbol}${buildQuery({ k, refresh, days_back: daysBack })}`

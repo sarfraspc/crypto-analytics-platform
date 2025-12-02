@@ -23,7 +23,7 @@ const ForecastChart = () => {
       setError(null)
       try {
         // Use cached forecast for fast initial load
-        const result = await getPriceForecast(symbol, { horizonDays: HORIZON_DAYS, useCached: true, maxAgeHours: 4 })
+        const result = await getPriceForecast(symbol, { horizonDays: HORIZON_DAYS, useCached: true, maxAgeHours: 12 })
         if (!isMounted) return
         const normalizedPoints = (result.forecast_points || []).filter((point) => {
           const value = Number(point.predicted_close)

@@ -160,7 +160,7 @@ const InsightSummary = () => {
       // Use cached endpoints for fast dashboard loading
       const [summaryResult, forecastResult] = await Promise.all([
         getInsightSummary(symbol, { horizonDays: HORIZON_DAYS }),
-        getPriceForecast(symbol, { horizonDays: HORIZON_DAYS, useCached: true, maxAgeHours: 4 }),
+        getPriceForecast(symbol, { horizonDays: HORIZON_DAYS, useCached: true, maxAgeHours: 12 }),
       ])
       
       if (isMountedRef.current) {
