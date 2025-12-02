@@ -271,10 +271,15 @@ async def get_price_forecast(
     )
 
     try:
+        # Build args - only include start_date if it's a real string value
+        mcp_args = {"symbol": sanitized_symbol, "horizon": horizon_hours}
+        if start_date and isinstance(start_date, str):
+            mcp_args["start_date"] = start_date
+        
         forecast_payload = await call_mcp_tool(
             "crypto-prophet-server", 
             "forecast_prophet",      
-            {"symbol": sanitized_symbol, "horizon": horizon_hours, "start_date": start_date} if start_date else {"symbol": sanitized_symbol, "horizon": horizon_hours},
+            mcp_args,
         )
         
         # CRITICAL RESTORATION: JSON PARSING 
@@ -339,7 +344,7 @@ async def get_price_forecast(
         "symbol": sanitized_symbol,
         "horizon_hours": horizon_hours,
         "model_used": model_used,
-        "start_date": start_date,
+        "start_date": start_date if isinstance(start_date, str) else None,
         "forecast_points": points,
         "last_point": last_point,
         "raw_text": raw_text,
@@ -353,7 +358,7 @@ async def get_price_forecast(
 @router.get("/forecast/{symbol}/cached")
 async def get_cached_forecast(
     symbol: str,
-    max_age_hours: int = Query(4, ge=1, le=24, description="Max age of cached forecast in hours."),
+    max_age_hours: int = Query(12, ge=1, le=24, description="Max age of cached forecast in hours."),
 ):
     """Get cached forecast for fast dashboard loading. Falls back to fresh if cache is stale."""
     sanitized_symbol = _validate_symbol(symbol)
@@ -397,4 +402,4 @@ async def get_cached_forecast(
 
     # Fallback to fresh forecast
     logger.info("[%s] Cache miss, fetching fresh forecast", request_id)
-    return await get_price_forecast(sanitized_symbol, horizon_days=10)
+    return await get_price_forecast(sanitized_symbol, horizon_days=10, start_date=None)
