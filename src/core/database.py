@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, scoped_session
 
 from core.config import settings
 
@@ -16,35 +16,54 @@ def _build_postgres_url(user, password, host, port, db):
     return f"postgresql+psycopg2://{user}:{pw}@{host}:{port}/{db}"
 
 
+# Singleton engines with connection pooling for concurrent access
+_timescale_engine = None
+_metadata_engine = None
+
+
 def get_timescale_engine() -> Engine:
-    """Create SQLAlchemy engine for TimescaleDB time-series data."""
-    return create_engine(
-        _build_postgres_url(
-            settings.TIMESCALE_USER,
-            settings.TIMESCALE_PASSWORD,
-            settings.TIMESCALE_HOST,
-            settings.TIMESCALE_PORT,
-            settings.TIMESCALE_DB,
-        ),
-        pool_pre_ping=True,
-        future=True,
-    )
+    """Create or return singleton SQLAlchemy engine for TimescaleDB."""
+    global _timescale_engine
+    if _timescale_engine is None:
+        _timescale_engine = create_engine(
+            _build_postgres_url(
+                settings.TIMESCALE_USER,
+                settings.TIMESCALE_PASSWORD,
+                settings.TIMESCALE_HOST,
+                settings.TIMESCALE_PORT,
+                settings.TIMESCALE_DB,
+            ),
+            pool_pre_ping=True,
+            pool_size=10,
+            max_overflow=20,
+            pool_recycle=3600,
+            future=True,
+        )
+    return _timescale_engine
 
 
 def get_metadata_engine() -> Engine:
-    """Create SQLAlchemy engine for PostgreSQL metadata storage."""
-    return create_engine(
-        _build_postgres_url(
-            settings.POSTGRES_USER,
-            settings.POSTGRES_PASSWORD,
-            settings.POSTGRES_HOST,
-            settings.POSTGRES_PORT,
-            settings.POSTGRES_DB,
-        ),
-        pool_pre_ping=True,
-        future=True,
-    )
+    """Create or return singleton SQLAlchemy engine for PostgreSQL metadata."""
+    global _metadata_engine
+    if _metadata_engine is None:
+        _metadata_engine = create_engine(
+            _build_postgres_url(
+                settings.POSTGRES_USER,
+                settings.POSTGRES_PASSWORD,
+                settings.POSTGRES_HOST,
+                settings.POSTGRES_PORT,
+                settings.POSTGRES_DB,
+            ),
+            pool_pre_ping=True,
+            pool_size=10,
+            max_overflow=20,
+            pool_recycle=3600,
+            future=True,
+        )
+    return _metadata_engine
 
+
+# Session factories - create new sessions, don't share across threads
 TimescaleSessionLocal = sessionmaker(
     bind=get_timescale_engine(), autocommit=False, autoflush=False, future=True
 )

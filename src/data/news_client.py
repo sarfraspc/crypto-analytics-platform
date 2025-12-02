@@ -22,22 +22,27 @@ async def run_news_cycle(
     pipeline: str = "news_cycle",
     subreddit: str = "cryptocurrency",
     reddit_limit: int = 50,
+    full_backfill: bool = False,
 ) -> Dict:
     """
     Run a single news/Reddit/FNG ingestion cycle and log to the
     dedicated MLflow experiment for news (`news_client`).
+    
+    Args:
+        full_backfill: If True, ignores last_success timestamps and fetches all available data.
     """
     logger.info(
-        "Starting news cycle: CryptoPanic, Reddit(%s, limit=%s), FNG",
+        "Starting news cycle: CryptoPanic, Reddit(%s, limit=%s), FNG (full=%s)",
         subreddit,
         reddit_limit,
+        full_backfill,
     )
 
     loop = asyncio.get_running_loop()
     alt_data_tasks = [
-        loop.run_in_executor(None, ingest_cryptopanic, db_timescale),
-        loop.run_in_executor(None, ingest_reddit_praw, db_timescale, subreddit, reddit_limit),
-        loop.run_in_executor(None, ingest_fng, db_timescale),
+        loop.run_in_executor(None, ingest_cryptopanic, None, 50, 3, 'cryptopanic_ingest', full_backfill),
+        loop.run_in_executor(None, ingest_reddit_praw, subreddit, reddit_limit, 'reddit_praw_ingest', full_backfill),
+        loop.run_in_executor(None, ingest_fng),
     ]
 
     alt_start = datetime.now()
@@ -103,6 +108,7 @@ async def run_news_backfill(
     pipeline: str = "news_backfill",
     subreddit: str = "cryptocurrency",
     reddit_limit: int = 50,
+    full_backfill: bool = False,
 ) -> Dict:
     """
     Backfill-only version of the news cycle; structurally the same,
@@ -113,6 +119,7 @@ async def run_news_backfill(
         pipeline=pipeline,
         subreddit=subreddit,
         reddit_limit=reddit_limit,
+        full_backfill=full_backfill,
     )
 
 
@@ -137,6 +144,11 @@ if __name__ == "__main__":
         default=50,
         help="Number of Reddit posts to fetch (default: 50)",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Ignore last_success timestamps and fetch all available data",
+    )
     args = parser.parse_args()
 
     setup_mlflow()
@@ -147,6 +159,7 @@ if __name__ == "__main__":
                     db_timescale=db_timescale,
                     subreddit=args.subreddit,
                     reddit_limit=args.reddit_limit,
+                    full_backfill=args.full,
                 )
             )
         else:
@@ -155,5 +168,6 @@ if __name__ == "__main__":
                     db_timescale=db_timescale,
                     subreddit=args.subreddit,
                     reddit_limit=args.reddit_limit,
+                    full_backfill=args.full,
                 )
             )

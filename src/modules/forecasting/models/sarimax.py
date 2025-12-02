@@ -114,7 +114,7 @@ def _inverse_transform_close(symbol: str, df: pd.DataFrame, preprocessor: CoinPr
 def train_and_forecast(
     symbol: str,
     df: pd.DataFrame = None,
-    exchange: str = 'binance',
+    exchange: str = 'kraken',
     interval: str = '1h',
     forecast_steps: int = 7,
     retrain_if_exists: bool = False,

@@ -294,7 +294,7 @@ def evaluate_tft_panel(
 
 def run_benchmark(
     symbol: str = 'BTC',
-    exchange: str = 'binance',
+    exchange: str = 'kraken',
     interval: str = '1h',
     forecast_steps: int = 24,
     rolling_eval: bool = False,
@@ -390,7 +390,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Run forecasting model benchmark')
     parser.add_argument('--symbol', default='BTC', help='Symbol to benchmark')
-    parser.add_argument('--exchange', default='binance', help='Exchange name')
+    parser.add_argument('--exchange', default='kraken', help='Exchange name')
     parser.add_argument('--interval', default='1h', help='Data interval')
     parser.add_argument('--forecast-steps', type=int, default=24, help='Forecast horizon')
     parser.add_argument('--models', nargs='+', default=['sarimax', 'prophet', 'cnn_lstm', 'tft'], 

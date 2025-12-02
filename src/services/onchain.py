@@ -326,7 +326,7 @@ async def get_ta_patterns(
 
 @router.get("/pattern-symbols")
 async def list_pattern_symbols(
-    exchange: Optional[str] = Query(None, description="Filter by exchange (e.g., binance)."),
+    exchange: Optional[str] = Query(None, description="Filter by exchange (e.g., kraken)."),
     interval: Optional[str] = Query(None, description="Filter by interval (e.g., 1d)."),
     limit: int = Query(200, ge=1, le=1000, description="Maximum number of symbols to return."),
 ):

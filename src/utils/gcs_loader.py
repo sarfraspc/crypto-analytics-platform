@@ -30,7 +30,7 @@ def upload_to_gcs(local_path: str | Path, remote_path: str) -> None:
 
     Args:
         local_path: local filesystem path to the file to upload
-        remote_path: path inside bucket (ex: forecasting/prophet/binanceus/1h/prophet_BTC.pkl)
+        remote_path: path inside bucket (ex: forecasting/prophet/kraken/1h/prophet_BTC.pkl)
     """
     bucket_name = _bucket()
     client = _client()
@@ -60,7 +60,6 @@ def load_from_gcs(remote_path: str, local_name: str = None) -> Path:
     # PERFORMANCE TRICK: 
     # /dev/shm is a RAM Disk (Memory). 
     # Writing here is 10x faster than writing to the hard drive.
-    # We fall back to /tmp if we are on Windows/Mac (which don't have /dev/shm by default).
     base = Path("/dev/shm") if Path("/dev/shm").exists() else Path("/tmp")
     
     cache_dir = base / "models"

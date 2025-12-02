@@ -45,7 +45,7 @@ def test_run_ta_patterns_success():
         # Mock return value for generate_ta_signal
         mock_gen.return_value = {"pattern": "DOJI", "signal": "buy"}
         
-        result = market_client.run_ta_patterns(["BTC"], exchange="binance")
+        result = market_client.run_ta_patterns(["BTC"], exchange="kraken")
         
         assert result["status"] == "success"
         assert "BTC" in result["patterns"]
@@ -81,7 +81,7 @@ async def test_run_ingestion_cycle(mock_db_session):
         mock_get_top.return_value = ["BTC"] # TA candidates
         
         # Input symbols
-        symbols = [{'label': 'BTC', 'use_ccxt_symbol': 'BTC/USDT', 'exchange': 'binance'}]
+        symbols = [{'label': 'BTC', 'use_ccxt_symbol': 'BTC/USDT', 'exchange': 'kraken'}]
 
         # Run
         await market_client.run_ingestion_cycle(
@@ -123,7 +123,7 @@ async def test_run_news_cycle(mock_db_session):
 
 # 3. Chain Client Tests (Orchestrator)
 
-def test_run_whale_ingestion_found_whales(mock_db_session):
+def test_run_whale_ingestion_found_whales():
     """Test logic when whales are detected: must invalidate cache."""
     
     with patch("src.data.onchain_client.redis_cache") as mock_redis, \
@@ -134,14 +134,14 @@ def test_run_whale_ingestion_found_whales(mock_db_session):
         mock_redis.delete.return_value = 1
 
         result = onchain_client.run_whale_ingestion(
-            mock_db_session, chain="ethereum", time_window="24h"
+            chain="ethereum", time_window="24h"
         )
 
         assert result["status"] == "success"
         assert result["ingestion"]["whale_alerts"] == 5
         assert mock_redis.delete.called
 
-def test_run_whale_ingestion_no_whales(mock_db_session):
+def test_run_whale_ingestion_no_whales():
     """Test logic when NO whales are detected: cache should NOT be touched."""
     
     with patch("src.data.onchain_client.redis_cache") as mock_redis, \
@@ -150,7 +150,7 @@ def test_run_whale_ingestion_no_whales(mock_db_session):
         # Setup: Scan returns 0 alerts
         mock_scan.return_value = {"whale_alerts": 0}
 
-        result = onchain_client.run_whale_ingestion(mock_db_session)
+        result = onchain_client.run_whale_ingestion()
 
         assert result["status"] == "no_data"
         mock_redis.delete.assert_not_called()
@@ -168,7 +168,7 @@ def test_run_metrics_update_success():
         assert result["status"] == "success"
         assert mock_redis.delete.called 
 
-def test_run_onchain_pipeline_full(mock_db_session):
+def test_run_onchain_pipeline_full():
     """Test the high-level pipeline running both ingestion and metrics."""
     
     with patch("src.data.onchain_client.run_whale_ingestion") as mock_ingest, \
@@ -178,7 +178,7 @@ def test_run_onchain_pipeline_full(mock_db_session):
         mock_ingest.return_value = {"status": "success"}
         mock_metrics.return_value = {"status": "success"}
 
-        result = onchain_client.run_onchain_pipeline(mock_db_session, run_steps=["ingestion", "metrics"])
+        result = onchain_client.run_onchain_pipeline(run_steps=["ingestion", "metrics"])
 
         assert mock_ingest.called
         assert mock_metrics.called

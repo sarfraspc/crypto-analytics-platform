@@ -47,7 +47,7 @@ def test_compute_exchange_flows_inflow_outflow():
     
     with patch("src.modules.onchain.metrics.exchange_flows.get_timescale_db") as mock_db_ctx, \
          patch("src.modules.onchain.metrics.exchange_flows.redis_cache") as mock_cache, \
-         patch("src.modules.onchain.metrics.exchange_flows.EXCHANGE_ADDRS", {"exc_in": "binance", "exc_out": "binance"}):
+         patch("src.modules.onchain.metrics.exchange_flows.EXCHANGE_ADDRS", {"exc_in": "kraken", "exc_out": "kraken"}):
         
         mock_cache.get_json.return_value = None
         mock_session = MagicMock()

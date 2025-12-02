@@ -219,7 +219,7 @@ class PortfolioBacktester:
         loads sentiment/on-chain data, and simulates trading with fee accounting.
         """
         pre = CoinPreprocessor()
-        exchange = getattr(settings, "MARKET_EXCHANGE_ID", "binance")
+        exchange = getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
         
         # 1. Load Data from DB (respect configured exchange)
         df_features = pre.load_features_series(symbol, exchange=exchange)

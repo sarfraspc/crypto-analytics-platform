@@ -12,6 +12,7 @@ import ccxt
 from sqlalchemy.orm import Session
 
 from core.config import settings
+from core.database import get_timescale_db, get_metadata_db
 from core.logging_config import setup_logging
 from data.storage.crud import get_token, upsert_ohlcv, upsert_trades
 from data.validation import OHLCV, Trade
@@ -32,10 +33,16 @@ def get_valid_ccxt_pairs(exchange_id: str | None = None):
     usdt_pairs = [s for s in markets if s.endswith(f'/{quote}') and markets[s]['active']]
     return usdt_pairs
 
-def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id: str, symbol: str, timeframe: str = '1m', since_ts_ms: Optional[int] = None, limit: int = 1000):
-    """Backfill historical OHLCV data for a symbol from exchange via CCXT."""
+
+def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', since_ts_ms: Optional[int] = None, limit: int = 1000):
+    """
+    Backfill historical OHLCV data for a symbol from exchange via CCXT.
+    
+    Thread-safe: creates its own database sessions internally.
+    """
     since_str = datetime.fromtimestamp(since_ts_ms / 1000) if since_ts_ms else 'None'  
     logger.info("Starting backfill_ohlcv_ccxt for %s %s (since=%s)", exchange_id, symbol, since_str)
+    
     valid_pairs = get_valid_ccxt_pairs(exchange_id)
     if symbol not in valid_pairs:
         logger.warning(f"{exchange_id} does not have market {symbol}; skipping")
@@ -53,21 +60,27 @@ def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id
     })
     exchange.rateLimit = 200  
     exchange.headers = {'Accept-Charset': 'utf-8'}
-    if hasattr(exchange, 'httpResponse'):  
-        pass
     exchange.verbose = False 
 
     all_bars = []
     since = since_ts_ms
     retry_count = 0
-    max_retries = 1 
+    max_retries = 1
+    base_symbol = symbol.split('/')[0]
+    
+    # Validate token exists before fetching data
+    with get_metadata_db() as db_metadata:
+        if not get_token(db_metadata, base_symbol):
+            logger.warning(f"Unknown symbol: {base_symbol}")
+            return 0
+    
     while True:
         try:
             def patched_fetch(*args, **kwargs):
                 nonlocal retry_count
                 try:
                     return exchange.fetch_ohlcv(*args, **kwargs)
-                except UnicodeEncodeError as ue:
+                except UnicodeEncodeError:
                     if retry_count < max_retries:
                         retry_count += 1
                         clean_msg = "Encoding error (likely rate limit table in response); skipping symbol after retry." 
@@ -89,10 +102,7 @@ def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id
             logger.info(f"No more bars for {symbol} since {since_str}") 
             break
         retry_count = 0  
-        base_symbol = symbol.split('/')[0]
-        if not get_token(db_metadata, base_symbol):
-            logger.warning(f"Unknown symbol: {base_symbol}")
-            break
+        
         for bar in bars:
             ts = datetime.fromtimestamp(bar[0] / 1000.0, tz=timezone.utc)
             all_bars.append(OHLCV(
@@ -104,14 +114,22 @@ def backfill_ohlcv_ccxt(db_timescale: Session, db_metadata: Session, exchange_id
         if len(bars) < limit:
             break
         time.sleep(1.0)  
+    
+    # Each thread gets its own session for the DB write
     if all_bars:
-        upsert_ohlcv(db_timescale, all_bars)
-        logger.info(f"Upserted {len(all_bars)} bars for {symbol}")  
+        with get_timescale_db() as db_timescale:
+            upsert_ohlcv(db_timescale, all_bars)
+            logger.info(f"Upserted {len(all_bars)} bars for {symbol}")  
+    
     logger.info("CCXT backfill done: %s %s bars=%d", exchange_id, symbol, len(all_bars))
     return len(all_bars)
 
-def poll_trades_ccxt(db: Session, exchange_id: str, symbol: str, poll_interval: float = 2.0):
-    """Continuously poll and store recent trades for a symbol via CCXT."""
+def poll_trades_ccxt(exchange_id: str, symbol: str, poll_interval: float = 2.0):
+    """
+    Continuously poll and store recent trades for a symbol via CCXT.
+    
+    Thread-safe: creates its own database sessions internally.
+    """
     logger.info("Starting poll_trades_ccxt for %s %s", exchange_id, symbol)
     shutdown = False
     def shutdown_handler(signum, frame):
@@ -147,7 +165,8 @@ def poll_trades_ccxt(db: Session, exchange_id: str, symbol: str, poll_interval: 
                 ))
                 last_seen.append(trade_id)
             if rows:
-                upsert_trades(db, rows)
+                with get_timescale_db() as db:
+                    upsert_trades(db, rows)
             time.sleep(poll_interval) 
         except ccxt.RateLimitExceeded:
             logger.warning("CCXT poll rate limit; sleeping 60s")

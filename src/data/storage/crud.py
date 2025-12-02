@@ -46,30 +46,35 @@ def get_token(db: Session, symbol: str):
 
 
 def upsert_ohlcv(db: Session, rows: List[OHLCV]):
-    """Insert OHLCV rows, skipping duplicates based on composite key."""
+    """
+    Insert OHLCV rows using bulk upsert with ON CONFLICT DO NOTHING.
+    Much faster than row-by-row checks for large batches.
+    """
     if not rows:
         return
     try:
-        inserted_count = 0
-        for row in rows:
-            exists = db.execute(
-                select(OHLCVModel).where(
-                    OHLCVModel.time == row.time,
-                    OHLCVModel.symbol == row.symbol,
-                    OHLCVModel.exchange == row.exchange,
-                    OHLCVModel.interval == row.interval
-                )
-            ).scalar_one_or_none()
-            if not exists:
-                ohlcv = OHLCVModel(
-                    time=row.time, symbol=row.symbol, exchange=row.exchange, interval=row.interval,
-                    open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
-                    raw=row.raw or {}
-                )
-                db.add(ohlcv)
-                inserted_count += 1
+        values = [
+            {
+                'time': row.time,
+                'symbol': row.symbol,
+                'exchange': row.exchange,
+                'interval': row.interval,
+                'open': row.open,
+                'high': row.high,
+                'low': row.low,
+                'close': row.close,
+                'volume': row.volume,
+                'raw': row.raw or {}
+            }
+            for row in rows
+        ]
+        stmt = insert(OHLCVModel).values(values)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=['time', 'symbol', 'exchange', 'interval']
+        )
+        result = db.execute(stmt)
         db.commit()
-        logger.info(f"Committed {inserted_count} OHLCV rows (attempted {len(rows)})")
+        logger.info(f"Committed {result.rowcount} OHLCV rows (attempted {len(rows)})")
     except Exception as e:
         db.rollback()
         logger.error(f"Error upserting OHLCV: {e}")

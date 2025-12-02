@@ -131,7 +131,7 @@ async def test_onchain_mcp_patterns():
         request = CallToolRequest(
             params=CallToolRequestParams(
                 name="run_patterns_only",
-                arguments={"exchange": "binance"}
+                arguments={"exchange": "kraken"}
             ),
             method="tools/call"
         )

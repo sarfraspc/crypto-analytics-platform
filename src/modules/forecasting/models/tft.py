@@ -57,7 +57,7 @@ class TFTPanelForecaster:
     def load_or_create_panel_data(
         self,
         symbols: list,
-        exchange: str = "binance",
+        exchange: str = "kraken",
         interval: str = "1h",
         force_update: bool = False
     ):
@@ -189,7 +189,7 @@ class TFTPanelForecaster:
         self,
         symbols: list,
         max_epochs: int = 20,
-        exchange: str = "binance",
+        exchange: str = "kraken",
         interval: str = "1h",
         retrain_if_exists: bool = False,
         force_panel_update: bool = False
@@ -272,7 +272,7 @@ class TFTPanelForecaster:
             steps = self.max_prediction_length
 
         coin_pre = self.preprocessor.coin_pre
-        df = coin_pre.load_features_series(symbol, exchange='binance', interval='1h')
+        df = coin_pre.load_features_series(symbol, exchange='kraken', interval='1h')
 
         prediction_data = self.prepare_prediction_data(df, symbol)
 
@@ -353,7 +353,7 @@ class TFTPanelForecaster:
 def train_and_forecast_tft(
     symbols: list,
     df: pd.DataFrame = None,
-    exchange: str = 'binance',
+    exchange: str = 'kraken',
     interval: str = '1h',
     forecast_steps: int = 24,
     retrain_if_exists: bool = False,

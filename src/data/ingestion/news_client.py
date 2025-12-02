@@ -10,10 +10,10 @@ from typing import Optional
 import praw
 import requests
 from prawcore import exceptions as prawcore_exceptions
-from sqlalchemy.orm import Session
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from core.config import settings
+from core.database import get_timescale_db
 from core.logging_config import setup_logging
 from data.storage.crud import get_last_success, update_ingestion_job, upsert_news, upsert_reddit
 from data.storage.models import IngestionJob as IngestionJobModel
@@ -23,8 +23,13 @@ setup_logging()
 logger = logging.getLogger(__name__)
 vader = SentimentIntensityAnalyzer()
 
-def ingest_fng(db: Session):
-    """Ingest Fear & Greed Index from Alternative.me API."""
+
+def ingest_fng():
+    """
+    Ingest Fear & Greed Index from Alternative.me API.
+    
+    Thread-safe: creates its own database session internally.
+    """
     logger.info("Starting FNG ingestion")
     try:
         resp = requests.get(settings.ALTERNATIVE_ME_URL, timeout=10)
@@ -44,27 +49,41 @@ def ingest_fng(db: Session):
             item['score'] = score
         else:
             item = {}
-        job_model = IngestionJobModel(
-            pipeline='fear_greed', last_run=datetime.now(timezone.utc), last_success=datetime.now(timezone.utc),
-            details=item
-        )
-        db.merge(job_model)
-        db.commit()
+        
+        with get_timescale_db() as db:
+            job_model = IngestionJobModel(
+                pipeline='fear_greed', last_run=datetime.now(timezone.utc), last_success=datetime.now(timezone.utc),
+                details=item
+            )
+            db.merge(job_model)
+            db.commit()
         logger.info("Ingested FNG: %s %s", item.get('value'), item.get('value_classification'))
         return 1, 0 
     except Exception as e:
         logger.exception("FNG ingestion failed: %s", e)
         return 0, 0  
 
-def ingest_cryptopanic(db: Session, api_key: Optional[str] = None, limit: int = 50, max_retries: int = 3, ingestion_pipeline: str = 'cryptopanic_ingest'):
-    """Ingest news articles from CryptoPanic API with sentiment scoring."""
-    logger.info("Starting CryptoPanic ingestion")
+def ingest_cryptopanic(api_key: Optional[str] = None, limit: int = 50, max_retries: int = 3, ingestion_pipeline: str = 'cryptopanic_ingest', full_backfill: bool = False):
+    """
+    Ingest news articles from CryptoPanic API with sentiment scoring.
+    
+    Thread-safe: creates its own database session internally.
+    
+    Args:
+        full_backfill: If True, ignores last_success timestamp and fetches all articles.
+    """
+    logger.info("Starting CryptoPanic ingestion (full=%s)", full_backfill)
     key = api_key or settings.CRYPTOPANIC_API_KEY
     if not key:
         logger.warning("CryptoPanic API key not configured")
         return 0, 0
 
-    last_success_time = get_last_success(db, ingestion_pipeline)
+    if full_backfill:
+        last_success_time = datetime.min.replace(tzinfo=timezone.utc)
+    else:
+        with get_timescale_db() as db:
+            last_success_time = get_last_success(db, ingestion_pipeline)
+    
     url = f"{settings.CRYPTOPANIC_URL}?auth_token={key}&kind=news&public=true&currencies=BTC&filter=global&limit=50&page=1&hourly=true"
     backoff = 1
     for attempt in range(max_retries):
@@ -112,14 +131,15 @@ def ingest_cryptopanic(db: Session, api_key: Optional[str] = None, limit: int = 
                 )
                 posts.append(article)
             if posts:
-                upsert_news(db, posts)
+                with get_timescale_db() as db:
+                    upsert_news(db, posts)
+                    update_ingestion_job(db, IngestionJob(
+                        pipeline=ingestion_pipeline,
+                        last_run=datetime.now(timezone.utc),
+                        last_success=datetime.now(timezone.utc),
+                        details={'fetched_count': len(posts), 'skipped_count': skipped_count}
+                    ))
                 logger.info("Inserted %d CryptoPanic articles, skipped %d old.", len(posts), skipped_count)
-                update_ingestion_job(db, IngestionJob(
-                    pipeline=ingestion_pipeline,
-                    last_run=datetime.now(timezone.utc),
-                    last_success=datetime.now(timezone.utc),
-                    details={'fetched_count': len(posts), 'skipped_count': skipped_count}
-                ))
                 return len(posts), skipped_count  
             else:
                 logger.info("No new CryptoPanic articles to insert. Skipped %d old ones.", skipped_count)
@@ -149,9 +169,16 @@ def ingest_cryptopanic(db: Session, api_key: Optional[str] = None, limit: int = 
     logger.info("CryptoPanic ingestion finished.")
     return 0, 0  
 
-def ingest_reddit_praw(db: Session, subreddit: str = "cryptocurrency", limit: int = 200, ingestion_pipeline: str = 'reddit_praw_ingest'):
-    """Ingest Reddit posts from subreddit using PRAW with sentiment scoring."""
-    logger.info("Starting Reddit PRAW ingestion for /r/%s", subreddit)
+def ingest_reddit_praw(subreddit: str = "cryptocurrency", limit: int = 200, ingestion_pipeline: str = 'reddit_praw_ingest', full_backfill: bool = False):
+    """
+    Ingest Reddit posts from subreddit using PRAW with sentiment scoring.
+    
+    Thread-safe: creates its own database session internally.
+    
+    Args:
+        full_backfill: If True, ignores last_success timestamp and fetches all posts.
+    """
+    logger.info("Starting Reddit PRAW ingestion for /r/%s (full=%s)", subreddit, full_backfill)
     cid = settings.REDDIT_CLIENT_ID
     secret = settings.REDDIT_CLIENT_SECRET
     ua = settings.REDDIT_USER_AGENT
@@ -159,7 +186,11 @@ def ingest_reddit_praw(db: Session, subreddit: str = "cryptocurrency", limit: in
         logger.warning("PRAW credentials not configured; skipping Reddit.")
         return 0, 0
 
-    last_success_time = get_last_success(db, ingestion_pipeline)
+    if full_backfill:
+        last_success_time = datetime.min.replace(tzinfo=timezone.utc)
+    else:
+        with get_timescale_db() as db:
+            last_success_time = get_last_success(db, ingestion_pipeline)
 
     try:
         reddit = praw.Reddit(client_id=cid, client_secret=secret, user_agent=ua, request_timeout=20)
@@ -193,14 +224,15 @@ def ingest_reddit_praw(db: Session, subreddit: str = "cryptocurrency", limit: in
             )
             posts.append(p)
         if posts:
-            upsert_reddit(db, posts)
+            with get_timescale_db() as db:
+                upsert_reddit(db, posts)
+                update_ingestion_job(db, IngestionJob(
+                    pipeline=ingestion_pipeline,
+                    last_run=datetime.now(timezone.utc),
+                    last_success=datetime.now(timezone.utc),
+                    details={'fetched_count': len(posts), 'skipped_count': skipped_count}
+                ))
             logger.info("Inserted %d Reddit posts (PRAW) for %s, skipped %d old.", len(posts), subreddit, skipped_count)
-            update_ingestion_job(db, IngestionJob(
-                pipeline=ingestion_pipeline,
-                last_run=datetime.now(timezone.utc),
-                last_success=datetime.now(timezone.utc),
-                details={'fetched_count': len(posts), 'skipped_count': skipped_count}
-            ))
             return len(posts), skipped_count  
         else:
             logger.info("No new PRAW posts for %s to insert. Skipped %d old ones.", subreddit, skipped_count)
