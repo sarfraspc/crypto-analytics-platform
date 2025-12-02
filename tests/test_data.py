@@ -124,14 +124,11 @@ async def test_run_news_cycle(mock_db_session):
 # 3. Chain Client Tests (Orchestrator)
 
 def test_run_whale_ingestion_found_whales():
-    """Test logic when whales are detected: must invalidate cache."""
+    """Test logic when whales are detected."""
     
-    with patch("src.data.onchain_client.redis_cache") as mock_redis, \
-         patch("src.data.onchain_client.chain_client.scan_eth_transfers") as mock_scan:
-        
+    with patch("src.data.onchain_client.chain_client.scan_eth_transfers") as mock_scan:
         # Setup: Scan returns whale alerts
         mock_scan.return_value = {"whale_alerts": 5}
-        mock_redis.delete.return_value = 1
 
         result = onchain_client.run_whale_ingestion(
             chain="ethereum", time_window="24h"
@@ -139,34 +136,27 @@ def test_run_whale_ingestion_found_whales():
 
         assert result["status"] == "success"
         assert result["ingestion"]["whale_alerts"] == 5
-        assert mock_redis.delete.called
 
 def test_run_whale_ingestion_no_whales():
-    """Test logic when NO whales are detected: cache should NOT be touched."""
+    """Test logic when NO whales are detected."""
     
-    with patch("src.data.onchain_client.redis_cache") as mock_redis, \
-         patch("src.data.onchain_client.chain_client.scan_eth_transfers") as mock_scan:
-        
+    with patch("src.data.onchain_client.chain_client.scan_eth_transfers") as mock_scan:
         # Setup: Scan returns 0 alerts
         mock_scan.return_value = {"whale_alerts": 0}
 
         result = onchain_client.run_whale_ingestion()
 
         assert result["status"] == "no_data"
-        mock_redis.delete.assert_not_called()
 
 def test_run_metrics_update_success():
     """Test the metrics update orchestration."""
     
-    with patch("src.data.onchain_client.redis_cache") as mock_redis, \
-         patch("src.data.onchain_client.run_onchain_metrics") as mock_calc:
-        
+    with patch("src.data.onchain_client.run_onchain_metrics") as mock_calc:
         mock_calc.return_value = {"status": "success", "errors": []}
 
         result = onchain_client.run_metrics_update(chain="ethereum")
 
         assert result["status"] == "success"
-        assert mock_redis.delete.called 
 
 def test_run_onchain_pipeline_full():
     """Test the high-level pipeline running both ingestion and metrics."""

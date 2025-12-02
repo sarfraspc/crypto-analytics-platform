@@ -11,20 +11,9 @@ import numpy as np
 import pandas as pd
 import talib
 
-from utils.cache import RedisCache
-
-cache = RedisCache(expire_seconds=300)  # 5min
-
 
 def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Dict, symbol: str = "BTC", query_hash: str = "", days: int = 30) -> Dict[str, Any]:
     """Generate hybrid trading signal from multiple data sources."""
-    # Use cached result only when we have a query_hash (agent path).
-    cache_key = None
-    if query_hash:
-        cache_key = f"strategy:{symbol}:{query_hash}:{days}"
-        if cached := cache.get_json(cache_key):
-            return cached
-
     # Use precomputed if available (from ohlcv_features)
     if 'sma_7' in df.columns and 'sma_21' in df.columns:
         tech = np.where(df['sma_7'] > df['sma_21'], 1, np.where(df['sma_7'] < df['sma_21'], -1, 0))
@@ -100,13 +89,9 @@ def hybrid_signal(df: pd.DataFrame, forecast: Dict, sentiment: Dict, onchain: Di
         'position_size': float(pos_size),
         'composite_score': float(composite),
         'rationale': f"Hybrid: Tech={tech_signal}, Sent={sent_sig}, FC={fc_sig}, OnCh={onch_sig} (Corr: {corr:.2f})",
-        # Ensure JSON-serializable bool for Redis cache.
         'vol_adjusted': bool(vol > 0.05),
     }
 
-    # Cache only when we have a query_hash (agent path).
-    if cache_key:
-        cache.set_json(cache_key, result)
     return result
 
 

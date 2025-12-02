@@ -14,17 +14,9 @@ from core.logging_config import setup_logging
 from data.storage.crud import insert_ta_signals_history, upsert_ta_signals
 from data.storage.models import OHLCV as OHLCVModel
 from data.validation import TASignal, TASignalHistory
-from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
-redis_cache = RedisCache(
-    host=settings.REDIS_HOST,
-    port=settings.REDIS_PORT,
-    db=settings.REDIS_DB,
-    expire_seconds=300
-)
 
 
 def load_recent_ohlcv(symbol: str, exchange: str | None = None, interval: str = "1h", lookback: int = 100):
@@ -164,13 +156,6 @@ def _generate_signal(rsi: float, macd_hist: float, pattern: Optional[str], patte
 def generate_ta_signal(symbol: str, exchange: str | None = None, interval: str = "1h", use_cache: bool = True):
     """Generate complete TA signal with indicators, patterns, and confidence."""
     exchange = exchange or getattr(settings, "MARKET_EXCHANGE_ID", "kraken")
-    key = f"ta_signal:{symbol}:{exchange}:{interval}"
-    if use_cache:
-        cached = redis_cache.get_json(key)
-        if cached:
-            logger.info(f"Returning cached TA signal for {symbol}")
-            return cached
-
     lookback = 500 if interval == "1d" else 100
     source_interval = "1h" if interval == "1d" else interval
     df = load_recent_ohlcv(symbol, exchange, source_interval, lookback=lookback)
@@ -295,8 +280,7 @@ def generate_ta_signal(symbol: str, exchange: str | None = None, interval: str =
             upsert_ta_signals(db, [ta_signal])
             insert_ta_signals_history(db, [ta_signal_history])
 
-        redis_cache.set_json(key, result)
-        logger.info(f"Generated and cached TA signal for {symbol}: {signal}")
+        logger.info(f"Generated TA signal for {symbol}: {signal}")
 
         return result
     except Exception as e:

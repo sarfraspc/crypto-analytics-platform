@@ -12,17 +12,9 @@ from core.logging_config import setup_logging
 from data.storage.crud import upsert_onchain_metrics
 from data.storage.models import WhaleAlert as WhaleAlertModel
 from data.validation import OnchainMetric
-from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
-redis_cache = RedisCache(
-    host=settings.REDIS_HOST,
-    port=settings.REDIS_PORT,
-    db=settings.REDIS_DB,
-    expire_seconds=3600  
-)
 
 EXCHANGE_ADDRS = {addr.lower(): exchange for exchange, addrs in settings.EXCHANGE_ADDRESSES.items() for addr in addrs}
 
@@ -32,12 +24,6 @@ def compute_exchange_flows(
     time_window: str = '24h'
 ):
     """Compute exchange inflow/outflow metrics from whale alerts."""
-    cache_key = f"onchain:exchange_flows:{chain}:{time_window}"
-    cached = redis_cache.get_json(cache_key)
-    if cached:
-        logger.info(f"Returning cached exchange flows for {cache_key}")
-        return cached
-
     window_delta = timedelta(hours=1) if time_window == '1h' else timedelta(days=1)
     end_time = datetime.now(timezone.utc)
     start_time = end_time - window_delta - timedelta(minutes=10)
@@ -122,7 +108,6 @@ def compute_exchange_flows(
             upsert_onchain_metrics(db, metrics)
 
             result['time'] = result['time'].isoformat()
-            redis_cache.set_json(cache_key, result)
             logger.info(f"Computed flows: inflow={inflows}, outflow={outflows}, net={net_flow}")
             return result
 

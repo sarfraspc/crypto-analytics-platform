@@ -9,7 +9,6 @@ import logging
 from datetime import datetime
 from typing import Dict
 
-import redis
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,6 +17,7 @@ from sqlalchemy import text
 from core.config import settings
 from core.database import get_metadata_db, get_timescale_db
 from core.exceptions import APIError, CryptoAnalyticsError
+from utils.cache import RedisCache
 from core.logging_config import setup_logging
 from modules.agent.agent_client import call_mcp_tool
 from services.agent import router as agent_router
@@ -70,16 +70,10 @@ def _check_db_health() -> bool:
 
 
 def _check_redis_health() -> bool:
-    """Check Redis connectivity with timeout."""
+    """Check Redis connectivity using centralized RedisCache."""
     try:
-        client = redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=settings.REDIS_DB,
-            socket_connect_timeout=1,
-            socket_timeout=1,
-        )
-        client.ping()
+        cache = RedisCache(expire_seconds=1)
+        cache.client.ping()
         return True
     except Exception as exc:
         logger.warning("Redis health check failed: %s", exc)

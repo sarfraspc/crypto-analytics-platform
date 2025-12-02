@@ -14,17 +14,9 @@ from data.storage.crud import upsert_onchain_metrics
 from data.storage.models import OHLCV as OHLCVModel
 from data.storage.models import OnchainMetric as OnchainMetricModel
 from data.validation import OnchainMetric
-from utils.cache import RedisCache
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
-redis_cache = RedisCache(
-    host=settings.REDIS_HOST,
-    port=settings.REDIS_PORT,
-    db=settings.REDIS_DB,
-    expire_seconds=3600  
-)
 
 def _native_symbol_for_chain(chain: str) -> str:
     """Map blockchain name to native token symbol."""
@@ -40,12 +32,6 @@ def combine_metrics(
     time_window: str = "24h",
 ):
     """Aggregate exchange flows, whale data, and price into market pressure index."""
-    cache_key = f"onchain:aggregated_metrics:{chain}:{time_window}"
-    cached = redis_cache.get_json(cache_key)
-    if cached:
-        logger.info(f"Returning cached aggregated metrics for {cache_key}")
-        return cached
-
     with get_timescale_db() as db:
         try:
             end_time = datetime.now(timezone.utc)
@@ -210,7 +196,6 @@ def combine_metrics(
             upsert_onchain_metrics(db, metrics)
 
             result['time'] = result['time'].isoformat()
-            redis_cache.set_json(cache_key, result)
             logger.info(f"Aggregated: pressure={market_pressure_index}, bias={market_bias}")
             return result
 
