@@ -53,46 +53,46 @@ The platform employs a three-tier architecture optimized for low-latency inter-m
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                   User Interface Layer                       │
+│                   User Interface Layer                      │
 │                                                             │
-│   ┌─────────────────┐    ┌─────────────────────────────┐   │
-│   │  React Frontend │    │      REST API (FastAPI)      │   │
-│   │  Vite + Tailwind│    │                             │   │
-│   └─────────────────┘    └─────────────────────────────┘   │
+│   ┌─────────────────┐    ┌─────────────────────────────┐    │
+│   │  React Frontend │    │      REST API (FastAPI)     │    │
+│   │  Vite + Tailwind│    │                             │    │
+│   └─────────────────┘    └─────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
-│                  Core Processing Layer                       │
+│                  Core Processing Layer                      │
 │                                                             │
 │   ┌─────────────────────────────────────────────────────┐   │
-│   │              LLM Agent Orchestrator                  │   │
+│   │              LLM Agent Orchestrator                 │   │
 │   │         (Gemini / Groq / OpenRouter)                │   │
-│   │              Model Context Protocol                  │   │
+│   │              Model Context Protocol                 │   │
 │   └─────────────────────────────────────────────────────┘   │
 │                              │                              │
-│   ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  │
-│   │  Forecasting  │  │   Sentiment   │  │   On-Chain    │  │
-│   │    Module     │  │    Module     │  │    Module     │  │
-│   │               │  │               │  │               │  │
-│   │ Prophet       │  │ DistilRoBERTa │  │ Whale Alerts  │  │
-│   │ CNN-LSTM      │  │ RAG Pipeline  │  │ Exchange Flows│  │
-│   │ TFT           │  │ VADER         │  │ TA Patterns   │  │
-│   │ SARIMAX       │  │               │  │               │  │
-│   └───────────────┘  └───────────────┘  └───────────────┘  │
+│   ┌───────────────┐  ┌───────────────┐  ┌───────────────┐   │
+│   │  Forecasting  │  │   Sentiment   │  │   On-Chain    │   │
+│   │    Module     │  │    Module     │  │    Module     │   │
+│   │               │  │               │  │               │   │
+│   │ Prophet       │  │ DistilRoBERTa │  │ Whale Alerts  │   │
+│   │ CNN-LSTM      │  │ RAG Pipeline  │  │ Exchange Flows│   │
+│   │ TFT           │  │ VADER         │  │ TA Patterns   │   │
+│   │ SARIMAX       │  │               │  │               │   │
+│   └───────────────┘  └───────────────┘  └───────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
-│                 Data & Integration Layer                     │
+│                 Data & Integration Layer                    │
 │                                                             │
-│   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────┐ │
-│   │TimescaleDB│  │   Redis   │  │  Qdrant   │  │ MLflow  │ │
-│   │  (OHLCV)  │  │  (Cache)  │  │ (Vectors) │  │(Models) │ │
-│   └───────────┘  └───────────┘  └───────────┘  └─────────┘ │
+│   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────┐  │
+│   │TimescaleDB│  │   Redis   │  │  Qdrant   │  │ MLflow  │  │
+│   │  (OHLCV)  │  │  (Cache)  │  │ (Vectors) │  │(Models) │  │
+│   └───────────┘  └───────────┘  └───────────┘  └─────────┘  │
 │                                                             │
-│   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────┐ │
-│   │   CCXT    │  │  Infura   │  │  Reddit   │  │CryptoPanic│
-│   │(Exchanges)│  │(Ethereum) │  │  (PRAW)   │  │ (News)  │ │
-│   └───────────┘  └───────────┘  └───────────┘  └─────────┘ │
+│   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────┐  │
+│   │   CCXT    │  │  Infura   │  │  Reddit   │  │CryptoPanic │
+│   │(Exchanges)│  │(Ethereum) │  │  (PRAW)   │  │ (News)  │  │
+│   └───────────┘  └───────────┘  └───────────┘  └─────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -264,7 +264,7 @@ This platform is built on research investigating the performance trade-offs betw
 - 28 percentage point increase in output faithfulness through RAG
 
 For detailed methodology and experimental results, refer to the accompanying research paper:  
-*"Crypto AI Analytics Platform: A Monolithic LLM-Orchestrated Architecture for Multi-Modal Cryptocurrency Analysis"*
+[*"Crypto AI Analytics Platform: A Monolithic LLM-Orchestrated Architecture for Multi-Modal Cryptocurrency Analysis"*](docs/CryptoAI_Research_Paper.pdf)
 
 ---
 
