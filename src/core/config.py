@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     MCP_TIMEOUT: int = 30
 
     # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    ALLOWED_ORIGINS: str
 
     # Infura 
     INFURA_HTTPS: str
