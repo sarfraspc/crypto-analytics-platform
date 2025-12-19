@@ -5,6 +5,7 @@ A production-grade cryptocurrency analytics system that leverages LLM orchestrat
 ---
 
 ## Overview
+<img width="2752" height="1536" alt="infographic" src="https://github.com/user-attachments/assets/032bc352-2f14-40d8-92f6-8ddcd5c1881c" />
 
 The Crypto AI Analytics Platform combines advanced machine learning, natural language processing, and blockchain analytics into a unified system. Built on a monolithic architecture with Model Context Protocol (MCP) orchestration, the platform processes market data, social sentiment, and on-chain metrics to generate interpretable, citation-backed insights.
 
