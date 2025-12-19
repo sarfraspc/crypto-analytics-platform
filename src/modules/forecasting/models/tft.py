@@ -14,6 +14,7 @@ from pytorch_forecasting.data import GroupNormalizer
 from pytorch_forecasting.metrics import QuantileLoss
 
 from modules.forecasting.data.preprocess_panel import PanelPreprocessor
+from utils.gcs_loader import load_from_gcs, upload_to_gcs
 
 logger = logging.getLogger(__name__)
 
@@ -305,10 +306,29 @@ class TFTPanelForecaster:
         return prediction_dataset.to_dataloader(train=False, batch_size=1)
 
     def load(self):
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"No trained model found at {self.model_path}")
+        """Load model from disk or GCS."""
+        model_loaded = False
+        load_path = None
         
-        self.tft = TemporalFusionTransformer.load_from_checkpoint(str(self.model_path))
+        # Try local first
+        if self.model_path.exists():
+            load_path = str(self.model_path)
+            model_loaded = True
+        else:
+            # Fallback to GCS
+            try:
+                remote_key = "forecasting/tft/tft_panel.ckpt"
+                load_path = str(load_from_gcs(remote_key, local_name=self.model_path.name))
+                model_loaded = True
+                logger.info(f"Downloaded TFT model from GCS: {remote_key}")
+            except Exception as e:
+                logger.warning(f"Failed to load TFT model from GCS: {e}")
+                return False
+        
+        if not model_loaded:
+            return False
+            
+        self.tft = TemporalFusionTransformer.load_from_checkpoint(load_path)
      
         if self.training is None:
             dummy_data = pd.DataFrame({
@@ -337,9 +357,11 @@ class TFTPanelForecaster:
                 add_encoder_length=True,
             )
         
-        logger.info("Loaded TFT Panel model")
+        logger.info(f"Loaded TFT Panel model from {load_path}")
+        return True
 
     def save(self):
+        """Save model to disk and upload to GCS."""
         if self.tft is None:
             raise RuntimeError("No model to save")
         
@@ -349,6 +371,14 @@ class TFTPanelForecaster:
             torch.save(self.tft.state_dict(), str(self.model_path))
             
         logger.info(f"Saved TFT Panel model to {self.model_path}")
+        
+        # Upload to GCS
+        try:
+            remote_key = "forecasting/tft/tft_panel.ckpt"
+            upload_to_gcs(self.model_path, remote_key)
+            logger.info(f"Uploaded TFT model to GCS: {remote_key}")
+        except Exception as e:
+            logger.warning(f"Failed to upload TFT model to GCS: {e}")
 
 def train_and_forecast_tft(
     symbols: list,
@@ -362,12 +392,17 @@ def train_and_forecast_tft(
     """Train TFT model and generate forecast for first symbol."""
     model = TFTPanelForecaster(max_prediction_length=forecast_steps)
     
-    if model.model_path.exists() and not retrain_if_exists:
-        model.load()
-        logger.info("Loaded existing TFT model")
-    else:
+    if retrain_if_exists:
+        # Force retrain
         logger.info("Training new TFT model")
         model.train(symbols, exchange=exchange, interval=interval, retrain_if_exists=retrain_if_exists)
+    else:
+        # Try to load existing model (local or GCS)
+        if not model.load():
+            logger.info("No existing TFT model found, training new one")
+            model.train(symbols, exchange=exchange, interval=interval, retrain_if_exists=retrain_if_exists)
+        else:
+            logger.info("Using existing TFT model")
 
     if symbols:
         forecast = model.forecast(symbols[0], steps=forecast_steps)
