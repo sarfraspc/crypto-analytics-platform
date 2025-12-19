@@ -125,26 +125,26 @@ jobs:
             echo "$CR_PAT" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
             # 2. Go to Project Folder
-            # We use -p to ensure the folder exists, just in case
             mkdir -p /home/${{ secrets.GCE_USER }}/crypto-analytics-platform
             cd /home/${{ secrets.GCE_USER }}/crypto-analytics-platform
             
             # 3. Update Code
-            # We initialize git if it doesn't exist (first run safety)
             if [ ! -d ".git" ]; then
               git clone https://github.com/sarfraspc/crypto-analytics-platform.git .
             fi
             git fetch origin main
             git reset --hard origin/main
             
-            # 4. INJECT SECRETS 
+            # 4. INJECT SECRETS (
             mkdir -p secrets
             
-            # We take the secret from GitHub and save it as .env.docker
-            # (Because docker-compose.yml looks for .env.docker)
-            echo "${{ secrets.PROD_ENV_FILE }}" > .env.docker
+            # Create standard .env for Docker Compose variable substitution
+            echo "${{ secrets.PROD_ENV_FILE }}" > .env
             
-            # We take the JSON key and save it for MLflow
+            # Create copy as .env.docker for containers that expect it
+            cp .env .env.docker
+            
+            # Create service-account.json
             echo "${{ secrets.GCP_SA_KEY }}" > secrets/service-account.json
             
             # 5. Pull & Restart
