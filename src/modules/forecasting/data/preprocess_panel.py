@@ -84,17 +84,20 @@ class PanelPreprocessor:
                 global_cols = panel.select_dtypes(include=[np.number]).columns.tolist()
                 global_cols = [c for c in global_cols if c not in ("time",)]
             
-            if global_cols:  
+            if global_cols:
+                # Replace infinity values with NaN, then fill with 0
+                panel[global_cols] = panel[global_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
                 scaler = MinMaxScaler()
-                scaler.fit(panel[global_cols].fillna(0))
+                scaler.fit(panel[global_cols])
                 if save_scaler:
                     save_scaler_with_meta(scaler_path, scaler, global_cols)
                     logger.info("Saved global panel scaler -> %s", scaler_path)
-                panel[global_cols] = scaler.transform(panel[global_cols].fillna(0))
+                panel[global_cols] = scaler.transform(panel[global_cols])
         else:
             scaler, global_cols = load_scaler_with_meta(scaler_path)
             if scaler is not None and global_cols:
-                panel[global_cols] = scaler.transform(panel[global_cols].fillna(0))
+                panel[global_cols] = panel[global_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
+                panel[global_cols] = scaler.transform(panel[global_cols])
 
         return panel, scaler
 

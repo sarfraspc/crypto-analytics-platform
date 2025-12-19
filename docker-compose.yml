@@ -34,8 +34,8 @@ services:
     image: timescale/timescaledb:latest-pg14
     container_name: cap-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password123
+      POSTGRES_USER: ${DB_SUPERUSER}
+      POSTGRES_PASSWORD: ${DB_SUPERUSER_PASSWORD}
       POSTGRES_DB: postgres
     ports:
       - "5432:5432"
@@ -86,8 +86,8 @@ services:
     command:
       [
         "server",
-        "--backend-store-uri", "postgresql://metadata_user:123@db:5432/metadata_db",
-        "--default-artifact-root", "gs://crypto-mlflow-artifacts-sarfras",
+        "--backend-store-uri", "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/metadata_db",
+        "--default-artifact-root", "${MLFLOW_ARTIFACT_ROOT}",
         "--host", "0.0.0.0",
         "--port", "5000",
         "--allowed-hosts", "*",

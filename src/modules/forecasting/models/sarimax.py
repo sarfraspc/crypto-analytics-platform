@@ -11,6 +11,7 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 from modules.forecasting.data.preprocess_coin import CoinPreprocessor
 from modules.forecasting.data.preprocess_utils import _scaler_path_for, load_scaler_with_meta
+from utils.gcs_loader import load_from_gcs, upload_to_gcs
 
 logger = logging.getLogger(__name__)
 
@@ -74,18 +75,38 @@ class SarimaxModel:
         return forecast_returns
 
     def save(self):
-        """Save trained model to disk."""
+        """Save trained model to disk and upload to GCS."""
         if self.model_fit is None:
             raise RuntimeError("No trained model to save")
         joblib.dump(self.model_fit, self.model_path)
         logger.info(f"Saved SARIMAX model for {self.symbol} -> {self.model_path}")
+        
+        # Upload to GCS
+        try:
+            remote_key = f"forecasting/sarimax/sarimax_{self.symbol}.pkl"
+            upload_to_gcs(self.model_path, remote_key)
+            logger.info(f"Uploaded SARIMAX model for {self.symbol} to GCS: {remote_key}")
+        except Exception as e:
+            logger.warning(f"Failed to upload SARIMAX model for {self.symbol} to GCS: {e}")
 
     def load(self):
-        """Load trained model from disk."""
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"No saved model found at {self.model_path}")
-        self.model_fit = joblib.load(self.model_path)
-        logger.info(f"Loaded SARIMAX model for {self.symbol} from {self.model_path}")
+        """Load trained model from disk or GCS."""
+        # Try local first
+        if self.model_path.exists():
+            self.model_fit = joblib.load(self.model_path)
+            logger.info(f"Loaded SARIMAX model for {self.symbol} from {self.model_path}")
+            return True
+        
+        # Fallback to GCS
+        try:
+            remote_key = f"forecasting/sarimax/sarimax_{self.symbol}.pkl"
+            local_path = load_from_gcs(remote_key, local_name=self.model_path.name)
+            self.model_fit = joblib.load(local_path)
+            logger.info(f"Loaded SARIMAX model for {self.symbol} from GCS: {remote_key}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to load SARIMAX model for {self.symbol} from GCS: {e}")
+            return False
 
 
 def _inverse_transform_close(symbol: str, df: pd.DataFrame, preprocessor: CoinPreprocessor) -> pd.Series:
@@ -146,15 +167,8 @@ def train_and_forecast(
     if retrain_if_exists: # Case A: Training mode
         model.train(df, target_col='log_return')
         model.save()
-    else: # Case B: Inference mode (load if exists, otherwise train and save)
-        if model.model_path.exists():
-            try:
-                model.load()
-            except Exception:
-                logger.warning(f"Failed to load model for {symbol}, retraining...")
-                model.train(df, target_col='log_return')
-                model.save()
-        else:
+    else: # Case B: Inference mode (load if exists locally or in GCS, otherwise train and save)
+        if not model.load():
             logger.warning(f"Model not found for {symbol}, training new one.")
             model.train(df, target_col='log_return')
             model.save()

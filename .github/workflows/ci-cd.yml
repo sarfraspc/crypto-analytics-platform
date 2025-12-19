@@ -124,18 +124,34 @@ jobs:
             # 1. Login to Registry
             echo "$CR_PAT" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # 2. Update Config
+            # 2. Go to Project Folder
+            # We use -p to ensure the folder exists, just in case
+            mkdir -p /home/${{ secrets.GCE_USER }}/crypto-analytics-platform
             cd /home/${{ secrets.GCE_USER }}/crypto-analytics-platform
+            
+            # 3. Update Code
+            # We initialize git if it doesn't exist (first run safety)
+            if [ ! -d ".git" ]; then
+              git clone https://github.com/sarfraspc/crypto-analytics-platform.git .
+            fi
             git fetch origin main
             git reset --hard origin/main
             
-            # 3. Pull the NEW images (Fast!)
-            docker compose pull
+            # 4. INJECT SECRETS 
+            mkdir -p secrets
             
-            # 4. Restart (No build happening here!)
+            # We take the secret from GitHub and save it as .env.docker
+            # (Because docker-compose.yml looks for .env.docker)
+            echo "${{ secrets.PROD_ENV_FILE }}" > .env.docker
+            
+            # We take the JSON key and save it for MLflow
+            echo "${{ secrets.GCP_SA_KEY }}" > secrets/service-account.json
+            
+            # 5. Pull & Restart
+            docker compose pull
             docker compose up -d --remove-orphans
             
-            # 5. Aggressive cleanup to prevent disk full (keeps data volumes safe)
+            # 6. Cleanup
             docker image prune -af --filter "until=24h"
             docker system prune -f
             docker builder prune -f
