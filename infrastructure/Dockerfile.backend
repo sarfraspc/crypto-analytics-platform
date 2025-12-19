@@ -48,6 +48,9 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 COPY pyproject.toml ./
 COPY src ./src
 
+# Install the project in non-editable mode (Production Standard)
+RUN pip install .
+
 # Set Python path so it can find 'src' modules
 ENV PYTHONPATH=/app:/app/src
 
