@@ -88,19 +88,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Build Frontend
-      - name: Build/Push Frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: infrastructure/Dockerfile.frontend
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/cap-frontend:latest
-          build-args: |
-            VITE_API_URL=/api
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   # JOB 3: DEPLOY (Pull images on Server)
   deploy:
     name: Deploy to Production

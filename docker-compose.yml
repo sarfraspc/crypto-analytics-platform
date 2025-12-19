@@ -99,22 +99,6 @@ services:
       - "5000:5000"
     restart: unless-stopped
 
-  # 6. Frontend
-  frontend:
-    image: ghcr.io/sarfraspc/cap-frontend:latest
-    build:
-      context: .
-      dockerfile: infrastructure/Dockerfile.frontend
-      args:
-        VITE_API_URL: /api
-    container_name: cap-frontend
-    depends_on:
-      backend:
-        condition: service_started
-    ports:
-      - "80:80"
-    restart: unless-stopped
-
 volumes:
   postgres_data:
   redis_data:
