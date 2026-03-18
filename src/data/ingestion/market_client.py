@@ -5,7 +5,7 @@ import signal
 import time
 import logging
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import ccxt
