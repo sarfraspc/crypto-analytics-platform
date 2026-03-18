@@ -128,7 +128,8 @@ async def run_backfill(db_metadata: Session, db_timescale: Session, symbols: Lis
     symbols = symbols or get_symbols_from_tokens(db_metadata, limit=50)
     logger.info("Starting backfill for %d symbols", len(symbols))
 
-    old_since_ms = 0
+    # Use None to fetch maximum available history (handled by backfill_ohlcv_ccxt)
+    old_since_ms = None
     
     loop = asyncio.get_running_loop()
     tasks = []

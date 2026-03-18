@@ -38,9 +38,13 @@ def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', si
     """
     Backfill historical OHLCV data for a symbol from exchange via CCXT.
     
+    For maximum history when since_ts_ms is None:
+    - Starts from 2 years ago (conservative estimate)
+    - Fetches forward in time to present
+    
     Thread-safe: creates its own database sessions internally.
     """
-    since_str = datetime.fromtimestamp(since_ts_ms / 1000) if since_ts_ms else 'None'  
+    since_str = datetime.fromtimestamp(since_ts_ms / 1000) if since_ts_ms else 'None (max history)'  
     logger.info("Starting backfill_ohlcv_ccxt for %s %s (since=%s)", exchange_id, symbol, since_str)
     
     valid_pairs = get_valid_ccxt_pairs(exchange_id)
@@ -73,6 +77,11 @@ def backfill_ohlcv_ccxt(exchange_id: str, symbol: str, timeframe: str = '1m', si
         if not get_token(db_metadata, base_symbol):
             logger.warning(f"Unknown symbol: {base_symbol}")
             return 0
+    
+    # If since is None, start from 2 years ago for maximum history
+    if since is None:
+        since = int((datetime.now(timezone.utc) - timedelta(days=730)).timestamp() * 1000)
+        logger.info(f"Fetching max history for {symbol} starting from {datetime.fromtimestamp(since/1000, tz=timezone.utc)}")
     
     while True:
         try:
